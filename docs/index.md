@@ -7,7 +7,7 @@ for absorbing and dispersive materials, at any angle of incidence, in s and p
 polarization. Alongside the spectra it returns the exact thickness Jacobian, the
 exact thickness Hessian, and the needle-insertion P-function.
 
-![Antireflection coating](img/ar-coating.svg)
+![Reflectance of a quarter-wave stack over wavelength and angle of incidence](img/angle-map.svg)
 
 <div class="grid cards" markdown>
 

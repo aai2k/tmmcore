@@ -20,7 +20,7 @@
   "scripts": {
     "test": "node tests/equivalence.mjs",
     "compare": "node benchmarks/compare.mjs",
-    "examples": "node examples/01-single-layer.mjs && node examples/02-ar-coating.mjs && node examples/03-metal-mirror.mjs && node examples/04-refine.mjs",
+    "examples": "node examples/01-single-layer.mjs && node examples/02-ar-coating.mjs && node examples/03-metal-mirror.mjs && node examples/04-refine.mjs && node examples/05-angle-map.mjs",
     "build:wasm": "emcc src/tmm_kernel.c -O3 --no-entry -sSTANDALONE_WASM=1 -sALLOW_MEMORY_GROWTH=1 -sEXPORTED_FUNCTIONS=_tmm_one,_tmm_spectrum,_tmm_jacobian,_tmm_needle_scan,_tmm_hessian,_malloc,_free -o src/tmm_kernel.wasm",
     "build:native": "cc -std=c99 -pedantic -Wall -Wextra -O2 -c src/tmm_kernel.c -o tmm_kernel.o"
   },
