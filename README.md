@@ -1,14 +1,18 @@
+<div align="center">
+
 <picture>
   <source media="(prefers-color-scheme: dark)"
-          srcset="https://raw.githubusercontent.com/aai2k/tmmcore/main/docs/img/banner.png">
+          srcset="https://raw.githubusercontent.com/aai2k/tmmcore/main/docs/img/banner-on-dark.png">
   <img alt="tmmcore"
-       src="https://raw.githubusercontent.com/aai2k/tmmcore/main/docs/img/banner-dark.png"
+       src="https://raw.githubusercontent.com/aai2k/tmmcore/main/docs/img/banner-on-light.png"
        width="640">
 </picture>
 
-Transfer-matrix method for multilayer thin-film optics, with exact analytic derivatives.
+**Transfer-matrix method for multilayer thin-film optics, with exact analytic derivatives.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+
+</div>
 
 Takes a stack of layers and returns reflectance, transmittance and absorptance
 for absorbing and dispersive materials, at any angle of incidence, in s and p
