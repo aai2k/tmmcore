@@ -177,6 +177,88 @@ forty-one.
 
 ---
 
+## The needle P-function: where the next layer goes
+
+`examples/06-needle.mjs`
+
+`tmmNeedleScan` returns the derivative of each spectral quantity with respect to
+inserting an infinitesimally thin layer of a candidate material, at every
+position in the stack at once. Chain that through a merit function and you get
+P(z), whose most negative point is the best place to insert.
+
+![Needle P-function through a four-layer antireflection start](img/needle.svg)
+
+Starting from a deliberately mediocre four-layer antireflection design, with
+mean R² over 450–650 nm as the merit function:
+
+```
+start design, 4 layers, 360 nm total
+merit (mean R^2 over 450-650 nm) = 1.1956e-1
+
+most negative P: -1.2562e-2 /nm
+  candidate H (n=2.35) at depth 247.2 nm from the incident medium
+```
+
+P is the $d \to 0$ limit of Sullivan and Dobrowolski's numerical pre/post method
+(*Appl. Opt.* **35**, 5484, 1996), the analytic P-function of Tikhonravov et al.
+(*Appl. Opt.* **35**, 5493, 1996). Unlike the numerical form it needs no trial
+thickness and no second spectrum evaluation.
+
+Being a limit, it is checkable. Insert a needle of thickness $\varepsilon$ at
+that point and the numerical slope has to converge to it:
+
+```
+   eps (nm)   (MF(eps) - MF(0)) / eps        ratio to analytic
+   1          -1.221337e-2              0.972233
+   0.1        -1.252856e-2              0.997324
+   0.01       -1.255883e-2              0.999734
+   0.001      -1.256184e-2              0.999973
+```
+
+---
+
+## Which layer controls which wavelength
+
+`examples/07-jacobian-map.mjs`
+
+`tmmThicknessJacobian` returns $\partial R/\partial d_j$ for every layer in the
+same call that produces R. Sweeping over wavelength gives a sensitivity map of
+the quarter-wave reflector from the angle example: one row per layer, one column
+per wavelength, signed.
+
+![Thickness sensitivity of a quarter-wave stack](img/jacobian-map.svg)
+
+```
+largest |dR/dd| over the grid: 9.9781e-2 /nm
+
+peak |dR/dd| inside the 620-800 nm zone : 6.5219e-4 /nm
+peak |dR/dd| anywhere on the grid       : 9.9781e-2 /nm
+ratio                                   : 153.0x
+```
+
+Deep inside the high-reflectance zone R is pinned near 1, so no layer can move
+it and the map goes neutral. All the leverage sits at the band edges and in the
+sidelobes, which is why refining a reflector means working on its edges.
+
+The colour scale is a signed cube root. Those two band edges carry derivatives
+150 times larger than anything else, and on a linear scale 87% of the map
+renders as blank neutral; the cube root keeps the sign, compresses the peaks and
+opens up the sidelobe structure. The colour bar is labelled accordingly.
+
+Verified against a central difference at a band edge, where the derivative is
+largest:
+
+```
+analytic dR/dd against a central difference at 615 nm, h = 1e-4 nm
+  layer    analytic          central diff      rel. difference
+      1    -4.932399e-4    -4.932399e-4    4.9e-9
+      5    -1.191639e-3    -1.191639e-3    9.9e-10
+      9    -1.366824e-3    -1.366824e-3    2.6e-9
+     17    -3.083978e-4    -3.083978e-4    8.4e-9
+```
+
+---
+
 ## Where to go next
 
 - [API reference](api.md), every function and what it returns

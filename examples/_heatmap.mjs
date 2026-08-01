@@ -25,14 +25,29 @@ const TURBO = [
     [122, 4, 3],
 ];
 
-/** value in [0,1] -> "#rrggbb" */
-export function turbo(t) {
-    const u = Math.min(1, Math.max(0, t)) * (TURBO.length - 1);
-    const i = Math.min(TURBO.length - 2, Math.floor(u));
+// A blue / neutral / red ramp for signed quantities, where the midpoint of the
+// scale is zero and the two directions must be told apart at a glance. Chosen
+// here rather than taken from a published scheme; the neutral centre is light
+// enough to read as "no effect" on either page background.
+const DIVERGING = [
+    [33, 90, 170], [70, 140, 205], [130, 185, 225], [195, 220, 240],
+    [240, 240, 240],
+    [248, 214, 196], [235, 160, 120], [210, 100, 70], [165, 30, 40],
+];
+
+const lerpRamp = (ramp, t) => {
+    const u = Math.min(1, Math.max(0, t)) * (ramp.length - 1);
+    const i = Math.min(ramp.length - 2, Math.floor(u));
     const f = u - i;
-    const c = TURBO[i].map((v, k) => Math.round(v + f * (TURBO[i + 1][k] - v)));
+    const c = ramp[i].map((v, k) => Math.round(v + f * (ramp[i + 1][k] - v)));
     return '#' + c.map(v => v.toString(16).padStart(2, '0')).join('');
-}
+};
+
+/** value in [0,1] -> "#rrggbb" */
+export const turbo = t => lerpRamp(TURBO, t);
+export const diverging = t => lerpRamp(DIVERGING, t);
+
+const RAMPS = { turbo, diverging };
 
 /**
  * panels: [{ title, z }] where z[iy][ix] holds values in [zMin, zMax].
@@ -40,7 +55,7 @@ export function turbo(t) {
  */
 export function heatMap({
     panels, x, y, xLabel = '', yLabel = '', zLabel = '', title = '',
-    zMin = 0, zMax = 1, levels = 64, cellW = 3, cellH = 3,
+    zMin = 0, zMax = 1, levels = 64, cellW = 3, cellH = 3, ramp = 'turbo', zFormat = null, zTransform = null, zTickValues = null,
 }) {
     const m = { top: title ? 62 : 34, right: 92, bottom: 54, left: 62 };
     const gap = 34;
@@ -51,14 +66,21 @@ export function heatMap({
 
     // Quantising before colour lookup is what makes the run merging effective:
     // neighbouring cells that round to the same level collapse into one run.
-    const quant = v => Math.round(((v - zMin) / (zMax - zMin)) * (levels - 1));
-    const swatch = Array.from({ length: levels }, (_, i) => turbo(i / (levels - 1)));
+    // zTransform maps a value to its [0,1] position on the ramp. A non-linear
+    // scale is sometimes the only way to show a quantity whose interesting
+    // structure spans orders of magnitude; when one is used the caller must
+    // also supply zTickValues so the colour bar still tells the truth.
+    const toT = zTransform ?? (v => (v - zMin) / (zMax - zMin));
+    const quant = v => Math.round(Math.min(1, Math.max(0, toT(v))) * (levels - 1));
+    const paint = RAMPS[ramp] ?? turbo;
+    const swatch = Array.from({ length: levels }, (_, i) => paint(i / (levels - 1)));
 
     const out = [];
     out.push(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" font-family="system-ui, sans-serif" font-size="12">`);
     if (title) out.push(`<text x="${(width / 2).toFixed(1)}" y="26" fill="${AXIS}" font-size="15" text-anchor="middle">${esc(title)}</text>`);
 
     const fmt = v => String(Math.round(v * 10) / 10);
+    const fmtZ = zFormat ?? fmt;
 
     panels.forEach((panel, p) => {
         const ox = m.left + p * (pw + gap);
@@ -125,9 +147,9 @@ export function heatMap({
     out.push('</g>');
     out.push(`<rect x="${bx}" y="${m.top}" width="${bw}" height="${bh.toFixed(1)}" fill="none" stroke="${AXIS}" stroke-opacity="0.5"/>`);
     for (let i = 0; i <= 4; i++) {
-        const v = zMin + (i * (zMax - zMin)) / 4;
+        const v = zTickValues ? zTickValues[i] : zMin + (i * (zMax - zMin)) / 4;
         const py = m.top + bh - (i / 4) * bh;
-        out.push(`<text x="${bx + bw + 6}" y="${(py + 4).toFixed(1)}" fill="${AXIS}">${fmt(v)}</text>`);
+        out.push(`<text x="${bx + bw + 6}" y="${(py + 4).toFixed(1)}" fill="${AXIS}">${fmtZ(v)}</text>`);
     }
     out.push(`<text x="${bx + bw / 2}" y="${m.top - 10}" fill="${AXIS}" text-anchor="middle">${esc(zLabel)}</text>`);
 

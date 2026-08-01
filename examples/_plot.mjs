@@ -13,6 +13,7 @@ const AXIS = '#8b949e';
 export function linePlot({
     series, xLabel = '', yLabel = '', title = '',
     width = 720, height = 380, yMin = null, yMax = null,
+    vlines = [], zeroLine = false,
 }) {
     const m = { top: title ? 44 : 24, right: 20, bottom: 52, left: 64 };
     const w = width - m.left - m.right;
@@ -45,6 +46,17 @@ export function linePlot({
     }
     for (const t of ticks(x0, x1)) {
         out.push(`<text x="${px(t).toFixed(1)}" y="${m.top + h + 20}" fill="${AXIS}" text-anchor="middle">${fmt(t)}</text>`);
+    }
+
+    // Structural markers, drawn under the data: layer boundaries and the y = 0
+    // axis, which matters when a quantity changes sign.
+    for (const v of vlines) {
+        const vx = px(typeof v === 'number' ? v : v.x).toFixed(1);
+        out.push(`<line x1="${vx}" y1="${m.top}" x2="${vx}" y2="${m.top + h}" stroke="${AXIS}" stroke-opacity="0.35" stroke-dasharray="3 3"/>`);
+        if (v.label) out.push(`<text x="${vx}" y="${m.top - 4}" fill="${AXIS}" font-size="10" text-anchor="middle">${esc(v.label)}</text>`);
+    }
+    if (zeroLine && ylo < 0 && yhi > 0) {
+        out.push(`<line x1="${m.left}" y1="${py(0).toFixed(1)}" x2="${m.left + w}" y2="${py(0).toFixed(1)}" stroke="${AXIS}" stroke-opacity="0.55"/>`);
     }
 
     out.push(`<line x1="${m.left}" y1="${m.top + h}" x2="${m.left + w}" y2="${m.top + h}" stroke="${AXIS}"/>`);
