@@ -1,0 +1,53 @@
+{
+  "name": "tmmcore",
+  "version": "0.1.0",
+  "description": "Transfer-matrix method for multilayer thin-film optics, with exact analytic derivatives. JavaScript, C and WebAssembly.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./tmm.js": "./src/tmm.js",
+    "./tmmWasm.js": "./src/tmmWasm.js",
+    "./tmm_kernel.wasm": "./src/tmm_kernel.wasm",
+    "./tmm_kernel.c": "./src/tmm_kernel.c",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node tests/equivalence.mjs",
+    "compare": "node benchmarks/compare.mjs",
+    "examples": "node examples/01-single-layer.mjs && node examples/02-ar-coating.mjs && node examples/03-metal-mirror.mjs && node examples/04-refine.mjs",
+    "build:wasm": "emcc src/tmm_kernel.c -O3 --no-entry -sSTANDALONE_WASM=1 -sALLOW_MEMORY_GROWTH=1 -sEXPORTED_FUNCTIONS=_tmm_one,_tmm_spectrum,_tmm_jacobian,_tmm_needle_scan,_tmm_hessian,_malloc,_free -o src/tmm_kernel.wasm",
+    "build:native": "cc -std=c99 -pedantic -Wall -Wextra -O2 -c src/tmm_kernel.c -o tmm_kernel.o"
+  },
+  "keywords": [
+    "thin-film",
+    "optics",
+    "transfer-matrix",
+    "tmm",
+    "multilayer",
+    "optical-coating",
+    "reflectance",
+    "transmittance",
+    "photonics",
+    "webassembly"
+  ],
+  "license": "MIT",
+  "author": "Andrey Achapovsky",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aai2k/tmmcore.git"
+  },
+  "homepage": "https://aai2k.github.io/tmmcore/",
+  "bugs": {
+    "url": "https://github.com/aai2k/tmmcore/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false
+}

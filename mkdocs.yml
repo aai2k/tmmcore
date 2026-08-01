@@ -1,0 +1,75 @@
+site_name: tmmcore
+site_description: Transfer-matrix method for multilayer thin-film optics, with exact analytic derivatives
+site_url: https://aai2k.github.io/tmmcore/
+repo_url: https://github.com/aai2k/tmmcore
+repo_name: aai2k/tmmcore
+edit_uri: edit/main/docs/
+copyright: MIT licensed
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - navigation.tracking
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+    - search.highlight
+    - toc.follow
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - footnotes
+  - tables
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.arithmatex:
+      generic: true
+  - toc:
+      permalink: true
+
+# Order matters. The hook calls renderMathInElement, which auto-render defines,
+# and document$ emits as soon as it is subscribed to — so the library must load
+# first. (Material's MathJax example puts the hook first because MathJax reads a
+# config object at load time; KaTeX is the opposite case.)
+extra_javascript:
+  - https://unpkg.com/katex@0.16.11/dist/katex.min.js
+  - https://unpkg.com/katex@0.16.11/dist/contrib/auto-render.min.js
+  - js/katex.js
+
+extra_css:
+  - https://unpkg.com/katex@0.16.11/dist/katex.min.css
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - API reference: api.md
+  - Examples: examples.md
+  - Validation: validation.md
+  - Comparison with other packages: comparison.md

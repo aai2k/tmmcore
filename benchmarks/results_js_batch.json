@@ -1,0 +1,38 @@
+{
+ "node": "v24.18.0",
+ "nbatch": 128,
+ "results": [
+  {
+   "name": "AR4/g71",
+   "nLayers": 4,
+   "nLam": 71,
+   "nbatch": 128,
+   "js_s": 0.0754275,
+   "wasm_s": 0.005224
+  },
+  {
+   "name": "HR21/g71",
+   "nLayers": 21,
+   "nLam": 71,
+   "nbatch": 128,
+   "js_s": 0.3590211,
+   "wasm_s": 0.0246522
+  },
+  {
+   "name": "AG7/g71",
+   "nLayers": 7,
+   "nLam": 71,
+   "nbatch": 128,
+   "js_s": 0.1268566,
+   "wasm_s": 0.009
+  },
+  {
+   "name": "BIG40/g71",
+   "nLayers": 40,
+   "nLam": 71,
+   "nbatch": 128,
+   "js_s": 0.6796894,
+   "wasm_s": 0.0458517
+  }
+ ]
+}

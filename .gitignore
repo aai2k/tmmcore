@@ -1,0 +1,18 @@
+# Benchmark virtualenv, ~1.3 GB of torch/jax. Recreate with the pip lines in
+# benchmarks/README.md
+.venv/
+
+__pycache__/
+*.pyc
+
+# Local working notes
+notes/
+
+# MkDocs build output
+site/
+
+# Docs preview virtualenv
+.venv-docs/
+
+# Generated benchmark tables; published numbers live in docs/comparison.md
+benchmarks/tables.md

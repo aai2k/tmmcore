@@ -1,0 +1,64 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  javascript:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['18', '20', '22']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: JavaScript against WebAssembly
+        run: npm test
+
+      - name: Against an independent implementation
+        run: npm run compare
+
+      - name: Examples
+        run: npm run examples
+
+  native-c:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      # The kernel claims to be portable C99 needing nothing but libm. Compile
+      # it warning-free with whatever the platform provides — gcc on Linux,
+      # clang on macOS, MSVC on Windows — so the claim is tested rather than
+      # asserted.
+      - name: Compile (gcc / clang)
+        if: runner.os != 'Windows'
+        run: cc -std=c99 -pedantic -Wall -Wextra -Werror -O2 -c src/tmm_kernel.c -o tmm_kernel.o
+
+      - name: Compile (MSVC)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -latest -products * `
+            -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+            -property installationPath
+          if (-not $installPath) { throw 'MSVC installation not found' }
+
+          Import-Module (Join-Path $installPath 'Common7\Tools\Microsoft.VisualStudio.DevShell.dll')
+          Enter-VsDevShell -VsInstallPath $installPath -SkipAutomaticLocation `
+            -DevCmdArguments '-arch=x64 -host_arch=x64'
+
+          cl /c /W3 /WX /O2 src\tmm_kernel.c
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
