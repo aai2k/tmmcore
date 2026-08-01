@@ -1,4 +1,10 @@
-# tmmcore
+<picture>
+  <source media="(prefers-color-scheme: dark)"
+          srcset="https://raw.githubusercontent.com/aai2k/tmmcore/main/docs/img/banner.png">
+  <img alt="tmmcore"
+       src="https://raw.githubusercontent.com/aai2k/tmmcore/main/docs/img/banner-dark.png"
+       width="640">
+</picture>
 
 Transfer-matrix method for multilayer thin-film optics, with exact analytic derivatives.
 
