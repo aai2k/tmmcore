@@ -10,7 +10,10 @@
 
 **Transfer-matrix method for multilayer thin-film optics, with exact analytic derivatives.**
 
+[![npm](https://img.shields.io/npm/v/tmmcore)](https://www.npmjs.com/package/tmmcore)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+
+**[Documentation](https://aai2k.github.io/tmmcore/)** · **[Getting started](https://aai2k.github.io/tmmcore/getting-started/)** · **[API](https://aai2k.github.io/tmmcore/api/)** · **[Validation](https://aai2k.github.io/tmmcore/validation/)**
 
 </div>
 
@@ -23,8 +26,6 @@ analytically rather than by finite differences.
 Ships as JavaScript, as C, and as a WebAssembly build of the C. The JavaScript
 has no dependencies and works on import. WebAssembly is opt-in and roughly an
 order of magnitude faster.
-
-**[Documentation](https://aai2k.github.io/tmmcore/)**
 
 ## Install
 
