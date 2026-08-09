@@ -5,7 +5,7 @@
           srcset="https://raw.githubusercontent.com/aai2k/tmmcore/main/docs/img/banner-on-dark.png">
   <img alt="tmmcore"
        src="https://raw.githubusercontent.com/aai2k/tmmcore/main/docs/img/banner-on-light.png"
-       width="640">
+       width="320">
 </picture>
 
 **Transfer-matrix method for multilayer thin-film optics, with exact analytic derivatives.**
