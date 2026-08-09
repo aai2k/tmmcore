@@ -74,26 +74,37 @@ under conjugation; phase-sensitive quantities are not.
 
 ## Verify it yourself
 
-Two commands, neither needing anything but Node:
+Three commands, none needing anything but Node:
 
 ```bash
-npm test        # the JavaScript and the C agree, to float64 round-off
-npm run compare # and both agree with an independent implementation
+node examples/01-single-layer.mjs   # matches the closed-form solution
+npm test                            # the JavaScript and the C agree
+npm run compare                     # and both agree with an independent implementation
 ```
 
-The first drives both implementations with identical inputs across absorbing,
-dispersive and oblique-incidence cases and compares every returned quantity.
-64,416 comparisons, worst disagreement 4.4e-16.
+The first tests the equations rather than agreement, and is the only one here
+that does. A single quarter-wave layer at normal incidence has an exact solution
+(Macleod §3.2); tmmcore reproduces it to 1.4e-17, inside double-precision
+epsilon of 2.2e-16.
 
-The second checks them against [Steven Byrnes'
+The second drives both implementations with identical inputs across absorbing,
+dispersive and oblique-incidence cases and compares every returned quantity.
+64,416 comparisons, worst disagreement 4.4e-16. This is two implementations by
+the same author, so it catches porting bugs and establishes nothing beyond that.
+
+The third checks them against [Steven Byrnes'
 `tmm`](https://github.com/sbyrnes321/tmm), written independently in Python under
 the same complex-index convention, so only the mathematics is under test. 12,352
 values, worst disagreement 8.6e-14, which is float64 accumulation noise over a
 forty-layer matrix product.
 
-Timing comparisons against four other packages are in the
-[documentation](https://aai2k.github.io/tmmcore/comparison/), and need a Python
-environment.
+[Validation](https://aai2k.github.io/tmmcore/validation/) sets out what each
+level does and does not establish, and lists what is not tested at all.
+
+The [comparison with four other TMM packages](https://aai2k.github.io/tmmcore/comparison/)
+covers accuracy as well as speed, including which of them run in single
+precision. Reproducing the timings needs a Python environment; the accuracy
+table does not.
 
 ## Documentation
 
