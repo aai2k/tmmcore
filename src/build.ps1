@@ -24,7 +24,7 @@
 param([switch]$InstallEmsdk)
 
 $ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
 # --- Try to activate emsdk from a known root (returns $true if emcc appears) ---
@@ -111,11 +111,13 @@ $emccArgs = @(
   '--no-entry'
   '-sSTANDALONE_WASM=1'
   '-sALLOW_MEMORY_GROWTH=1'
-  '-sEXPORTED_FUNCTIONS=_tmm_one,_tmm_spectrum,_tmm_jacobian,_tmm_needle_scan,_tmm_hessian,_malloc,_free'
+  '-sEXPORTED_FUNCTIONS=_tmm_one,_tmm_spectrum,_tmm_jacobian,_tmm_needle_scan,_tmm_hessian,_tmm_phase_one,_tmm_phase_spectrum,_tmm_phase_jacobian,_malloc,_free'
   '-o'
   'src/tmm_kernel.wasm'
 )
 & emcc @emccArgs
+if ($LASTEXITCODE -ne 0) { Write-Error "emcc failed with exit code $LASTEXITCODE."; exit 1 }
 
 Write-Host "Built src/tmm_kernel.wasm"
 node tests/equivalence.mjs
+if ($LASTEXITCODE -ne 0) { Write-Error "equivalence tests failed with exit code $LASTEXITCODE."; exit 1 }

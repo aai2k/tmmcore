@@ -25,10 +25,7 @@ someone checks.
 | Complex numbers | `[re, im]` pairs |
 | Layer order | incident medium first, substrate last |
 
-This is the complex conjugate of the convention in Macleod's *Thin-Film Optical
-Filters* ($\tilde n = n - ik$, $\exp(+i\omega t)$). Reflectance, transmittance
-and absorptance are identical under conjugation. Phase-sensitive quantities are
-not, so mind the sign if you compute phase from these results.
+This is the complex conjugate of the convention in Macleod's *Thin-Film Optical Filters* ($\tilde n = n - ik$, $\exp(+i\omega t)$). Reflectance, transmittance and absorptance are identical under conjugation. Phase-sensitive quantities are not, so mind the sign if you compute phase from these results.
 
 !!! warning "k is positive for loss"
 
@@ -52,9 +49,7 @@ const layers = [
 The incident medium and substrate are passed separately, as bare `[re, im]`
 pairs, since they are semi-infinite and have no thickness.
 
-Dispersion is your responsibility: tmmcore takes the index **at the wavelength
-you are evaluating**. Sweeping a spectrum means recomputing each layer's index
-per wavelength.
+Dispersion is your responsibility: tmmcore takes the index **at the wavelength you are evaluating**. Evaluating a spectrum means recomputing each layer's index per wavelength.
 
 ```js
 const nSiO2 = lam => [1.46 + 3000 / (lam * lam), 0];
@@ -123,9 +118,7 @@ instantiate, and call methods on the instance.
 Instances are not shared between threads, since there is no shared memory. Each
 worker instantiates its own from the same bytes.
 
-For a whole spectrum, `tmmSpectrum` evaluates every wavelength and both
-polarizations in one call. That is where the speed advantage comes from: it
-amortizes the JavaScript-to-WebAssembly boundary crossing.
+For a whole spectrum, `tmmSpectrum` evaluates every wavelength and both polarizations in one call. That is where the speed advantage comes from: it amortizes the JavaScript-to-WebAssembly boundary crossing.
 
 ## Next
 

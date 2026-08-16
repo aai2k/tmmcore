@@ -1,5 +1,5 @@
 /**
- * Transfer-matrix method for multilayer thin films — JavaScript reference
+ * Transfer-matrix method for multilayer thin films: JavaScript reference
  * implementation.
  *
  * System model:
@@ -226,7 +226,7 @@ export function tmm(lambda_nm, theta_deg, pol, n0, ns, layers) {
 //   dA/dd = −(dR/dd + dT/dd)
 // The host layer cancels automatically through Pre/Post (a needle of the
 // host index at an interior point gives ~0), so no nₐ²−n_host² term is
-// needed — exactly as in Sullivan's scheme.
+// needed, exactly as in Sullivan's scheme.
 //
 // Returns { R, T, A, gaps, intra } where
 //   gaps[pos]            = [{dR,dT,dA} per candidate]   pos = 0..N
@@ -360,7 +360,7 @@ export function tmmNeedleScan(lambda_nm, theta_deg, pol, n0, ns, layers,
 //   dM_k/dd_k = Q · [[ −sinδ,      −i cosδ / η ],
 //                    [ −i η cosδ,  −sinδ       ]]
 //
-// As δ→0 this collapses to [[0,−iQ/η],[−iQη,0]] — exactly the needle
+// As δ→0 this collapses to [[0,−iQ/η],[−iQη,0]], exactly the needle
 // A-matrix in tmmNeedleScan (needleA), i.e. the needle kernel is the δ=0
 // special case of this; a strong internal-consistency check.
 //
@@ -440,7 +440,7 @@ export function tmmThicknessJacobian(lambda_nm, theta_deg, pol, n0, ns, layers) 
 // order optimization methods in the synthesis of multilayer coatings," Comp.
 // Maths. Math. Phys. 33, 1339 (1993)).
 //
-// Derivation (same Abelès matrix calculus as the Jacobian — Macleod Eq.
+// Derivation (same Abelès matrix calculus as the Jacobian, Macleod Eq.
 // 2.111/2.113; pre/post decomposition Sullivan & Dobrowolski 1996):
 //   [B,C] = M₀···M_{N-1}·[1,ηs];  ∂[B,C]/∂dₖ = Pre[k]·(dMₖ)·Post[k+1].
 //   Mixed second partials (i < j, position-ordered):

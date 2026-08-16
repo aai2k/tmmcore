@@ -52,12 +52,7 @@ polarizations:
 | 7-layer with Ag, 701 pts | 3.6e-15 | 3.1e-15 |
 | 40-layer, 701 pts | 1.8e-14 | 8.6e-14 |
 
-tmmcore and `tmm_faster` both agree with Byrnes at the level of float64
-accumulation noise. The other two cannot: **both `tmm_fast` and `tmmax` are
-single precision**. `tmm_fast` casts internally regardless of the dtype you hand
-it; `tmmax` runs on JAX with `jax_enable_x64` left at its default of false. Both
-are fine for generating machine-learning training data. Neither is suitable as
-an accuracy reference, and neither can be checked against one.
+tmmcore and `tmm_faster` both agree with Byrnes at the level of float64 accumulation noise. The other two cannot: **both `tmm_fast` and `tmmax` are single precision**. `tmm_fast` casts internally regardless of the dtype you hand it; `tmmax` runs on JAX with `jax_enable_x64` left at its default of false. Both are fine for generating machine-learning training data. Neither is suitable as an accuracy reference, and neither can be checked against one.
 
 ## Speed
 
@@ -92,18 +87,11 @@ As speedup factors, single-threaded:
     tmmcore on large problems: 1.27 ms against 3.18 ms on the 40-layer,
     701-point case.
 
-    The 2.0–2.7× advantage above is **per core**, with `OMP_NUM_THREADS=1`. That
-    is the honest comparison of the code itself, and it is the relevant one when
-    you parallelize at a level above the kernel. "Fastest TMM library" is not a
-    claim this data supports, and it is not one made here.
+    The 2.0–2.7× advantage above is **per core**, with `OMP_NUM_THREADS=1`. That is the honest comparison of the code itself, and it is the relevant one when you parallelize at a level above the kernel. "Fastest TMM library" is not a claim this data supports, and it is not one made here.
 
 !!! warning "Batching"
 
-    The vectorized libraries exist to evaluate many stacks at once. tmmcore has
-    no batch entry point and simply loops. It still wins single-threaded on 128
-    distinct stacks (45.9 ms against 82.9 ms for `tmm_faster` and 209.8 ms for
-    `tmm_fast`, on the 40-layer case). On a GPU with a large enough batch,
-    `tmm_fast` and `tmmax` would pull ahead, and **that case was not measured**.
+    The vectorized libraries exist to evaluate many stacks at once. tmmcore has no batch entry point and simply loops. It still wins single-threaded on 128 distinct stacks (45.9 ms against 82.9 ms for `tmm_faster` and 209.8 ms for `tmm_fast`, on the 40-layer case). On a GPU with a large enough batch, `tmm_fast` and `tmmax` would pull ahead, and **that case was not measured**.
 
 Further points of fairness, carried from the harness notes:
 

@@ -1,5 +1,5 @@
 /**
- * tmmcore — transfer-matrix method for multilayer thin films.
+ * tmmcore : transfer-matrix method for multilayer thin films.
  *
  * Two interchangeable implementations of the same physics:
  *
@@ -8,7 +8,7 @@
  *
  * The JavaScript path works immediately on import. WebAssembly is opt-in: load
  * the `.wasm` bytes, instantiate, and call the instance methods. Results agree
- * to float64 round-off either way — see `tests/equivalence.mjs`.
+ * to float64 round-off either way : see `tests/equivalence.mjs`.
  *
  * Conventions, which matter more than anything else here:
  *   ñ = n + ik              k ≥ 0 for absorbing media
@@ -31,5 +31,22 @@ export {
     cadd, csub, cmul, cdiv, cabs2, cconj, csqrt, ccos, csin, creal, cimag,
     matmul, rescaleMatrix, snellCosTheta, layerMatrix, cmatvec,
 } from './tmm.js';
+
+export {
+    // Phase, group delay, GDD and TOD
+    tmmPhaseDispersion,
+    tmmPhaseThicknessJacobian,
+    // Coefficient jets, for callers wanting r and t rather than the phase
+    tmmCoefficientJets,
+    tmmCoefficientThicknessJets,
+    coefficientPhaseDispersion,
+    coefficientPhaseThicknessDerivatives,
+    // Unit helpers
+    C_NM_PER_FS, omegaFromLambdaNm,
+} from './phase.js';
+
+// Taylor-jet arithmetic. The phase functions take refractive indices as jets;
+// these compose one from any dispersion formula you can write.
+export * from './taylorJet.js';
 
 export * from './tmmWasm.js';

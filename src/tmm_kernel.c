@@ -1,10 +1,14 @@
 /*
- * tmm_kernel.c — transfer-matrix method for multilayer thin films.
+ * tmm_kernel.c : transfer-matrix method for multilayer thin films.
  *
  * Computes reflectance, transmittance and absorptance for a stack of absorbing,
  * dispersive layers at arbitrary angle of incidence, in s and p polarization,
  * together with exact analytic derivatives: the thickness Jacobian, the
  * thickness Hessian, and the needle-insertion P-function.
+ *
+ * Also computes phase, group delay, group delay dispersion and third-order
+ * dispersion, by carrying the same characteristic matrix in third-order Taylor
+ * arithmetic with angular frequency as the differentiation variable.
  *
  * Conventions:
  *   ñ = n + ik              k > 0 for absorbing media
@@ -22,6 +26,7 @@
  *   • Macleod, Thin-Film Optical Filters 5th ed., §2.4, Eqs. 2.111, 2.123–2.125
  *   • Sullivan & Dobrowolski, Appl. Opt. 35, 5484 (1996), Eqs. (3)–(6)
  *   • Tikhonravov, Trubetskov & DeBell, Appl. Opt. 35, 5493 (1996)
+ *   • Birge & Kärtner, Appl. Opt. 45, 1478 (2006)   [phase dispersion]
  */
 
 #include <math.h>
@@ -57,7 +62,7 @@ static inline cx cdiv(cx a, cx b) {
 static inline double cabs2(cx a) { return a.re * a.re + a.im * a.im; }
 static inline cx cconj(cx a) { return cmk(a.re, -a.im); }
 static inline cx csqrt_(cx a) {
-    /* r = sqrt(sqrt(re²+im²)); theta = atan2(im,re)/2  — JS csqrt verbatim */
+    /* r = sqrt(sqrt(re²+im²)); theta = atan2(im,re)/2  : JS csqrt verbatim */
     double r = sqrt(sqrt(a.re * a.re + a.im * a.im));
     double theta = atan2(a.im, a.re) / 2.0;
     return cmk(r * cos(theta), r * sin(theta));
@@ -242,7 +247,7 @@ void tmm_spectrum(const double *lambdas, int nLam,
 
 /* ── Exported: analytic thickness Jacobian for one (λ, θ, pol) ────────────────
  * Faithful port of tmmThicknessJacobian() in thinFilmMath.js. Returns the exact
- * analytic dR/dd_k, dT/dd_k, dA/dd_k for every layer at one sample — the DLS
+ * analytic dR/dd_k, dT/dd_k, dA/dd_k for every layer at one sample : the DLS
  * refiner's per-step gradient (2·N fewer evals than central differences).
  *
  * `layers` is N triples [n_re, n_im, d]; layers used AS-IS (no d>0 filter) for
@@ -317,7 +322,7 @@ void tmm_jacobian(double lambda_nm, double theta_deg, int pol,
         vec2 dV = cmatvec(Pre[k], cmatvec(dMk, Post[k + 1]));
         cx dB = dV.x, dC = dV.y;
 
-        /* metrics(dB,dC) — verbatim from validated tmmNeedleScan.metrics */
+        /* metrics(dB,dC) : verbatim from validated tmmNeedleScan.metrics */
         cx dr = cmul(f, csub(cmul(Cv, dB), cmul(Bv, dC)));
         double dR = 2.0 * (cmul(cconj(r), dr)).re;
         cx dt = cmul(neg1, cmul(f, cadd(cmul(eta0, dB), dC)));
@@ -329,7 +334,7 @@ void tmm_jacobian(double lambda_nm, double theta_deg, int pol,
 }
 
 /* ── Analytic needle P-function scan ─────────────────────────────────────────
- * Faithful port of tmmNeedleScan() in thinFilmMath.js — the d→0 limit of
+ * Faithful port of tmmNeedleScan() in thinFilmMath.js : the d→0 limit of
  * Sullivan's pre/post method (Tikhonravov's analytic P-function). Returns the
  * merit-gradient ingredients {dR,dT,dA} of inserting an infinitesimal needle of
  * each candidate index at every gap position (0..N) and, optionally, at intra-
@@ -342,7 +347,7 @@ void tmm_jacobian(double lambda_nm, double theta_deg, int pol,
  *   intra : N*nFrac*nCand*3        layout [layer][frac][cand][dR,dT,dA] (nFrac>0)
  */
 
-/* {dR,dT,dA} from d[B,C]/dd — verbatim from tmm_jacobian.metrics. */
+/* {dR,dT,dA} from d[B,C]/dd : verbatim from tmm_jacobian.metrics. */
 static void needle_metrics(cx Bv, cx Cv, cx eta0, cx f, cx r, cx t, double Tfac,
                            cx dB, cx dC, double *o) {
     cx dr = cmul(f, csub(cmul(Cv, dB), cmul(Bv, dC)));
@@ -450,7 +455,7 @@ void tmm_needle_scan(double lambda_nm, double theta_deg, int pol,
 }
 
 /* ── Analytic thickness-Hessian kernel ───────────
- * LINE-BY-LINE port of tmmThicknessHessian() in thinFilmMath.js — the EXACT
+ * LINE-BY-LINE port of tmmThicknessHessian() in thinFilmMath.js : the EXACT
  * analytic second derivatives ∂²{R,T,A}/∂dᵢ∂dⱼ (full N×N symmetric) plus the
  * first derivatives, at one (λ,θ,pol). Used by the bounded-SQP / Newton inner
  * refiner; the JS remains the oracle (tests/wasm_hessian_equivalence.mjs).
@@ -586,4 +591,460 @@ void tmm_hessian(double lambda_nm, double theta_deg, int pol,
 
     free(cosThJ); free(Ms); free(Pre); free(Post);
     free(dM); free(d2M); free(v); free(dBa); free(dCa);
+}
+
+/* ── Third-order Taylor jets ─────────────────────────────────────────────────
+ * A jet holds [f, f', f''/2!, f'''/3!], each entry complex. Ordinary power-
+ * series algebra on these differentiates a function exactly, with no finite
+ * differences. Port of taylorJet.js; where the JS multiplies by a reciprocal
+ * rather than dividing, so does this, since the two are not bit-identical. */
+
+#define JET_N 4
+
+typedef struct { cx c[JET_N]; } jet;
+
+static inline jet jconst(double re, double im) {
+    jet j;
+    j.c[0] = cmk(re, im);
+    j.c[1] = cmk(0.0, 0.0); j.c[2] = cmk(0.0, 0.0); j.c[3] = cmk(0.0, 0.0);
+    return j;
+}
+static inline jet jread(const double *p) {
+    jet j;
+    for (int i = 0; i < JET_N; i++) j.c[i] = cmk(p[2 * i], p[2 * i + 1]);
+    return j;
+}
+static inline jet jadd(jet a, jet b) {
+    jet o; for (int i = 0; i < JET_N; i++) o.c[i] = cadd(a.c[i], b.c[i]); return o;
+}
+static inline jet jsub(jet a, jet b) {
+    jet o; for (int i = 0; i < JET_N; i++) o.c[i] = csub(a.c[i], b.c[i]); return o;
+}
+static inline jet jscale(jet a, double s) {
+    jet o; for (int i = 0; i < JET_N; i++) o.c[i] = cmk(a.c[i].re * s, a.c[i].im * s); return o;
+}
+static inline jet jmul(jet a, jet b) {
+    jet o;
+    for (int order = 0; order < JET_N; order++) {
+        cx sum = cmk(0.0, 0.0);
+        for (int i = 0; i <= order; i++) sum = cadd(sum, cmul(a.c[i], b.c[order - i]));
+        o.c[order] = sum;
+    }
+    return o;
+}
+static inline jet jrecip(jet a) {
+    jet o;
+    o.c[0] = cdiv(cmk(1.0, 0.0), a.c[0]);
+    for (int order = 1; order < JET_N; order++) {
+        cx sum = cmk(0.0, 0.0);
+        for (int i = 1; i <= order; i++) sum = cadd(sum, cmul(a.c[i], o.c[order - i]));
+        cx q = cdiv(sum, a.c[0]);
+        o.c[order] = cmk(-q.re, -q.im);
+    }
+    return o;
+}
+static inline jet jdiv(jet a, jet b) { return jmul(a, jrecip(b)); }
+
+static inline jet jsqrt_j(jet a) {
+    jet o;
+    o.c[0] = csqrt_(a.c[0]);
+    cx twiceRoot = cmk(o.c[0].re * 2.0, o.c[0].im * 2.0);
+    for (int order = 1; order < JET_N; order++) {
+        cx known = cmk(0.0, 0.0);
+        for (int i = 1; i < order; i++) known = cadd(known, cmul(o.c[i], o.c[order - i]));
+        o.c[order] = cdiv(csub(a.c[order], known), twiceRoot);
+    }
+    return o;
+}
+
+static void jsincos(jet a, jet *sine, jet *cosine) {
+    double re = a.c[0].re, im = a.c[0].im;
+    sine->c[0]   = cmk(sin(re) * cosh(im),  cos(re) * sinh(im));
+    cosine->c[0] = cmk(cos(re) * cosh(im), -sin(re) * sinh(im));
+    for (int order = 1; order < JET_N; order++) {
+        cx sineSum = cmk(0.0, 0.0), cosineSum = cmk(0.0, 0.0);
+        for (int i = 1; i <= order; i++) {
+            cx ts = cmul(a.c[i], cosine->c[order - i]);
+            cx tc = cmul(a.c[i], sine->c[order - i]);
+            sineSum   = cadd(sineSum,   cmk(ts.re * i, ts.im * i));
+            cosineSum = cadd(cosineSum, cmk(tc.re * i, tc.im * i));
+        }
+        double inv = 1.0 / (double)order;
+        sine->c[order]   = cmk( sineSum.re   * inv,  sineSum.im   * inv);
+        cosine->c[order] = cmk(-cosineSum.re * inv, -cosineSum.im * inv);
+    }
+}
+
+/* Past the limit the layer is opaque: the derivatives are zero to machine
+ * precision and dropping them keeps cosh from overflowing the whole product. */
+static inline jet jclampim(jet a, double limit) {
+    if (a.c[0].im > limit || a.c[0].im < -limit) {
+        double held = (a.c[0].im > limit) ? limit : -limit;
+        jet o;
+        o.c[0] = cmk(a.c[0].re, held);
+        for (int i = 1; i < JET_N; i++) o.c[i] = cmk(a.c[i].re, 0.0);
+        return o;
+    }
+    return a;
+}
+
+/* [f, f', f'', f'''] from the stored [f, f', f''/2!, f'''/3!]. */
+static inline void jderivs(jet a, cx *out) {
+    out[0] = a.c[0];
+    out[1] = a.c[1];
+    out[2] = cmk(a.c[2].re * 2.0, a.c[2].im * 2.0);
+    out[3] = cmk(a.c[3].re * 6.0, a.c[3].im * 6.0);
+}
+
+/* λ(ω) = 2πc/ω. Needs no value for c: with λ and ω given, λ' = −λ/ω. */
+static inline jet jwavelength(double lambda, double omega) {
+    jet o;
+    o.c[0] = cmk(lambda, 0.0);
+    o.c[1] = cmk(-lambda / omega, 0.0);
+    o.c[2] = cmk(lambda / (omega * omega), 0.0);
+    o.c[3] = cmk(-lambda / (omega * omega * omega), 0.0);
+    return o;
+}
+
+/* ── Jet-valued 2×2 matrices ─────────────────────────────────────────────── */
+
+typedef struct { jet a, b, c, d; } jmat2;
+
+static jmat2 jmatmul(jmat2 A, jmat2 B) {
+    jmat2 M;
+    M.a = jadd(jmul(A.a, B.a), jmul(A.b, B.c));
+    M.b = jadd(jmul(A.a, B.b), jmul(A.b, B.d));
+    M.c = jadd(jmul(A.c, B.a), jmul(A.d, B.c));
+    M.d = jadd(jmul(A.c, B.b), jmul(A.d, B.d));
+    return M;
+}
+static jmat2 jidentity(void) {
+    jmat2 M;
+    M.a = jconst(1.0, 0.0); M.b = jconst(0.0, 0.0);
+    M.c = jconst(0.0, 0.0); M.d = jconst(1.0, 0.0);
+    return M;
+}
+static jmat2 jzero(void) {
+    jmat2 M;
+    M.a = jconst(0.0, 0.0); M.b = jconst(0.0, 0.0);
+    M.c = jconst(0.0, 0.0); M.d = jconst(0.0, 0.0);
+    return M;
+}
+/* The order-0 matrix controls overflow in the physical coefficient. Once
+ * selected, one plain scalar rescales every jet order and cancels from r. */
+static double jrescale(jmat2 *M, double threshold) {
+    jet *e[4] = { &M->a, &M->b, &M->c, &M->d };
+    double scale = 0.0;
+    for (int i = 0; i < 4; i++) {
+        scale = fmax(scale, fabs(e[i]->c[0].re));
+        scale = fmax(scale, fabs(e[i]->c[0].im));
+    }
+    if (scale <= threshold) return 0.0;
+    double inverse = 1.0 / scale;
+    for (int i = 0; i < 4; i++) *e[i] = jscale(*e[i], inverse);
+    return log(scale);
+}
+static double jmatmag(jmat2 M) {
+    jet *e[4] = { &M.a, &M.b, &M.c, &M.d };
+    double magnitude = 0.0;
+    for (int i = 0; i < 4; i++)
+        for (int o = 0; o < JET_N; o++)
+            magnitude = fmax(magnitude, fmax(fabs(e[i]->c[o].re), fabs(e[i]->c[o].im)));
+    return magnitude;
+}
+
+static inline jet jsnell_cos(jet n0, jet sin0, jet nj) {
+    jet s = jdiv(jmul(n0, sin0), nj);
+    return jsqrt_j(jsub(jconst(1.0, 0.0), jmul(s, s)));
+}
+static inline jet jadmittance(jet n, jet cosv, int pol) {
+    return (pol == 0) ? jmul(n, cosv) : jdiv(n, cosv);
+}
+
+static jmat2 jlayer_matrix(jet index, double thickness, jet wavelength, jet cosine, int pol) {
+    jet phase = jclampim(jscale(jdiv(jmul(index, cosine), wavelength),
+                                2.0 * PI * thickness), MAX_IM_DELTA);
+    jet sine, cosinePhase;
+    jsincos(phase, &sine, &cosinePhase);
+    jet eta = jadmittance(index, cosine, pol);
+    jet minusI = jconst(0.0, -1.0);
+    jmat2 M;
+    M.a = cosinePhase;
+    M.b = jmul(minusI, jdiv(sine, eta));
+    M.c = jmul(minusI, jmul(eta, sine));
+    M.d = cosinePhase;
+    return M;
+}
+
+static void jlayer_matrix_dd(jet index, double thickness, jet wavelength, jet cosine, int pol,
+                             jmat2 *M, jmat2 *dM) {
+    jet phasePerUnit = jscale(jdiv(jmul(index, cosine), wavelength), 2.0 * PI);
+    jet rawPhase = jscale(phasePerUnit, thickness);
+    jet phase = jclampim(rawPhase, MAX_IM_DELTA);
+    jet phaseDerivative;
+    if (rawPhase.c[0].im == phase.c[0].im) {
+        phaseDerivative = phasePerUnit;
+    } else {
+        for (int i = 0; i < JET_N; i++)
+            phaseDerivative.c[i] = cmk(phasePerUnit.c[i].re, 0.0);
+    }
+    jet sine, cosinePhase;
+    jsincos(phase, &sine, &cosinePhase);
+    jet sineDerivative = jmul(cosinePhase, phaseDerivative);
+    jet cosineDerivative = jscale(jmul(sine, phaseDerivative), -1.0);
+    jet eta = jadmittance(index, cosine, pol);
+    jet minusI = jconst(0.0, -1.0);
+    M->a = cosinePhase;
+    M->b = jmul(minusI, jdiv(sine, eta));
+    M->c = jmul(minusI, jmul(eta, sine));
+    M->d = cosinePhase;
+    dM->a = cosineDerivative;
+    dM->b = jmul(minusI, jdiv(sineDerivative, eta));
+    dM->c = jmul(minusI, jmul(eta, sineDerivative));
+    dM->d = cosineDerivative;
+}
+
+typedef struct { jet reflection, transmission, denominator; } jcoef;
+
+static jcoef jcoef_from_matrix(jmat2 M, jet incidentEta, jet substrateEta, double logScale) {
+    jet boundaryB = jadd(M.a, jmul(M.b, substrateEta));
+    jet boundaryC = jadd(M.c, jmul(M.d, substrateEta));
+    jet incidentB = jmul(incidentEta, boundaryB);
+    jcoef o;
+    o.denominator = jadd(incidentB, boundaryC);
+    o.reflection = jdiv(jsub(incidentB, boundaryC), o.denominator);
+    o.transmission = jdiv(jscale(incidentEta, 2.0), o.denominator);
+    if (logScale != 0.0) o.transmission = jscale(o.transmission, exp(-logScale));
+    return o;
+}
+
+static void jcoef_thickness(jmat2 dMat, jcoef base, jet incidentEta, jet substrateEta,
+                            jet *dReflection, jet *dTransmission) {
+    jet dB = jadd(dMat.a, jmul(dMat.b, substrateEta));
+    jet dC = jadd(dMat.c, jmul(dMat.d, substrateEta));
+    jet dIncidentB = jmul(incidentEta, dB);
+    jet dDenominator = jadd(dIncidentB, dC);
+    jet dNumerator = jsub(dIncidentB, dC);
+    *dReflection = jdiv(jsub(dNumerator, jmul(base.reflection, dDenominator)), base.denominator);
+    *dTransmission = jscale(jdiv(jmul(base.transmission, dDenominator), base.denominator), -1.0);
+}
+
+/* ── Phase quantities from a coefficient jet ─────────────────────────────────
+ * Writes [phaseRad, GD, GDD, TOD, |coefficient|²]; all NaN where the
+ * coefficient is exactly zero and the phase is undefined.
+ *
+ *   GD  = Im(r'/r)
+ *   GDD = Im(r''/r − (r'/r)²)
+ *   TOD = Im(r'''/r − 3 r'r''/r² + 2 (r'/r)³)                Birge & Kärtner
+ *
+ * GD comes out in the reciprocal of the caller's ω unit, GDD in its square and
+ * TOD in its cube. */
+
+static void jphase(jet coefficient, double *out5) {
+    cx d[4];
+    jderivs(coefficient, d);
+    cx value = d[0];
+    double magnitudeSquared = value.re * value.re + value.im * value.im;
+    if (magnitudeSquared == 0.0 || !isfinite(magnitudeSquared)) {
+        for (int i = 0; i < 5; i++) out5[i] = NAN;
+        return;
+    }
+    cx inverse = cdiv(cmk(1.0, 0.0), value);
+    cx firstRatio  = cmul(d[1], inverse);
+    cx secondRatio = cmul(d[2], inverse);
+    cx thirdRatio  = cmul(d[3], inverse);
+    cx squareFirst = cmk(firstRatio.re * firstRatio.re - firstRatio.im * firstRatio.im,
+                         2.0 * firstRatio.re * firstRatio.im);
+    cx firstTimesSecond = cmk(
+        firstRatio.re * secondRatio.re - firstRatio.im * secondRatio.im,
+        firstRatio.re * secondRatio.im + firstRatio.im * secondRatio.re);
+    cx cubeFirst = cmk(squareFirst.re * firstRatio.re - squareFirst.im * firstRatio.im,
+                       squareFirst.re * firstRatio.im + squareFirst.im * firstRatio.re);
+    out5[0] = -atan2(value.im, value.re);
+    out5[1] = firstRatio.im;
+    out5[2] = secondRatio.im - squareFirst.im;
+    out5[3] = thirdRatio.im - 3.0 * firstTimesSecond.im + 2.0 * cubeFirst.im;
+    out5[4] = magnitudeSquared;
+}
+
+/* ── Phase core: one wavelength, both coefficients ───────────────────────────
+ * `sinJet` is the incident-side sine as a jet, for a stack embedded in a
+ * dispersive medium at a fixed external angle; NULL uses the constant
+ * sin(theta_deg). out10 = [r: phaseRad, GD, GDD, TOD, |r|²][t: same]. */
+
+static void jphase_core(double lambda, double omega, double theta_deg, int pol,
+                        jet n0, jet ns, const jet *layerN, const double *thick, int N,
+                        const jet *sinJet, double *out10) {
+    jet wavelength = jwavelength(lambda, omega);
+    jet incidentSine = sinJet ? *sinJet : jconst(sin(theta_deg * PI / 180.0), 0.0);
+    jet incidentCosine = sinJet
+        ? jsqrt_j(jsub(jconst(1.0, 0.0), jmul(incidentSine, incidentSine)))
+        : jconst(cos(theta_deg * PI / 180.0), 0.0);
+    jet incidentEta = jadmittance(n0, incidentCosine, pol);
+    jet substrateCosine = jsnell_cos(n0, incidentSine, ns);
+    jet substrateEta = jadmittance(ns, substrateCosine, pol);
+
+    jmat2 M = jidentity();
+    double logScale = 0.0;
+    for (int k = 0; k < N; k++) {
+        if (!(thick[k] > 0.0)) continue;
+        jet cosine = jsnell_cos(n0, incidentSine, layerN[k]);
+        M = jmatmul(M, jlayer_matrix(layerN[k], thick[k], wavelength, cosine, pol));
+        logScale += jrescale(&M, MATRIX_RESCALE_THRESHOLD);
+    }
+    jcoef coefficients = jcoef_from_matrix(M, incidentEta, substrateEta, logScale);
+    jphase(coefficients.reflection, &out10[0]);
+    jphase(coefficients.transmission, &out10[5]);
+}
+
+/* ── Exported: phase dispersion at one wavelength ─────────────────────────────
+ * Mirrors tmmPhaseDispersion() in phase.js. Index jets are 8 doubles each,
+ * [re,im] per order. `sinJet` may be NULL. */
+
+TMM_EXPORT("tmm_phase_one")
+void tmm_phase_one(double lambda, double omega, double theta_deg, int pol,
+                   const double *n0jet, const double *nsjet,
+                   const double *layerJets, const double *thick, int N,
+                   const double *sinJet, double *out) {
+    jet *layerN = (jet *)malloc(sizeof(jet) * (N > 0 ? N : 1));
+    for (int k = 0; k < N; k++) layerN[k] = jread(&layerJets[8 * k]);
+    jet sine;
+    if (sinJet) sine = jread(sinJet);
+    jphase_core(lambda, omega, theta_deg, pol,
+                jread(n0jet), jread(nsjet), layerN, thick, N,
+                sinJet ? &sine : NULL, out);
+    free(layerN);
+}
+
+/* ── Exported: batched phase dispersion over a wavelength grid ────────────────
+ * One call evaluates the whole grid, amortizing the JS↔WASM boundary the same
+ * way tmm_spectrum does. Polarization is an argument rather than both-at-once,
+ * because this kernel is an order of magnitude dearer per sample than the plain
+ * spectrum and callers at normal incidence would pay twice for nothing.
+ *
+ * Memory layout (all f64, caller-owned):
+ *   lambdas  : nLam
+ *   omegas   : nLam                   angular frequency per λ; sets the unit
+ *   n0jets   : nLam × 8               incident-medium index jet per λ
+ *   nsjets   : nLam × 8               substrate index jet per λ
+ *   matJets  : N × nLam × 8           per-layer index jet, layout [layer][λ]
+ *   thick    : N
+ *   sinJets  : nLam × 8, or NULL
+ *   out      : nLam × 10              [r: phaseRad,GD,GDD,TOD,|r|²][t: same] */
+
+TMM_EXPORT("tmm_phase_spectrum")
+void tmm_phase_spectrum(const double *lambdas, const double *omegas, int nLam,
+                        const double *n0jets, const double *nsjets,
+                        const double *matJets, const double *thick, int N,
+                        double theta_deg, int pol,
+                        const double *sinJets, double *out) {
+    jet *layerN = (jet *)malloc(sizeof(jet) * (N > 0 ? N : 1));
+    for (int li = 0; li < nLam; li++) {
+        for (int k = 0; k < N; k++) {
+            long base = ((long)k * nLam + li) * 8;
+            layerN[k] = jread(&matJets[base]);
+        }
+        jet sine;
+        if (sinJets) sine = jread(&sinJets[8 * (long)li]);
+        jphase_core(lambdas[li], omegas[li], theta_deg, pol,
+                    jread(&n0jets[8 * (long)li]), jread(&nsjets[8 * (long)li]),
+                    layerN, thick, N,
+                    sinJets ? &sine : NULL, &out[10 * (long)li]);
+    }
+    free(layerN);
+}
+
+/* ── Exported: phase dispersion plus exact thickness derivatives ──────────────
+ * Mirrors tmmPhaseThicknessJacobian() in phase.js. Frequency stays the Taylor
+ * variable, so each thickness derivative is itself a third-order frequency jet.
+ * Zero-thickness layers are retained so derivative indices line up with the
+ * caller's design array. Negative and NaN thicknesses are skipped with a zero
+ * derivative, matching the point evaluator's base result.
+ *
+ *   out   : 10        as tmm_phase_one
+ *   deriv : 8 × N     [side][quantity][layer], side 0 = r, 1 = t,
+ *                     quantity 0 = dPhaseDeg, 1 = dGD, 2 = dGDD, 3 = dTOD
+ *
+ * The prefix/suffix decomposition cannot carry a rescaling, so if the matrix
+ * product overflows, `out` is still filled from the plain path and every entry
+ * of `deriv` is set to NaN. */
+
+TMM_EXPORT("tmm_phase_jacobian")
+void tmm_phase_jacobian(double lambda, double omega, double theta_deg, int pol,
+                        const double *n0jet, const double *nsjet,
+                        const double *layerJets, const double *thick, int N,
+                        const double *sinJet, double *out, double *deriv) {
+    jet n0 = jread(n0jet), ns = jread(nsjet);
+    jet *layerN = (jet *)malloc(sizeof(jet) * (N > 0 ? N : 1));
+    for (int k = 0; k < N; k++) layerN[k] = jread(&layerJets[8 * k]);
+    jet sine;
+    if (sinJet) sine = jread(sinJet);
+    const jet *sinePtr = sinJet ? &sine : NULL;
+
+    jet wavelength = jwavelength(lambda, omega);
+    jet incidentSine = sinePtr ? *sinePtr : jconst(sin(theta_deg * PI / 180.0), 0.0);
+    jet incidentCosine = sinePtr
+        ? jsqrt_j(jsub(jconst(1.0, 0.0), jmul(incidentSine, incidentSine)))
+        : jconst(cos(theta_deg * PI / 180.0), 0.0);
+    jet incidentEta = jadmittance(n0, incidentCosine, pol);
+    jet substrateCosine = jsnell_cos(n0, incidentSine, ns);
+    jet substrateEta = jadmittance(ns, substrateCosine, pol);
+
+    int M = (N > 0 ? N : 1);
+    jmat2 *layerM  = (jmat2 *)malloc(sizeof(jmat2) * M);
+    jmat2 *layerDM = (jmat2 *)malloc(sizeof(jmat2) * M);
+    for (int k = 0; k < N; k++) {
+        /* Match jphase_core's skip rule for invalid negative/NaN thicknesses,
+         * while retaining the useful derivative of a zero-thickness layer. */
+        if (!(thick[k] >= 0.0)) {
+            layerM[k] = jidentity();
+            layerDM[k] = jzero();
+            continue;
+        }
+        jet cosine = jsnell_cos(n0, incidentSine, layerN[k]);
+        jlayer_matrix_dd(layerN[k], thick[k], wavelength, cosine, pol,
+                         &layerM[k], &layerDM[k]);
+    }
+
+    jmat2 *prefix = (jmat2 *)malloc(sizeof(jmat2) * (N + 1));
+    jmat2 *suffix = (jmat2 *)malloc(sizeof(jmat2) * (N + 1));
+    prefix[0] = jidentity();
+    int overflowed = 0;
+    for (int k = 0; k < N; k++) {
+        prefix[k + 1] = jmatmul(prefix[k], layerM[k]);
+        if (jmatmag(prefix[k + 1]) > MATRIX_RESCALE_THRESHOLD) { overflowed = 1; break; }
+    }
+
+    if (overflowed) {
+        jphase_core(lambda, omega, theta_deg, pol, n0, ns, layerN, thick, N, sinePtr, out);
+        for (long i = 0; i < 8L * N; i++) deriv[i] = NAN;
+        free(layerN); free(layerM); free(layerDM); free(prefix); free(suffix);
+        return;
+    }
+
+    suffix[N] = jidentity();
+    for (int k = N - 1; k >= 0; k--) suffix[k] = jmatmul(layerM[k], suffix[k + 1]);
+
+    jcoef coefficients = jcoef_from_matrix(prefix[N], incidentEta, substrateEta, 0.0);
+    jphase(coefficients.reflection, &out[0]);
+    jphase(coefficients.transmission, &out[5]);
+
+    for (int k = 0; k < N; k++) {
+        jmat2 matrixDerivative = jmatmul(jmatmul(prefix[k], layerDM[k]), suffix[k + 1]);
+        jet dReflection, dTransmission;
+        jcoef_thickness(matrixDerivative, coefficients, incidentEta, substrateEta,
+                        &dReflection, &dTransmission);
+        const jet sides[2] = { dReflection, dTransmission };
+        const jet base[2] = { coefficients.reflection, coefficients.transmission };
+        for (int s = 0; s < 2; s++) {
+            cx dd[4];
+            jderivs(jdiv(sides[s], base[s]), dd);
+            deriv[((long)s * 4 + 0) * N + k] = -dd[0].im * 180.0 / PI;
+            deriv[((long)s * 4 + 1) * N + k] = dd[1].im;
+            deriv[((long)s * 4 + 2) * N + k] = dd[2].im;
+            deriv[((long)s * 4 + 3) * N + k] = dd[3].im;
+        }
+    }
+
+    free(layerN); free(layerM); free(layerDM); free(prefix); free(suffix);
 }

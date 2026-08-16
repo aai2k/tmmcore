@@ -1,9 +1,9 @@
 /**
- * tmmWasm.js — loader and ergonomic wrappers for the WebAssembly TMM kernel.
+ * tmmWasm.js : loader and ergonomic wrappers for the WebAssembly TMM kernel.
  *
  * The kernel (`tmm_kernel.c`, built to `tmm_kernel.wasm`) is a line-by-line port
- * of the JavaScript TMM in `tmm.js`. This module instantiates it — in a browser
- * main thread, a Web Worker, or Node — and exposes wrappers whose signatures
+ * of the JavaScript TMM in `tmm.js`. This module instantiates it : in a browser
+ * main thread, a Web Worker, or Node : and exposes wrappers whose signatures
  * mirror the JS functions.
  *
  * Acceleration is opt-in and falls back to JavaScript: if the `.wasm` is
@@ -11,15 +11,43 @@
  * return `null` and callers use the JS path. Results are identical either way
  * to float64 round-off.
  *
- * Instances are not shared across threads — there is no shared memory, so each
+ * Instances are not shared across threads : there is no shared memory, so each
  * context instantiates its own from the same bytes. Use `instantiateTmmWasm()`
  * where you already hold the bytes (a worker receives them in its init message)
  * and `initTmmWasmFromUrl()` where the artifact is fetchable.
  */
 
+import { omegaFromLambdaNm } from './phase.js';
+
 let _instance = null;     // TmmWasmInstance | null
 let _enabled = false;     // feature flag (default OFF)
 let _initPromise = null;  // de-dupe concurrent init
+
+// ── Jet marshalling ──────────────────────────────────────────────────────────
+// A jet crosses the boundary as 8 doubles, [re, im] per order.
+
+function writeJet(buf, offset, jet) {
+    for (let i = 0; i < 4; i++) {
+        buf[offset + 2 * i] = jet[i][0];
+        buf[offset + 2 * i + 1] = jet[i][1];
+    }
+}
+
+// The kernel writes NaN where the coefficient is exactly zero and the phase is
+// undefined; the JS reference returns null there, so agree with it.
+function readPhase(buf, offset) {
+    const magnitudeSquared = buf[offset + 4];
+    if (Number.isNaN(magnitudeSquared)) return null;
+    const phaseRad = buf[offset];
+    return {
+        phaseRad,
+        phaseDeg: phaseRad * 180 / Math.PI,
+        gd: buf[offset + 1],
+        gdd: buf[offset + 2],
+        tod: buf[offset + 3],
+        magnitudeSquared,
+    };
+}
 
 // Permissive imports: a STANDALONE_WASM build of pure-math C usually needs no
 // imports, but ALLOW_MEMORY_GROWTH may emit `emscripten_notify_memory_growth`,
@@ -49,6 +77,11 @@ export class TmmWasmInstance {
         // Optional (added later for SQP/Newton accel): a .wasm built before the
         // Hessian kernel existed simply lacks it → callers fall back to JS.
         this._tmm_hessian = ex.tmm_hessian || ex._tmm_hessian || null;
+        // Optional, same reason: the phase-dispersion kernel arrived after the
+        // spectral one, so an older artifact lacks these three.
+        this._tmm_phase_one = ex.tmm_phase_one || ex._tmm_phase_one || null;
+        this._tmm_phase_spectrum = ex.tmm_phase_spectrum || ex._tmm_phase_spectrum || null;
+        this._tmm_phase_jacobian = ex.tmm_phase_jacobian || ex._tmm_phase_jacobian || null;
         const missingExports = !this.malloc || !this.free || !this._tmm_one ||
             !this._tmm_spectrum || !this._tmm_jacobian || !this._tmm_needle_scan;
         if (missingExports) {
@@ -63,7 +96,7 @@ export class TmmWasmInstance {
         if (!ptr) throw new Error('tmmWasm: malloc failed');
         return ptr;
     }
-    // Fresh view — memory.buffer is detached after any growth, so re-create
+    // Fresh view : memory.buffer is detached after any growth, so re-create
     // views AFTER all mallocs for a call are done.
     _view(ptr, nDoubles) {
         return new Float64Array(this.memory.buffer, ptr, nDoubles);
@@ -84,7 +117,7 @@ export class TmmWasmInstance {
     }
 
     /**
-     * Single (λ, θ, pol) — mirrors tmm() in thinFilmMath.js.
+     * Single (λ, θ, pol) : mirrors tmm() in thinFilmMath.js.
      * @returns {{R:number,T:number,A:number}}
      */
     tmmOne(lambda_nm, theta_deg, polCode /* 0=s,1=p */, n0, ns, layers) {
@@ -104,7 +137,7 @@ export class TmmWasmInstance {
     }
 
     /**
-     * Batched spectrum over a λ grid for BOTH polarizations — the boundary-
+     * Batched spectrum over a λ grid for BOTH polarizations : the boundary-
      * amortizing path behind evaluateSpectrum().
      * @param {number[]} lambdas
      * @param {[number,number][]} n0List  incident ñ per λ
@@ -160,7 +193,7 @@ export class TmmWasmInstance {
     }
 
     /**
-     * Analytic thickness Jacobian for one (λ, θ, pol) — mirrors
+     * Analytic thickness Jacobian for one (λ, θ, pol) : mirrors
      * tmmThicknessJacobian(). layers used AS-IS (index parity).
      * @returns {{R,T,A, dRdd:Float64Array, dTdd, dAdd, N}}
      */
@@ -182,7 +215,7 @@ export class TmmWasmInstance {
             n0[0], n0[1], ns[0], ns[1], P(oLay), N, P(oDR), P(oDT), P(oDA), P(oBase));
         // Re-create the view AFTER the kernel call (like tmmSpectrum): under
         // ALLOW_MEMORY_GROWTH the kernel may grow wasm memory, which detaches the
-        // ArrayBuffer `buf` was created over — reading the stale `buf` then yields
+        // ArrayBuffer `buf` was created over : reading the stale `buf` then yields
         // garbage / throws. `out` is a fresh view over the current buffer.
         const out = this._view(ptr, need);
         return {
@@ -197,7 +230,7 @@ export class TmmWasmInstance {
     hasHessian() { return !!this._tmm_hessian; }
 
     /**
-     * Analytic thickness Hessian for one (λ, θ, pol) — mirrors
+     * Analytic thickness Hessian for one (λ, θ, pol) : mirrors
      * tmmThicknessHessian(). Returns first AND second derivatives; the N×N
      * second-derivative blocks are reshaped into nested arrays (one Float64Array
      * row per layer, FULL symmetric) so the shape matches the JS oracle exactly.
@@ -238,8 +271,169 @@ export class TmmWasmInstance {
         };
     }
 
+    /** True if the loaded module carries the phase-dispersion kernel. */
+    hasPhase() { return !!this._tmm_phase_one; }
+
     /**
-     * Analytic needle P-function scan — mirrors tmmNeedleScan() in
+     * Phase, group delay, GDD and TOD at one wavelength : mirrors
+     * tmmPhaseDispersion() in phase.js.
+     *
+     * @param {number[][]} n0Jet  incident-medium index jet, 4 × [re, im]
+     * @param {number[][]} nsJet  substrate index jet
+     * @param {{nJet:number[][], d:number}[]} layers
+     * @param {{omega?:number, sinTheta0Jet?:number[][]}} [options]
+     * @returns {{r: object|null, t: object|null}}
+     */
+    tmmPhaseOne(lambda_nm, theta_deg, polCode, n0Jet, nsJet, layers, options = {}) {
+        const N = layers.length;
+        const omega = options.omega ?? omegaFromLambdaNm(lambda_nm);
+        const sinJet = options.sinTheta0Jet || null;
+        // arena: layerJets[8N] | thick[N] | n0[8] | ns[8] | sin[8] | out[10]
+        const oLay = 0, oThick = 8 * N, oN0 = oThick + N, oNs = oN0 + 8,
+              oSin = oNs + 8, oOut = oSin + 8;
+        const need = oOut + 10;
+        const ptr = this._scratch(need);
+        const buf = this._view(ptr, need);
+        for (let i = 0; i < N; i++) {
+            writeJet(buf, oLay + 8 * i, layers[i].nJet);
+            buf[oThick + i] = layers[i].d;
+        }
+        writeJet(buf, oN0, n0Jet);
+        writeJet(buf, oNs, nsJet);
+        if (sinJet) writeJet(buf, oSin, sinJet);
+        const P = (off) => ptr + off * 8;
+        this._tmm_phase_one(lambda_nm, omega, theta_deg, polCode | 0,
+            P(oN0), P(oNs), P(oLay), P(oThick), N, sinJet ? P(oSin) : 0, P(oOut));
+        const out = this._view(ptr, need);
+        return { r: readPhase(out, oOut), t: readPhase(out, oOut + 5) };
+    }
+
+    /**
+     * Batched phase dispersion over a λ grid : the boundary-amortizing path.
+     *
+     * Unlike `tmmSpectrum` this takes one polarization, because the kernel is an
+     * order of magnitude dearer per sample and callers at normal incidence would
+     * otherwise pay twice for the same numbers.
+     *
+     * @param {number[]} lambdas
+     * @param {number[][][]} n0Jets  index jet per λ
+     * @param {number[][][]} nsJets  index jet per λ
+     * @param {number[][][][]} layerJets  [layer][λ] = index jet
+     * @param {number[]} thick  layer thicknesses (nm), length N
+     * @param {{omegas?:number[], sinJets?:number[][][]}} [options]
+     * @returns {{r: object, t: object}} each `{phaseRad, gd, gdd, tod,
+     *   magnitudeSquared}` of Float64Array(nLam). Failed samples hold NaN.
+     */
+    tmmPhaseSpectrum(lambdas, n0Jets, nsJets, layerJets, thick, theta_deg, polCode, options = {}) {
+        const nLam = lambdas.length;
+        const N = thick.length;
+        const omegas = options.omegas
+            || lambdas.map(lambda => omegaFromLambdaNm(lambda));
+        const sinJets = options.sinJets || null;
+
+        const lamPtr = this._alloc(nLam);
+        const omPtr = this._alloc(nLam);
+        const n0Ptr = this._alloc(8 * nLam);
+        const nsPtr = this._alloc(8 * nLam);
+        const matPtr = this._alloc(Math.max(1, 8 * N * nLam));
+        const thPtr = this._alloc(Math.max(1, N));
+        const sinPtr = sinJets ? this._alloc(8 * nLam) : 0;
+        const outPtr = this._alloc(10 * nLam);
+
+        // Views created after all mallocs (the buffer may have grown/detached).
+        const lam = this._view(lamPtr, nLam);
+        const om = this._view(omPtr, nLam);
+        const n0v = this._view(n0Ptr, 8 * nLam);
+        const nsv = this._view(nsPtr, 8 * nLam);
+        const matv = this._view(matPtr, Math.max(1, 8 * N * nLam));
+        const thv = this._view(thPtr, Math.max(1, N));
+        const sinv = sinJets ? this._view(sinPtr, 8 * nLam) : null;
+        for (let i = 0; i < nLam; i++) {
+            lam[i] = lambdas[i];
+            om[i] = omegas[i];
+            writeJet(n0v, 8 * i, n0Jets[i]);
+            writeJet(nsv, 8 * i, nsJets[i]);
+            if (sinv) writeJet(sinv, 8 * i, sinJets[i]);
+        }
+        for (let k = 0; k < N; k++) {
+            thv[k] = thick[k];
+            const row = layerJets[k];
+            const base = k * nLam * 8;
+            for (let i = 0; i < nLam; i++) writeJet(matv, base + 8 * i, row[i]);
+        }
+
+        this._tmm_phase_spectrum(lamPtr, omPtr, nLam, n0Ptr, nsPtr, matPtr, thPtr, N,
+            theta_deg, polCode | 0, sinPtr, outPtr);
+
+        // De-interleave into one array per quantity before freeing.
+        const out = this._view(outPtr, 10 * nLam);
+        const side = (base) => {
+            const q = {
+                phaseRad: new Float64Array(nLam), gd: new Float64Array(nLam),
+                gdd: new Float64Array(nLam), tod: new Float64Array(nLam),
+                magnitudeSquared: new Float64Array(nLam),
+            };
+            const keys = ['phaseRad', 'gd', 'gdd', 'tod', 'magnitudeSquared'];
+            for (let i = 0; i < nLam; i++) {
+                for (let j = 0; j < 5; j++) q[keys[j]][i] = out[10 * i + base + j];
+            }
+            return q;
+        };
+        const result = { r: side(0), t: side(5) };
+        for (const p of [lamPtr, omPtr, n0Ptr, nsPtr, matPtr, thPtr, outPtr]) this.free(p);
+        if (sinPtr) this.free(sinPtr);
+        return result;
+    }
+
+    /**
+     * Phase dispersion plus exact thickness derivatives : mirrors
+     * tmmPhaseThicknessJacobian(). Layers used AS-IS (index parity).
+     *
+     * @returns {{r, t}} each the phase quantities plus `dPhaseDeg`, `dGd`,
+     *   `dGdd`, `dTod` as Float64Array(N), or `null` arrays on overflow.
+     */
+    tmmPhaseJacobian(lambda_nm, theta_deg, polCode, n0Jet, nsJet, layers, options = {}) {
+        const N = layers.length;
+        const M = Math.max(1, N);
+        const omega = options.omega ?? omegaFromLambdaNm(lambda_nm);
+        const sinJet = options.sinTheta0Jet || null;
+        // arena: layerJets[8N] | thick[N] | n0[8] | ns[8] | sin[8] | out[10] | deriv[8M]
+        const oLay = 0, oThick = 8 * N, oN0 = oThick + N, oNs = oN0 + 8,
+              oSin = oNs + 8, oOut = oSin + 8, oDeriv = oOut + 10;
+        const need = oDeriv + 8 * M;
+        const ptr = this._scratch(need);
+        const buf = this._view(ptr, need);
+        for (let i = 0; i < N; i++) {
+            writeJet(buf, oLay + 8 * i, layers[i].nJet);
+            buf[oThick + i] = layers[i].d;
+        }
+        writeJet(buf, oN0, n0Jet);
+        writeJet(buf, oNs, nsJet);
+        if (sinJet) writeJet(buf, oSin, sinJet);
+        const P = (off) => ptr + off * 8;
+        this._tmm_phase_jacobian(lambda_nm, omega, theta_deg, polCode | 0,
+            P(oN0), P(oNs), P(oLay), P(oThick), N, sinJet ? P(oSin) : 0,
+            P(oOut), P(oDeriv));
+        const out = this._view(ptr, need);
+        const side = (phaseBase, derivBase) => {
+            const base = readPhase(out, phaseBase);
+            if (!base) return null;
+            // The kernel fills the whole block with NaN when the matrix product
+            // overflowed and the prefix/suffix decomposition had to be abandoned.
+            const overflowed = N > 0 && Number.isNaN(out[oDeriv + derivBase * N]);
+            const take = (q) => overflowed
+                ? null
+                : out.slice(oDeriv + (derivBase + q) * N, oDeriv + (derivBase + q) * N + N);
+            return {
+                ...base,
+                dPhaseDeg: take(0), dGd: take(1), dGdd: take(2), dTod: take(3),
+            };
+        };
+        return { r: side(oOut, 0), t: side(oOut + 5, 4) };
+    }
+
+    /**
+     * Analytic needle P-function scan : mirrors tmmNeedleScan() in
      * thinFilmMath.js, reshaping the flat WASM output into the SAME nested
      * structure the synthesis scanners consume.
      * @param {{n:[number,number],d:number}[]} layers   used AS-IS (index parity)
@@ -332,7 +526,7 @@ export function initTmmWasmFromUrl(url) {
             await instantiateTmmWasm(buf);
             return true;
         } catch (e) {
-            // Not built yet / not found — silent fallback to JS.
+            // Not built yet / not found : silent fallback to JS.
             _instance = null;
             return false;
         }
@@ -371,7 +565,7 @@ export async function initTmmWasmMainThread(bytes, enabled) {
     return true;
 }
 
-/** MAIN THREAD: bytes to ship to a worker — only when the feature is active. */
+/** MAIN THREAD: bytes to ship to a worker : only when the feature is active. */
 export function getTmmWasmBytesForWorker() {
     return (_enabled && _workerBytes) ? _workerBytes : null;
 }

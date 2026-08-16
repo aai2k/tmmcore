@@ -1,10 +1,8 @@
 # Validation
 
-Everything below runs from a clone. The numbers quoted are the output on a
-developer machine, and yours should match to the last digit or two.
+Everything below runs from a clone. The numbers quoted are the output on a developer machine, and yours should match to the last digit or two.
 
-There are three independent levels of check, each answering a different
-question.
+There are three independent levels of check, each answering a different question.
 
 | Level | Question it answers |
 |---|---|
@@ -12,16 +10,13 @@ question.
 | JavaScript ⇆ WebAssembly | Do the two implementations match *each other*? |
 | Cross-library | Does it match an *independent author's* implementation? |
 
-None of these subsumes the others. Two implementations can agree perfectly and
-both be wrong; matching a closed form in one special case says nothing about the
-general one.
+None of these subsumes the others. Two implementations can agree perfectly and both be wrong; matching a closed form in one special case says nothing about the general one.
 
 ---
 
 ## Closed-form oracles
 
-For a single quarter-wave layer at normal incidence, reflectance has an exact
-solution (Macleod §3.2):
+For a single quarter-wave layer at normal incidence, reflectance has an exact solution (Macleod §3.2):
 
 $$R = \left(\frac{n_0 n_s - n_1^2}{n_0 n_s + n_1^2}\right)^2$$
 
@@ -37,14 +32,54 @@ difference               1.39e-17
 
 Below double-precision epsilon ($2.2\times10^{-16}$).
 
+### Group delay, GDD and TOD
+
+A slab whose surrounding media share its own index has no interfaces, so nothing reflects and the transmission coefficient is a pure phase, $t = e^{i\delta}$ with $\delta = n(\omega)\,\omega d/c$. The three phase quantities then reduce exactly to bulk propagation:
+
+$$\mathrm{GD} = \frac{d}{c}(n + \omega n'), \qquad
+  \mathrm{GDD} = \frac{d}{c}(2n' + \omega n''), \qquad
+  \mathrm{TOD} = \frac{d}{c}(3n'' + \omega n''')$$
+
+A Cauchy index is exactly quadratic in $\omega$, which makes the right-hand sides elementary. This checks the phase kernel against something that is not another transfer-matrix calculation.
+
+```bash
+node examples/08-group-delay.mjs
+```
+
+```
+matched slab, 1 µm of n(λ) = 1.45 + 3600/λ², at 800 nm
+
+            tmmcore            closed form         relative
+  GD       4.89296832143789     4.89296832143789   1.8e-16  fs
+  GDD    0.0478126142151489   0.0478126142151501   2.6e-14  fs²
+  TOD    0.0203063517881787   0.0203063517881746   2.0e-13  fs³
+```
+
+!!! warning "TOD loses precision on thick elements"
+
+    TOD is a difference of terms of order $(\mathrm{GD}\cdot\omega)^3$, so the
+    cancellation in it grows as the square of the thickness. Measured on the same
+    slab:
+
+    | Thickness | Group delay | Relative error on TOD |
+    |---|---|---|
+    | 1 µm | 4.9 fs | $2\times10^{-13}$ |
+    | 10 µm | 48.9 fs | $4\times10^{-10}$ |
+    | 100 µm | 489 fs | $4\times10^{-8}$ |
+    | 1 mm | 4893 fs | $7\times10^{-7}$ |
+
+    Coatings live at the top of that table and are unaffected. If you want the
+    dispersion of millimetres of glass, differentiate the propagation phase
+    directly instead of asking a transfer matrix for it: the closed forms above
+    are the whole calculation and they do not cancel.
+
+    GD and GDD do not suffer this; GD is at machine precision throughout.
+
 ---
 
 ## JavaScript against WebAssembly
 
-The C kernel is a line-by-line port of the JavaScript. They are driven with
-identical inputs across absorbing, dispersive and oblique-incidence cases, in
-both polarizations, and every returned quantity is compared: R, T, A, the
-thickness Jacobian, the thickness Hessian, and the needle P-function.
+The C kernel is a line-by-line port of the JavaScript. They are driven with identical inputs across absorbing, dispersive and oblique-incidence cases, in both polarizations, and every returned quantity is compared: R, T, A, the thickness Jacobian, the thickness Hessian, the needle P-function, and the phase quantities with their thickness derivatives, point by point and batched.
 
 ```bash
 npm test
@@ -55,13 +90,27 @@ npm test
 worst |Δ| on R/T/A     : 4.44e-16  (tolerance 1e-9)
 worst |Δ| on derivatives: 5.55e-17  (tolerance 1e-12 abs / 1e-7 rel)
 
+15904 phase comparisons (phase, GD, GDD, TOD and their thickness derivatives,
+point and batched).
+worst |Δ| on phase quantities: 5.52e-6
+worst relative, above the 1e-12 floor: 1.05e-11
+
 PASS — JavaScript and WebAssembly agree.
 ```
 
-Agreement is not bit-exact by design. The only divergence is libm: the
-WebAssembly build uses musl's `sin`/`cos`/`exp`/`atan2`, the JavaScript engine
-uses its own, and they differ at roughly one unit in the last place. The
-observed disagreement sits seven orders of magnitude inside the tolerance.
+Agreement is not bit-exact by design. The only divergence is libm: the WebAssembly build uses musl's `sin`/`cos`/`exp`/`atan2`, the JavaScript engine uses its own, and they differ at roughly one unit in the last place. The observed disagreement sits seven orders of magnitude inside the tolerance.
+
+The phase quantities amplify that noise, because every derivative order is a difference of nearly equal terms. Measured per quantity on dispersive stacks:
+
+| Quantity | Worst JS ⇆ WASM difference |
+|---|---|
+| $\lvert r\rvert^2$ | 4 ulp |
+| phase | 2 ulp |
+| GD | 36 ulp |
+| GDD | 325 ulp |
+| TOD | 293 ulp |
+
+About a decade per order of differentiation, which is what cancellation costs. Even the worst case is $10^{-11}$ relative, orders below the precision of any measured $n$ and $k$.
 
 The test skips cleanly if `tmm_kernel.wasm` has not been built.
 
@@ -69,16 +118,13 @@ The test skips cleanly if `tmm_kernel.wasm` has not been built.
 
 ## The C, built natively
 
-The kernel is C99 with no dependencies beyond libm, so it can be checked outside
-WebAssembly entirely:
+The kernel is C99 with no dependencies beyond libm, so it can be checked outside WebAssembly entirely:
 
 ```bash
 cc -std=c99 -pedantic -Wall -Wextra -O2 -c src/tmm_kernel.c
 ```
 
-Verified warning-free under **GCC 16.1.0**, with the native build reproducing
-the closed-form quarter-wave result to $1.4\times10^{-17}$, `R + T + A = 1`
-exactly, and s and p identical at normal incidence.
+Verified warning-free under **GCC 16.1.0**, with the native build reproducing the closed-form quarter-wave result to $1.4\times10^{-17}$, `R + T + A = 1` exactly, and s and p identical at normal incidence.
 
 !!! success "Portable across three native toolchains"
 
@@ -90,14 +136,9 @@ exactly, and s and p identical at normal incidence.
 
 ## Against an independent implementation
 
-The same inputs fed to [Steven Byrnes'
-`tmm`](https://github.com/sbyrnes321/tmm): MIT, peer-reviewed[^byrnes], pure
-Python, sharing no code and no author with tmmcore.
+The same inputs fed to [Steven Byrnes' `tmm`](https://github.com/sbyrnes321/tmm): MIT, peer-reviewed[^byrnes], pure Python, sharing no code and no author with tmmcore.
 
-It uses the **same** $\tilde n = n + ik$ convention as tmmcore, so values
-transfer verbatim with no conjugation. There is no material-data confound: the
-wavelength grid, the complex indices and the thicknesses are precomputed into a
-shared file that every implementation reads. Only the mathematics differs.
+It uses the **same** $\tilde n = n + ik$ convention as tmmcore, so values transfer verbatim with no conjugation. There is no material-data confound: the wavelength grid, the complex indices and the thicknesses are precomputed into a shared file that every implementation reads. Only the mathematics differs.
 
 Byrnes' outputs are committed, so this needs no Python:
 
@@ -121,13 +162,9 @@ BIG40/g701         40     701      8.6e-14       8.6e-14
 Worst disagreement with an independently written implementation: 8.6e-14
 ```
 
-The worst case is the forty-layer stack, where round-off accumulates through the
-longest matrix product. Regenerating the reference file rather than trusting the
-committed one takes two `pip install`s; see
-[`benchmarks/README.md`](https://github.com/aai2k/tmmcore/blob/main/benchmarks/README.md).
+The worst case is the forty-layer stack, where round-off accumulates through the longest matrix product. Regenerating the reference file rather than trusting the committed one takes two `pip install`s; see [`benchmarks/README.md`](https://github.com/aai2k/tmmcore/blob/main/benchmarks/README.md).
 
-See [Comparison with other packages](comparison.md) for the full tables,
-including three further libraries.
+See [Comparison with other packages](comparison.md) for the full tables, including three further libraries.
 
 [^byrnes]: S. J. Byrnes, *Multilayer optical calculations*, arXiv:1603.02720.
 
@@ -141,5 +178,4 @@ including three further libraries.
   optical range, and grazing incidence are exercised by neither the equivalence
   suite nor the cross-library comparison.
 
-If you hit a case where tmmcore disagrees with something you trust, that is a
-useful bug report. Please open an issue with the inputs.
+If you hit a case where tmmcore disagrees with something you trust, that is a useful bug report. Please open an issue with the inputs.
