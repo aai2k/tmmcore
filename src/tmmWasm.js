@@ -59,6 +59,15 @@ function wasmImports() {
     };
 }
 
+// Backstop for growing-evaluator handles that are dropped without free():
+// reclaims their kernel memory when the JS handle is collected. Deterministic
+// free() remains the contract; this only keeps a leak from being permanent.
+const growingEvalFinalizer = typeof FinalizationRegistry !== 'undefined'
+    ? new FinalizationRegistry(({ wasm, ptr }) => {
+        try { wasm._growing_eval_free(ptr); } catch (_) { /* instance gone */ }
+    })
+    : null;
+
 export class TmmWasmInstance {
     constructor(instance) {
         const ex = instance.exports;
@@ -82,6 +91,16 @@ export class TmmWasmInstance {
         this._tmm_phase_one = ex.tmm_phase_one || ex._tmm_phase_one || null;
         this._tmm_phase_spectrum = ex.tmm_phase_spectrum || ex._tmm_phase_spectrum || null;
         this._tmm_phase_jacobian = ex.tmm_phase_jacobian || ex._tmm_phase_jacobian || null;
+        // Optional, same reason: the growing-stack kernels (monitor curve and
+        // per-step deposition spectra) arrived after all of the above.
+        this._tmm_monitor_curve = ex.tmm_monitor_curve || ex._tmm_monitor_curve || null;
+        this._tmm_deposition_spectra = ex.tmm_deposition_spectra || ex._tmm_deposition_spectra || null;
+        // Optional, same reason: the persistent growing-layer evaluator
+        // (wavelength-grid-per-call) arrived after the two kernels above.
+        this._growing_eval_create = ex.tmm_growing_eval_create || ex._tmm_growing_eval_create || null;
+        this._growing_eval_set_top = ex.tmm_growing_eval_set_top || ex._tmm_growing_eval_set_top || null;
+        this._growing_eval_sample = ex.tmm_growing_eval_sample || ex._tmm_growing_eval_sample || null;
+        this._growing_eval_free = ex.tmm_growing_eval_free || ex._tmm_growing_eval_free || null;
         const missingExports = !this.malloc || !this.free || !this._tmm_one ||
             !this._tmm_spectrum || !this._tmm_jacobian || !this._tmm_needle_scan;
         if (missingExports) {
@@ -190,6 +209,234 @@ export class TmmWasmInstance {
         for (const p of [lamPtr, n0Ptr, nsPtr, mPtr, thPtr,
                          rsPtr, tsPtr, asPtr, rpPtr, tpPtr, apPtr]) this.free(p);
         return res;
+    }
+
+    /** True if the loaded module carries the growing-stack kernels. */
+    hasGrowingKernels() {
+        return !!(this._tmm_monitor_curve && this._tmm_deposition_spectra);
+    }
+
+    /** True if the loaded module carries the persistent growing-layer evaluator. */
+    hasGrowingEval() {
+        return !!(this._growing_eval_create && this._growing_eval_set_top
+            && this._growing_eval_sample && this._growing_eval_free);
+    }
+
+    /**
+     * Monitor curve of one growing layer at one wavelength: the completed
+     * stack's matrix is built once, then every sample thickness costs one 2×2
+     * multiply. Returns the forward and substrate-side passes of the coated
+     * surface, both polarizations; the caller does the incoherent slab
+     * combination (or forms A = 1−R−T for a semi-infinite substrate).
+     * @param {[number,number]} n0   incident ñ
+     * @param {[number,number]} ns   substrate ñ
+     * @param {{n:[number,number],d:number}[]} baseLayers  completed stack,
+     *        outermost first
+     * @param {[number,number]} ngNK growing layer ñ
+     * @param {ArrayLike<number>} dArr  sample thicknesses (nm)
+     * @returns {{Rs,Ts,Rp,Tp,Rrs,Rrp}} each a Float64Array(dArr.length)
+     */
+    monitorCurve(lambda_nm, theta_deg, n0, ns, baseLayers, ngNK, dArr) {
+        const NB = baseLayers.length;
+        const nD = dArr.length;
+        // arena: base[3NB] | d[nD] | Rs,Ts,Rp,Tp,Rrs,Rrp [6·nD]
+        const oBase = 0, oD = 3 * NB, oOut = oD + nD;
+        const need = oOut + 6 * nD;
+        const ptr = this._scratch(need);
+        const buf = this._view(ptr, need);
+        for (let i = 0; i < NB; i++) {
+            buf[3 * i + 0] = baseLayers[i].n[0];
+            buf[3 * i + 1] = baseLayers[i].n[1];
+            buf[3 * i + 2] = baseLayers[i].d;
+        }
+        for (let k = 0; k < nD; k++) buf[oD + k] = dArr[k];
+        const P = (off) => ptr + off * 8;
+        this._tmm_monitor_curve(lambda_nm, theta_deg,
+            n0[0], n0[1], ns[0], ns[1], P(oBase), NB, ngNK[0], ngNK[1],
+            P(oD), nD,
+            P(oOut), P(oOut + nD), P(oOut + 2 * nD), P(oOut + 3 * nD),
+            P(oOut + 4 * nD), P(oOut + 5 * nD));
+        // Fresh view after the call: memory growth detaches the old buffer.
+        const out = this._view(ptr, need);
+        return {
+            Rs:  out.slice(oOut, oOut + nD),
+            Ts:  out.slice(oOut + nD, oOut + 2 * nD),
+            Rp:  out.slice(oOut + 2 * nD, oOut + 3 * nD),
+            Tp:  out.slice(oOut + 3 * nD, oOut + 4 * nD),
+            Rrs: out.slice(oOut + 4 * nD, oOut + 5 * nD),
+            Rrp: out.slice(oOut + 5 * nD, oOut + 6 * nD),
+        };
+    }
+
+    /**
+     * Per-step spectra of a growing stack: one call returns the forward and
+     * substrate-side passes of the coated surface after every deposited layer,
+     * so all N step spectra cost about what the final one costs alone. Layers
+     * in DEPOSITION order (first deposited first).
+     * @param {number[]} lambdas
+     * @param {[number,number][]} n0List  incident ñ per λ
+     * @param {[number,number][]} nsList  substrate ñ per λ
+     * @param {[number,number][][]} layerNK  [layer][λ] = ñ, deposition order
+     * @param {number[]} thick   thicknesses (nm); 0 repeats the previous step
+     * @param {number}   theta_deg
+     * @returns {{Rs,Ts,Rp,Tp,Rrs,Rrp}} each a Float64Array(N · nLam),
+     *          step-major: value for step k at wavelength i is at [k·nLam + i]
+     */
+    depositionSpectra(lambdas, n0List, nsList, layerNK, thick, theta_deg) {
+        const nLam = lambdas.length;
+        const N = thick.length;
+        const nOut = Math.max(1, N * nLam);
+
+        const lamPtr = this._alloc(nLam);
+        const n0Ptr  = this._alloc(2 * nLam);
+        const nsPtr  = this._alloc(2 * nLam);
+        const mPtr   = this._alloc(Math.max(1, 2 * N * nLam));
+        const thPtr  = this._alloc(Math.max(1, N));
+        const outPtrs = Array.from({ length: 6 }, () => this._alloc(nOut));
+
+        const lam = this._view(lamPtr, nLam);
+        const n0v = this._view(n0Ptr, 2 * nLam);
+        const nsv = this._view(nsPtr, 2 * nLam);
+        const mv  = this._view(mPtr, Math.max(1, 2 * N * nLam));
+        const thv = this._view(thPtr, Math.max(1, N));
+        for (let i = 0; i < nLam; i++) {
+            lam[i] = lambdas[i];
+            n0v[2 * i] = n0List[i][0]; n0v[2 * i + 1] = n0List[i][1];
+            nsv[2 * i] = nsList[i][0]; nsv[2 * i + 1] = nsList[i][1];
+        }
+        for (let k = 0; k < N; k++) {
+            thv[k] = thick[k];
+            const row = layerNK[k];
+            const base = k * nLam * 2;
+            for (let i = 0; i < nLam; i++) {
+                mv[base + 2 * i]     = row[i][0];
+                mv[base + 2 * i + 1] = row[i][1];
+            }
+        }
+
+        const ok = this._tmm_deposition_spectra(lamPtr, nLam, n0Ptr, nsPtr, mPtr, thPtr, N,
+            theta_deg, ...outPtrs);
+        if (!ok) {
+            for (const p of [lamPtr, n0Ptr, nsPtr, mPtr, thPtr, ...outPtrs]) this.free(p);
+            // The outputs were never written; returning them would hand the
+            // caller uninitialized memory as spectra.
+            throw new Error('tmmWasm: deposition-spectra state allocation failed');
+        }
+
+        const cp = (p) => Float64Array.from(this._view(p, nOut));
+        const [Rs, Ts, Rp, Tp, Rrs, Rrp] = outPtrs.map(cp);
+        for (const p of [lamPtr, n0Ptr, nsPtr, mPtr, thPtr, ...outPtrs]) this.free(p);
+        return { Rs, Ts, Rp, Tp, Rrs, Rrp };
+    }
+
+    /**
+     * Persistent growing-layer evaluator: the completed stack's products for
+     * the whole wavelength grid are folded once and kept in kernel memory;
+     * each sample() then answers one thickness of the growing layer across
+     * the grid. This is the shape a broadband monitor scan needs (a spectrum
+     * per scan while the layers beneath stay fixed), where monitorCurve is
+     * the single-λ, many-thicknesses shape.
+     *
+     * The completed stack arrives OUTERMOST FIRST, layer-major like
+     * depositionSpectra's matNK; zero-thickness entries are skipped.
+     *
+     * The returned handle owns kernel memory: call free() when the layer is
+     * done. A dropped handle is reclaimed by a finalizer eventually, but
+     * deterministic free() is what keeps a long run's footprint flat.
+     *
+     * @param {number[]} lambdas
+     * @param {[number,number][]} n0List  incident ñ per λ
+     * @param {[number,number][]} nsList  substrate ñ per λ
+     * @param {[number,number][][]} layerNK  [layer][λ] = ñ, outermost first
+     * @param {number[]} thick   completed thicknesses (nm)
+     * @param {number}   theta_deg
+     * @returns {{setTop, sample, free}} setTop(ngList) declares the growing
+     *          layer's ñ per λ; sample(d, out?) returns {Rs,Ts,Rp,Tp,Rrs,Rrp}
+     *          (each Float64Array(nLam), written into `out` when given, so a
+     *          scan loop can reuse one set of buffers).
+     */
+    growingEval(lambdas, n0List, nsList, layerNK, thick, theta_deg) {
+        if (!this.hasGrowingEval()) throw new Error('tmmWasm: growing evaluator kernel not in this build');
+        const nLam = lambdas.length;
+        const NB = thick.length;
+
+        const lamPtr = this._alloc(nLam);
+        const n0Ptr  = this._alloc(2 * nLam);
+        const nsPtr  = this._alloc(2 * nLam);
+        const mPtr   = this._alloc(Math.max(1, 2 * NB * nLam));
+        const thPtr  = this._alloc(Math.max(1, NB));
+        const lam = this._view(lamPtr, nLam);
+        const n0v = this._view(n0Ptr, 2 * nLam);
+        const nsv = this._view(nsPtr, 2 * nLam);
+        const mv  = this._view(mPtr, Math.max(1, 2 * NB * nLam));
+        const thv = this._view(thPtr, Math.max(1, NB));
+        for (let i = 0; i < nLam; i++) {
+            lam[i] = lambdas[i];
+            n0v[2 * i] = n0List[i][0]; n0v[2 * i + 1] = n0List[i][1];
+            nsv[2 * i] = nsList[i][0]; nsv[2 * i + 1] = nsList[i][1];
+        }
+        for (let k = 0; k < NB; k++) {
+            thv[k] = thick[k];
+            const row = layerNK[k];
+            const base = k * nLam * 2;
+            for (let i = 0; i < nLam; i++) {
+                mv[base + 2 * i]     = row[i][0];
+                mv[base + 2 * i + 1] = row[i][1];
+            }
+        }
+        const handlePtr = this._growing_eval_create(lamPtr, nLam, theta_deg,
+            n0Ptr, nsPtr, mPtr, thPtr, NB);
+        for (const p of [lamPtr, n0Ptr, nsPtr, mPtr, thPtr]) this.free(p);
+        if (!handlePtr) throw new Error('tmmWasm: growing evaluator allocation failed');
+
+        const self = this;
+        const handle = {
+            ptr: handlePtr,
+            setTop(ngList) {
+                if (!this.ptr) throw new Error('tmmWasm: growing evaluator already freed');
+                const p = self._scratch(2 * nLam);
+                const buf = self._view(p, 2 * nLam);
+                for (let i = 0; i < nLam; i++) {
+                    buf[2 * i] = ngList[i][0]; buf[2 * i + 1] = ngList[i][1];
+                }
+                self._growing_eval_set_top(this.ptr, p);
+            },
+            sample(d, out = null) {
+                if (!this.ptr) throw new Error('tmmWasm: growing evaluator already freed');
+                const p = self._scratch(6 * nLam);
+                const P = (block) => p + block * nLam * 8;
+                const ok = self._growing_eval_sample(this.ptr, d,
+                    P(0), P(1), P(2), P(3), P(4), P(5));
+                // The kernel writes nothing without a declared growing layer;
+                // copying the arena anyway would hand back stale memory.
+                if (!ok) throw new Error('tmmWasm: growing evaluator sampled before setTop');
+                // Fresh view AFTER the call (memory may have grown → detach).
+                const buf = self._view(p, 6 * nLam);
+                if (!out) {
+                    out = {
+                        Rs: new Float64Array(nLam), Ts: new Float64Array(nLam),
+                        Rp: new Float64Array(nLam), Tp: new Float64Array(nLam),
+                        Rrs: new Float64Array(nLam), Rrp: new Float64Array(nLam),
+                    };
+                }
+                out.Rs.set(buf.subarray(0, nLam));
+                out.Ts.set(buf.subarray(nLam, 2 * nLam));
+                out.Rp.set(buf.subarray(2 * nLam, 3 * nLam));
+                out.Tp.set(buf.subarray(3 * nLam, 4 * nLam));
+                out.Rrs.set(buf.subarray(4 * nLam, 5 * nLam));
+                out.Rrp.set(buf.subarray(5 * nLam, 6 * nLam));
+                return out;
+            },
+            free() {
+                if (!this.ptr) return;
+                growingEvalFinalizer?.unregister(this);
+                self._growing_eval_free(this.ptr);
+                this.ptr = 0;
+            },
+        };
+        growingEvalFinalizer?.register(handle,
+            { wasm: this, ptr: handlePtr }, handle);
+        return handle;
     }
 
     /**

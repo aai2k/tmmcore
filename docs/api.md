@@ -227,7 +227,7 @@ Polarization is an integer here: `0` for s, `1` for p.
 | `tmmNeedleScan(lambda_nm, theta_deg, polCode, n0, ns, layers, candidateNs, intraFracs?)` | `tmmNeedleScan` |
 | `tmmPhaseOne(lambda_nm, theta_deg, polCode, n0Jet, nsJet, layers, options?)` | `tmmPhaseDispersion` |
 | `tmmPhaseJacobian(lambda_nm, theta_deg, polCode, n0Jet, nsJet, layers, options?)` | `tmmPhaseThicknessJacobian` |
-| `hasHessian()`, `hasPhase()` | Whether this build carries those kernels |
+| `hasHessian()`, `hasPhase()`, `hasGrowingKernels()`, `hasGrowingEval()` | Whether this build carries those kernels |
 
 ### `tmmSpectrum(lambdas, n0List, nsList, layerNK, thick, theta_deg)`
 
@@ -241,6 +241,39 @@ Evaluates an entire wavelength grid for **both** polarizations in a single call.
 | `thick` | `number[]`, length `N` |
 
 **Returns** `{ Rs, Ts, As, Rp, Tp, Ap }`, each a `Float64Array` of grid length.
+
+### `monitorCurve(lambda_nm, theta_deg, n0, ns, baseLayers, ngNK, dArr)`
+
+The signal of one layer growing on a completed stack, at one wavelength. The completed stack's characteristic matrix is built once and each sample thickness then costs one 2x2 multiply, so a whole monitoring curve is one call: the incremental control algorithm of Tikhonravov and Trubetskov, Appl. Opt. 44, 6877 (2005).
+
+| Argument | Shape |
+|---|---|
+| `n0`, `ns` | `[re, im]` |
+| `baseLayers` | `{ n: [re, im], d }[]`, the completed stack, outermost first |
+| `ngNK` | `[re, im]`, the growing layer |
+| `dArr` | `number[]`, sample thicknesses of the growing layer in nm |
+
+**Returns** `{ Rs, Ts, Rp, Tp, Rrs, Rrp }`, each a `Float64Array` over `dArr`: the forward reflectance and transmittance of the coated surface, and its reflectance seen from the substrate side, taken from the anti-transposed matrix. A caller that models the substrate as an incoherent slab feeds all three into its own combination; a semi-infinite caller forms A = 1 - R - T itself.
+
+### `depositionSpectra(lambdas, n0List, nsList, layerNK, thick, theta_deg)`
+
+The spectrum after every step of a deposition run, in one call. Layers arrive in deposition order, first deposited first; each is folded into the running product and the grid is evaluated after every fold, so all N step spectra together cost about what the final one costs alone. Arguments as `tmmSpectrum`, with `layerNK` and `thick` in deposition order; a zero thickness repeats the previous step.
+
+**Returns** `{ Rs, Ts, Rp, Tp, Rrs, Rrp }`, each a `Float64Array` of N x grid length, step-major: step k, wavelength i at `[k * nLam + i]`. Throws if the kernel could not allocate its working state, rather than returning unwritten memory.
+
+### `growingEval(lambdas, n0List, nsList, layerNK, thick, theta_deg)`
+
+The stateful counterpart of `monitorCurve`, batched the other way: one thickness of the growing layer per call, the whole wavelength grid at once. This is the shape a broadband monitor scan needs, where every scan reads a full spectrum of the growing stack and the layers beneath do not change until the layer is cut. The completed stack's products for every wavelength and polarization are folded once at creation and kept in kernel memory, so each sample costs one layer matrix, one 2x2 multiply and the tails per wavelength and polarization.
+
+Arguments as `tmmSpectrum`, with `layerNK` and `thick` the completed stack, outermost first; zero-thickness entries are skipped.
+
+**Returns a handle** owning kernel memory:
+
+| | |
+|---|---|
+| `setTop(ngList)` | Declares the growing layer's `[re, im]` per wavelength. Call before the first `sample` with `d > 0`, and again to change the growing material. |
+| `sample(d, out?)` | `{ Rs, Ts, Rp, Tp, Rrs, Rrp }`, each a `Float64Array` of grid length, for the growing layer at thickness `d` nm (`d <= 0` is the bare completed stack). Pass the previous result as `out` to reuse its buffers in a scan loop. A `d > 0` sample before `setTop` throws rather than returning unwritten memory. |
+| `free()` | Releases the kernel state. A dropped handle is reclaimed by a finalizer eventually, but deterministic `free()` is what keeps a long run's footprint flat. `sample`/`setTop` after `free` throw. |
 
 ### `tmmPhaseSpectrum(lambdas, n0Jets, nsJets, layerJets, thick, theta_deg, polCode, options?)`
 
