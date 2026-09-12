@@ -23,7 +23,8 @@
  * Builds with any C99 compiler; no dependencies beyond libm.
  *
  * References:
- *   • Macleod, Thin-Film Optical Filters 5th ed., §2.4, Eqs. 2.111, 2.123–2.125
+ *   • Macleod, Thin-Film Optical Filters 5th ed., §2.4, Eqs. 2.111, 2.123–2.125;
+ *     Eq. 2.83; §10.2, Eqs. 10.11–10.13 (tilted admittances, real invariant)
  *   • Sullivan & Dobrowolski, Appl. Opt. 35, 5484 (1996), Eqs. (3)–(6)
  *   • Tikhonravov, Trubetskov & DeBell, Appl. Opt. 35, 5493 (1996)
  *   • Birge & Kärtner, Appl. Opt. 45, 1478 (2006)   [phase dispersion]
@@ -110,11 +111,22 @@ static inline vec2 cmatvec(mat2 M, vec2 v) {
     return o;
 }
 
-/* ── Snell's law: cosθ_j from incident (n0, sinθ0) into medium nj ─────────── */
+/* ── Snell's law: cosθ_j from incident (n0, sinθ0) into medium nj ───────────
+ * The transverse invariant is Re(n0) sinθ0 (Macleod 5th ed., §10.2, Eqs.
+ * 10.11–10.13): an absorbing incident medium carries a wave whose amplitude
+ * falls along the normal only, and every medium's cosθ follows from that one
+ * real invariant. Mirrors snellCosTheta / incidentCosTheta in tmm.js. */
 
 static inline cx snellCosTheta(cx n0, cx sinTheta0, cx nj) {
-    cx sinThetaJ = cdiv(cmul(n0, sinTheta0), nj);
+    cx sinThetaJ = cdiv(cmul(cmk(n0.re, 0.0), sinTheta0), nj);
     return csqrt_(csub(cmk(1.0, 0.0), cmul(sinThetaJ, sinThetaJ)));
+}
+
+/* cosθ0 of the incident medium: the plain cosine for a transparent medium,
+ * otherwise from the same real invariant as the layers. */
+static inline cx incidentCosTheta(cx n0, cx sinTheta0) {
+    if (n0.im == 0.0) return csqrt_(csub(cmk(1.0, 0.0), cmul(sinTheta0, sinTheta0)));
+    return snellCosTheta(n0, sinTheta0, n0);
 }
 
 /* ── Layer characteristic matrix (pol: 0 = s, 1 = p) ─────────────────────── */
@@ -149,7 +161,7 @@ static void tmm_core(double lambda_nm, double theta_deg, int pol,
                      cx n0, cx ns, const double *layers, int N,
                      double *outR, double *outT, double *outA) {
     cx sinTheta0 = cmk(sin(theta_deg * PI / 180.0), 0.0);
-    cx cosTheta0 = csqrt_(csub(cmk(1.0, 0.0), cmul(sinTheta0, sinTheta0)));
+    cx cosTheta0 = incidentCosTheta(n0, sinTheta0);
 
     cx eta0 = (pol == 0) ? cmul(n0, cosTheta0) : cdiv(n0, cosTheta0);
 
@@ -314,7 +326,7 @@ void tmm_monitor_curve(double lambda_nm, double theta_deg,
     cx ns = cmk(ns_re, ns_im);
     cx ng = cmk(ng_re, ng_im);
     cx sinTheta0 = cmk(sin(theta_deg * PI / 180.0), 0.0);
-    cx cosTheta0 = csqrt_(csub(cmk(1.0, 0.0), cmul(sinTheta0, sinTheta0)));
+    cx cosTheta0 = incidentCosTheta(n0, sinTheta0);
 
     for (int pol = 0; pol < 2; pol++) {
         cx eta0 = (pol == 0) ? cmul(n0, cosTheta0) : cdiv(n0, cosTheta0);
@@ -392,11 +404,11 @@ int tmm_deposition_spectra(const double *lambdas, int nLam,
     }
 
     cx sinTheta0 = cmk(sin(theta_deg * PI / 180.0), 0.0);
-    cx cosTheta0 = csqrt_(csub(cmk(1.0, 0.0), cmul(sinTheta0, sinTheta0)));
 
     for (int li = 0; li < nLam; li++) {
         cx n0 = cmk(n0arr[2 * li + 0], n0arr[2 * li + 1]);
         cx ns = cmk(nsarr[2 * li + 0], nsarr[2 * li + 1]);
+        cx cosTheta0 = incidentCosTheta(n0, sinTheta0);
         for (int pol = 0; pol < 2; pol++) {
             size_t at = (size_t)pol * nLam + li;
             eta0v[at] = (pol == 0) ? cmul(n0, cosTheta0) : cdiv(n0, cosTheta0);
@@ -503,13 +515,13 @@ growing_eval *tmm_growing_eval_create(const double *lambdas, int nLam,
     }
 
     h->sinTheta0 = cmk(sin(theta_deg * PI / 180.0), 0.0);
-    cx cosTheta0 = csqrt_(csub(cmk(1.0, 0.0), cmul(h->sinTheta0, h->sinTheta0)));
 
     for (int li = 0; li < nLam; li++) {
         h->lam[li] = lambdas[li];
         cx n0 = cmk(n0arr[2 * li + 0], n0arr[2 * li + 1]);
         cx ns = cmk(nsarr[2 * li + 0], nsarr[2 * li + 1]);
         h->n0[li] = n0;
+        cx cosTheta0 = incidentCosTheta(n0, h->sinTheta0);
         for (int pol = 0; pol < 2; pol++) {
             size_t at = (size_t)pol * nLam + li;
             h->eta0[at] = (pol == 0) ? cmul(n0, cosTheta0) : cdiv(n0, cosTheta0);
@@ -593,7 +605,7 @@ void tmm_jacobian(double lambda_nm, double theta_deg, int pol,
     cx ns = cmk(ns_re, ns_im);
 
     cx sinTheta0 = cmk(sin(theta_deg * PI / 180.0), 0.0);
-    cx cosTheta0 = csqrt_(csub(cmk(1.0, 0.0), cmul(sinTheta0, sinTheta0)));
+    cx cosTheta0 = incidentCosTheta(n0, sinTheta0);
     cx eta0 = (pol == 0) ? cmul(n0, cosTheta0) : cdiv(n0, cosTheta0);
     cx cosThetaS = snellCosTheta(n0, sinTheta0, ns);
     cx etaS = (pol == 0) ? cmul(ns, cosThetaS) : cdiv(ns, cosThetaS);
@@ -696,7 +708,7 @@ void tmm_needle_scan(double lambda_nm, double theta_deg, int pol,
                      double *base, double *gaps, double *intra) {
     cx n0 = cmk(n0_re, n0_im), ns = cmk(ns_re, ns_im);
     cx sinTheta0 = cmk(sin(theta_deg * PI / 180.0), 0.0);
-    cx cosTheta0 = csqrt_(csub(cmk(1.0, 0.0), cmul(sinTheta0, sinTheta0)));
+    cx cosTheta0 = incidentCosTheta(n0, sinTheta0);
     cx eta0 = (pol == 0) ? cmul(n0, cosTheta0) : cdiv(n0, cosTheta0);
     cx cosThetaS = snellCosTheta(n0, sinTheta0, ns);
     cx etaS = (pol == 0) ? cmul(ns, cosThetaS) : cdiv(ns, cosThetaS);
@@ -805,7 +817,7 @@ void tmm_hessian(double lambda_nm, double theta_deg, int pol,
     cx ns = cmk(ns_re, ns_im);
 
     cx sinTheta0 = cmk(sin(theta_deg * PI / 180.0), 0.0);
-    cx cosTheta0 = csqrt_(csub(cmk(1.0, 0.0), cmul(sinTheta0, sinTheta0)));
+    cx cosTheta0 = incidentCosTheta(n0, sinTheta0);
     cx eta0 = (pol == 0) ? cmul(n0, cosTheta0) : cdiv(n0, cosTheta0);
     cx cosThetaS = snellCosTheta(n0, sinTheta0, ns);
     cx etaS = (pol == 0) ? cmul(ns, cosThetaS) : cdiv(ns, cosThetaS);
@@ -1083,9 +1095,31 @@ static double jmatmag(jmat2 M) {
     return magnitude;
 }
 
+/* The real part of a jet, order by order. */
+static inline jet jreal(jet a) {
+    jet o;
+    for (int i = 0; i < JET_N; i++) o.c[i] = cmk(a.c[i].re, 0.0);
+    return o;
+}
+static inline int jhas_imag(jet a) {
+    for (int i = 0; i < JET_N; i++) if (a.c[i].im != 0.0) return 1;
+    return 0;
+}
+
+/* Same real invariant Re(n0) sinθ0 as snellCosTheta, in jet arithmetic. */
 static inline jet jsnell_cos(jet n0, jet sin0, jet nj) {
-    jet s = jdiv(jmul(n0, sin0), nj);
+    jet s = jdiv(jmul(jreal(n0), sin0), nj);
     return jsqrt_j(jsub(jconst(1.0, 0.0), jmul(s, s)));
+}
+/* cosθ0 of the incident medium: from the same real invariant as the layers
+ * when the medium absorbs at any order, otherwise the plain cosine, taken
+ * from the sine jet when the caller supplied one. Mirrors incidentCosine in
+ * phase.js. */
+static inline jet jincident_cos(jet n0, jet incidentSine, int fromSineJet, double theta_deg) {
+    if (jhas_imag(n0)) return jsnell_cos(n0, incidentSine, n0);
+    return fromSineJet
+        ? jsqrt_j(jsub(jconst(1.0, 0.0), jmul(incidentSine, incidentSine)))
+        : jconst(cos(theta_deg * PI / 180.0), 0.0);
 }
 static inline jet jadmittance(jet n, jet cosv, int pol) {
     return (pol == 0) ? jmul(n, cosv) : jdiv(n, cosv);
@@ -1207,9 +1241,7 @@ static void jphase_core(double lambda, double omega, double theta_deg, int pol,
                         const jet *sinJet, double *out10) {
     jet wavelength = jwavelength(lambda, omega);
     jet incidentSine = sinJet ? *sinJet : jconst(sin(theta_deg * PI / 180.0), 0.0);
-    jet incidentCosine = sinJet
-        ? jsqrt_j(jsub(jconst(1.0, 0.0), jmul(incidentSine, incidentSine)))
-        : jconst(cos(theta_deg * PI / 180.0), 0.0);
+    jet incidentCosine = jincident_cos(n0, incidentSine, sinJet != NULL, theta_deg);
     jet incidentEta = jadmittance(n0, incidentCosine, pol);
     jet substrateCosine = jsnell_cos(n0, incidentSine, ns);
     jet substrateEta = jadmittance(ns, substrateCosine, pol);
@@ -1313,9 +1345,7 @@ void tmm_phase_jacobian(double lambda, double omega, double theta_deg, int pol,
 
     jet wavelength = jwavelength(lambda, omega);
     jet incidentSine = sinePtr ? *sinePtr : jconst(sin(theta_deg * PI / 180.0), 0.0);
-    jet incidentCosine = sinePtr
-        ? jsqrt_j(jsub(jconst(1.0, 0.0), jmul(incidentSine, incidentSine)))
-        : jconst(cos(theta_deg * PI / 180.0), 0.0);
+    jet incidentCosine = jincident_cos(n0, incidentSine, sinePtr != NULL, theta_deg);
     jet incidentEta = jadmittance(n0, incidentCosine, pol);
     jet substrateCosine = jsnell_cos(n0, incidentSine, ns);
     jet substrateEta = jadmittance(ns, substrateCosine, pol);

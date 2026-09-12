@@ -52,6 +52,8 @@ polarizations:
 | 7-layer with Ag, 701 pts | 3.6e-15 | 3.1e-15 |
 | 40-layer, 701 pts | 1.8e-14 | 8.6e-14 |
 
+Every case is lit from air. An absorbing incident medium has no cross-library reference here: Byrnes' `tmm` asserts that $n_0 \sin\theta_0$ is real and refuses a complex $n_0$ at a real angle. tmmcore evaluates that case from the real invariant $\mathrm{Re}(n_0)\sin\theta_0$ and checks it against an exact energy identity instead; see [Validation](validation.md).
+
 tmmcore and `tmm_faster` both agree with Byrnes at the level of float64 accumulation noise. The other two cannot: **both `tmm_fast` and `tmmax` are single precision**. `tmm_fast` casts internally regardless of the dtype you hand it; `tmmax` runs on JAX with `jax_enable_x64` left at its default of false. Both are fine for generating machine-learning training data. Neither is suitable as an accuracy reference, and neither can be checked against one.
 
 ## Speed

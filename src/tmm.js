@@ -20,7 +20,9 @@
  * it to float64 round-off (see tests/).
  *
  * References:
- *   • Macleod, Thin-Film Optical Filters 5th ed., §2.4, Eqs. 2.111, 2.123–2.125
+ *   • Macleod, Thin-Film Optical Filters 5th ed., §2.4, Eqs. 2.111, 2.123–2.125;
+ *     Eq. 2.83 (transmittance out of an absorbing incident medium);
+ *     §10.2, Eqs. 10.11–10.13 (tilted admittances from the real invariant n0 sinθ0)
  *   • Sullivan & Dobrowolski, Appl. Opt. 35, 5484 (1996), Eqs. (3)–(6)
  *   • Tikhonravov, Trubetskov & DeBell, Appl. Opt. 35, 5493 (1996)
  */
@@ -90,12 +92,35 @@ function rescaleMatrix(M) {
 }
 
 // ── Snell's law ───────────────────────────────────────────────────────────────
+//
+// Every wave in the stack shares one transverse wavevector, n0 sinθ0 with n0
+// the REAL part of the incident index (Macleod 5th ed., §10.2, Eqs. 10.11 to
+// 10.13). An absorbing incident medium then carries an inhomogeneous wave whose
+// amplitude falls along the normal only, and each medium's cosθ follows from
+// that one real invariant. Putting the complex index into the invariant would
+// make the amplitude vary along the interface, so energy would flow sideways
+// inside lossless layers and R + T would be wrong by a term linear in the
+// incident k at oblique incidence.
 
 function snellCosTheta(n0, sinTheta0, nj) {
-    // sinThetaJ = n0 * sinTheta0 / nj   (complex)
-    const sinThetaJ = cdiv(cmul(n0, sinTheta0), nj);
+    // sinThetaJ = Re(n0) * sinTheta0 / nj   (complex)
+    const sinThetaJ = cdiv(cmul([n0[0], 0], sinTheta0), nj);
     // cosTheta = sqrt(1 - sin²θ)
     return csqrt(csub([1, 0], cmul(sinThetaJ, sinThetaJ)));
+}
+
+// cosθ0 of the incident medium. A transparent medium keeps the plain
+// sqrt(1 − sin²θ0). An absorbing one takes its cosine from the same real
+// invariant as the layers, so its tilted admittance is sqrt(N0² − n0² sin²θ0)
+// and the incident wave belongs to the same boundary problem as the rest of
+// the stack. R + T then departs from 1 for lossless layers only by the
+// interference of the incident and reflected waves in the absorbing medium,
+// the term Macleod's Eq. 2.83 carries, which is second order in k0 for a
+// bare interface.
+function incidentCosTheta(n0, sinTheta0) {
+    return n0[1] === 0
+        ? csqrt(csub([1, 0], cmul(sinTheta0, sinTheta0)))
+        : snellCosTheta(n0, sinTheta0, n0);
 }
 
 // ── Layer characteristic matrix ───────────────────────────────────────────────
@@ -150,7 +175,7 @@ function layerMatrix(nj, dj_nm, lambda_nm, cosTheta_j, pol) {
  */
 export function tmm(lambda_nm, theta_deg, pol, n0, ns, layers) {
     const sinTheta0 = [Math.sin(theta_deg * Math.PI / 180), 0];
-    const cosTheta0 = csqrt(csub([1, 0], cmul(sinTheta0, sinTheta0)));
+    const cosTheta0 = incidentCosTheta(n0, sinTheta0);
 
     // Admittance of incident medium
     const eta0 = pol === 's'
@@ -241,7 +266,7 @@ function cmatvec(M, v) {
 export function tmmNeedleScan(lambda_nm, theta_deg, pol, n0, ns, layers,
                               candidateNs, intraFracs = []) {
     const sinTheta0 = [Math.sin(theta_deg * Math.PI / 180), 0];
-    const cosTheta0 = csqrt(csub([1, 0], cmul(sinTheta0, sinTheta0)));
+    const cosTheta0 = incidentCosTheta(n0, sinTheta0);
     const eta0 = pol === 's' ? cmul(n0, cosTheta0) : cdiv(n0, cosTheta0);
     const cosThetaS = snellCosTheta(n0, sinTheta0, ns);
     const etaS = pol === 's' ? cmul(ns, cosThetaS) : cdiv(ns, cosThetaS);
@@ -368,7 +393,7 @@ export function tmmNeedleScan(lambda_nm, theta_deg, pol, n0, ns, layers,
 // `metrics()` in tmmNeedleScan.
 export function tmmThicknessJacobian(lambda_nm, theta_deg, pol, n0, ns, layers) {
     const sinTheta0 = [Math.sin(theta_deg * Math.PI / 180), 0];
-    const cosTheta0 = csqrt(csub([1, 0], cmul(sinTheta0, sinTheta0)));
+    const cosTheta0 = incidentCosTheta(n0, sinTheta0);
     const eta0 = pol === 's' ? cmul(n0, cosTheta0) : cdiv(n0, cosTheta0);
     const cosThetaS = snellCosTheta(n0, sinTheta0, ns);
     const etaS = pol === 's' ? cmul(ns, cosThetaS) : cdiv(ns, cosThetaS);
@@ -464,7 +489,7 @@ export function tmmThicknessJacobian(lambda_nm, theta_deg, pol, n0, ns, layers) 
 // (tests/hessian_fd_validation.mjs).*
 export function tmmThicknessHessian(lambda_nm, theta_deg, pol, n0, ns, layers) {
     const sinTheta0 = [Math.sin(theta_deg * Math.PI / 180), 0];
-    const cosTheta0 = csqrt(csub([1, 0], cmul(sinTheta0, sinTheta0)));
+    const cosTheta0 = incidentCosTheta(n0, sinTheta0);
     const eta0 = pol === 's' ? cmul(n0, cosTheta0) : cdiv(n0, cosTheta0);
     const cosThetaS = snellCosTheta(n0, sinTheta0, ns);
     const etaS = pol === 's' ? cmul(ns, cosThetaS) : cdiv(ns, cosThetaS);
@@ -598,5 +623,5 @@ export function tmmThicknessHessian(lambda_nm, theta_deg, pol, n0, ns, layers) {
 
 export {
     cadd, csub, cmul, cdiv, cabs2, cconj, csqrt, ccos, csin, creal, cimag,
-    matmul, rescaleMatrix, snellCosTheta, layerMatrix, cmatvec
+    matmul, rescaleMatrix, snellCosTheta, incidentCosTheta, layerMatrix, cmatvec
 };

@@ -75,6 +75,27 @@ matched slab, 1 µm of n(λ) = 1.45 + 3600/λ², at 800 nm
 
     GD and GDD do not suffer this; GD is at machine precision throughout.
 
+### An absorbing incident medium
+
+Light arriving from inside an absorbing medium, a cemented cube or an immersion liquid, is the one case where $R + T$ over lossless layers is not 1, and the size of the departure is fixed by the definitions. Every wave in the stack shares the real invariant $n_0 \sin\theta_0$, with $n_0$ the real part of the incident index (Macleod §10.2), and the transmittance carries the incident admittance the way Macleod's Eq. 2.83 does. What is left is the interference of the incident and reflected waves inside the absorbing medium:
+
+$$1 - R - T = -2\,\frac{\mathrm{Im}\,\eta_0}{\mathrm{Re}\,\eta_0}\,\mathrm{Im}(r)$$
+
+in tmmcore's sign convention, exact at every angle and polarization. On a bare interface $\mathrm{Im}(r)$ is itself of order $k_0$, and the excess reduces to Macleod's Eq. 2.84: into the conjugate admittance, $T = 1 + k_0^2/n_0^2$ and $R = k_0^2/n_0^2$.
+
+```bash
+node tests/absorbing_incident.mjs
+```
+
+```
+worst gap in the energy identity: 1.13e-15
+the former complex invariant broke it by 5.10e+1 per unit k0
+WebAssembly comparisons: 924
+PASS : absorbing incident medium
+```
+
+The second line is what the test guards against. Carrying the complex index into Snell's invariant makes the incident wave's amplitude vary along the interface, energy flows sideways inside lossless layers, and $R + T$ exceeds 1 by a further term linear in $k_0$ that grows with the angle and with the stack's resonance. Versions before 0.3.1 did that.
+
 ---
 
 ## JavaScript against WebAssembly
@@ -172,8 +193,13 @@ See [Comparison with other packages](comparison.md) for the full tables, includi
 
 ## What is not tested
 
-- **Non-normal incidence against a closed form.** The oblique cases are checked
-  against other implementations, not against an analytic result.
+- **Non-normal incidence against a closed-form value.** The oblique cases are
+  checked against other implementations and against the energy identity above,
+  not against an analytic $R$ or $T$.
+- **An absorbing incident medium against another implementation.** Byrnes'
+  `tmm` asserts that $n_0 \sin\theta_0$ is real, so it refuses a complex $n_0$
+  at a real angle of incidence. That case rests on the identity and on the
+  JavaScript ⇆ WebAssembly agreement alone.
 - **Extreme parameter ranges.** Very large layer counts, indices far outside the
   optical range, and grazing incidence are exercised by neither the equivalence
   suite nor the cross-library comparison.

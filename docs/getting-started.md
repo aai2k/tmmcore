@@ -24,6 +24,7 @@ someone checks.
 | Angle of incidence | degrees from normal |
 | Complex numbers | `[re, im]` pairs |
 | Layer order | incident medium first, substrate last |
+| Absorbing incident medium | every angle follows from the real invariant $n_0 \sin\theta_0$, with $n_0$ the real part of the index (Macleod §10.2); the incident wave decays along the normal only |
 
 This is the complex conjugate of the convention in Macleod's *Thin-Film Optical Filters* ($\tilde n = n - ik$, $\exp(+i\omega t)$). Reflectance, transmittance and absorptance are identical under conjugation. Phase-sensitive quantities are not, so mind the sign if you compute phase from these results.
 

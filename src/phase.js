@@ -46,6 +46,7 @@ import {
     jetDerivatives,
     jetDivide,
     jetMultiply,
+    jetRealPart,
     jetScale,
     jetSinCos,
     jetSqrt,
@@ -124,9 +125,23 @@ function rescaleMatrix(matrix, threshold) {
     return Math.log(scale);
 }
 
+// The transverse invariant is Re(n0) sinθ0, as in tmm.js: an absorbing incident
+// medium carries a wave whose amplitude falls along the normal only.
 function snellCosine(incidentIndex, incidentSine, layerIndex) {
-    const layerSine = jetDivide(jetMultiply(incidentIndex, incidentSine), layerIndex);
+    const layerSine = jetDivide(jetMultiply(jetRealPart(incidentIndex), incidentSine), layerIndex);
     return jetSqrt(jetSubtract(jetConstant(1), jetMultiply(layerSine, layerSine)));
+}
+
+// cosθ0 of the incident medium: the plain cosine while the index is real at
+// every order, otherwise from the same real invariant as the layers, so the
+// incident admittance is sqrt(N0² − n0² sin²θ0) and matches tmm.js.
+function incidentCosine(incidentIndex, incidentSine, incidentSineJet, thetaDeg) {
+    if (incidentIndex.some(coefficient => coefficient[1] !== 0)) {
+        return snellCosine(incidentIndex, incidentSine, incidentIndex);
+    }
+    return incidentSineJet
+        ? jetSqrt(jetSubtract(jetConstant(1), jetMultiply(incidentSine, incidentSine)))
+        : jetConstant(Math.cos(thetaDeg * Math.PI / 180));
 }
 
 function admittance(index, cosine, polarization) {
@@ -249,10 +264,8 @@ export function tmmCoefficientJets({
     layers,
 }) {
     const incidentSine = incidentSineJet || jetConstant(Math.sin(thetaDeg * Math.PI / 180));
-    const incidentCosine = incidentSineJet
-        ? jetSqrt(jetSubtract(jetConstant(1), jetMultiply(incidentSine, incidentSine)))
-        : jetConstant(Math.cos(thetaDeg * Math.PI / 180));
-    const incidentEta = admittance(incidentIndexJet, incidentCosine, polarization);
+    const incidentEta = admittance(incidentIndexJet,
+        incidentCosine(incidentIndexJet, incidentSine, incidentSineJet, thetaDeg), polarization);
     const substrateCosine = snellCosine(incidentIndexJet, incidentSine, substrateIndexJet);
     const substrateEta = admittance(substrateIndexJet, substrateCosine, polarization);
 
@@ -301,10 +314,8 @@ export function tmmCoefficientThicknessJets(options) {
         layers,
     } = options;
     const incidentSine = incidentSineJet || jetConstant(Math.sin(thetaDeg * Math.PI / 180));
-    const incidentCosine = incidentSineJet
-        ? jetSqrt(jetSubtract(jetConstant(1), jetMultiply(incidentSine, incidentSine)))
-        : jetConstant(Math.cos(thetaDeg * Math.PI / 180));
-    const incidentEta = admittance(incidentIndexJet, incidentCosine, polarization);
+    const incidentEta = admittance(incidentIndexJet,
+        incidentCosine(incidentIndexJet, incidentSine, incidentSineJet, thetaDeg), polarization);
     const substrateCosine = snellCosine(incidentIndexJet, incidentSine, substrateIndexJet);
     const substrateEta = admittance(substrateIndexJet, substrateCosine, polarization);
     const layerData = layers.map((layer) => {

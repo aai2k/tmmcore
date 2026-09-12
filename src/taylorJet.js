@@ -233,6 +233,11 @@ export function jetWithImaginaryPart(realJet, imaginaryJet) {
     return realJet.map((coefficient, index) => [coefficient[0], imaginaryJet[index][0]]);
 }
 
+/** The real part of a complex jet, order by order. */
+export function jetRealPart(jet) {
+    return jet.map(coefficient => [coefficient[0], 0]);
+}
+
 /** Floor the value at `minimum`, flattening the jet to a constant when it bites. */
 export function jetClampRealMinimum(jet, minimum) {
     return jet[0][0] >= minimum ? jet : jetConstant(minimum);

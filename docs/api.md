@@ -322,7 +322,8 @@ Complex numbers are `[re, im]` pairs throughout.
 | `creal`, `cimag` | Parts |
 | `matmul(A, B)` | 2×2 complex matrix product |
 | `cmatvec(M, v)` | 2×2 matrix times 2-vector |
-| `snellCosTheta(n0, sinTheta0, nj)` | Complex $\cos\theta$ in a medium |
+| `snellCosTheta(n0, sinTheta0, nj)` | Complex $\cos\theta$ in a medium, from the real invariant $\mathrm{Re}(n_0)\sin\theta_0$ |
+| `incidentCosTheta(n0, sinTheta0)` | $\cos\theta_0$ of the incident medium itself; the plain cosine when it is transparent, from the same invariant when it absorbs |
 | `layerMatrix(nj, dj_nm, lambda_nm, cosTheta_j, pol)` | Characteristic matrix of one layer |
 | `rescaleMatrix(M)` | Rescales in place past an overflow threshold; returns the accumulated log scale |
 
