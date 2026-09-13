@@ -138,7 +138,7 @@ const { r } = tmmPhaseThicknessJacobian(800, 0, 's', n0Jet, nsJet, layers);
 // r.dGdd[j] = ∂GDD/∂d_j, in fs²/nm
 ```
 
-**Returns** `{ r, t }`, each the phase quantities plus `dPhaseDeg`, `dGd`, `dGdd` and `dTod`, arrays of length `layers.length`.
+**Returns** `{ r, t }`, each the phase quantities plus `dPhaseDeg`, `dGd`, `dGdd`, `dTod` and `dLogMagnitudeSquared`, arrays of length `layers.length`. `dLogMagnitudeSquared` is d(ln |coefficient|²)/dd, the relative intensity derivative.
 
 Frequency remains the Taylor variable throughout, so every thickness derivative is itself a third-order frequency jet and all four quantities come out of one matrix product. Fitting a GDD target costs one evaluation per step rather than `N + 1`, the same bargain `tmmThicknessJacobian` offers for reflectance.
 
@@ -227,7 +227,7 @@ Polarization is an integer here: `0` for s, `1` for p.
 | `tmmNeedleScan(lambda_nm, theta_deg, polCode, n0, ns, layers, candidateNs, intraFracs?)` | `tmmNeedleScan` |
 | `tmmPhaseOne(lambda_nm, theta_deg, polCode, n0Jet, nsJet, layers, options?)` | `tmmPhaseDispersion` |
 | `tmmPhaseJacobian(lambda_nm, theta_deg, polCode, n0Jet, nsJet, layers, options?)` | `tmmPhaseThicknessJacobian` |
-| `hasHessian()`, `hasPhase()`, `hasGrowingKernels()`, `hasGrowingEval()` | Whether this build carries those kernels |
+| `hasHessian()`, `hasPhase()`, `hasPhaseJacobianSpectrum()`, `hasGrowingKernels()`, `hasGrowingEval()` | Whether this build carries those kernels |
 
 ### `tmmSpectrum(lambdas, n0List, nsList, layerNK, thick, theta_deg)`
 
@@ -294,6 +294,12 @@ The same amortization for the phase kernel, and the call worth reaching for firs
 **Returns** `{ r, t }`, each `{ phaseRad, gd, gdd, tod, magnitudeSquared }` of `Float64Array` at grid length. Samples where the coefficient vanishes hold `NaN`.
 
 Unlike `tmmSpectrum` this takes one polarization rather than doing both, because the cost per sample is high enough that a caller at normal incidence, where s and p are identical, should not pay twice for the same numbers. Call it twice and average if you want the unpolarized answer.
+
+### `tmmPhaseJacobianSpectrum(lambdas, n0Jets, nsJets, layerJets, thick, theta_deg, polCode, options?)`
+
+`tmmPhaseJacobian` at every wavelength of a grid in one call, for fitting a whole measured spectrum of phase-derived quantities: ellipsometric Ψ and Δ, or group delay. Arguments as `tmmPhaseSpectrum`.
+
+**Returns** `{ r, t }`, each the five arrays of `tmmPhaseSpectrum` plus `dPhaseDeg`, `dGd`, `dGdd`, `dTod` and `dLogMagnitudeSquared` as `Float64Array` of length grid × `N`, the derivative for wavelength `i` and layer `k` at `[i * N + k]`. A wavelength whose matrix product overflowed holds `NaN` across its derivative block, the batched form of the `null` arrays the single-wavelength call returns.
 
 ### Loader functions
 

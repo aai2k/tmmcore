@@ -167,6 +167,10 @@ const DISPERSIVE = {
     H: [2.25, 2.4e4, 1.1e9, 0.0005],
     L: [1.44, 3.6e3, 2.0e8, 0],
     M: [1.85, 1.2e4, 0, 0.02],
+    // Opaque: 20 µm of it saturates the imaginary-phase clamp, so each layer
+    // multiplies the matrix magnitude by about cosh(50) and a stack of six
+    // pushes the product past the rescale threshold.
+    K: [2.0, 0, 0, 0.6],
 };
 const PHASE_STACKS = {
     'chirped 12-layer': Array.from({ length: 12 }, (_, i) =>
@@ -176,6 +180,11 @@ const PHASE_STACKS = {
     'with a zero layer': [['H', 110], ['L', 0], ['H', 88]],
     'with a negative layer': [['H', 110], ['L', -25], ['H', 88]],
 };
+
+// Kept out of the sweep above: this one exists to reach the overflow branch,
+// and its saturated phases make TOD a difference of nearly equal terms far
+// noisier than the tolerances tuned for physically ordinary stacks.
+const OVERFLOW_STACK = [['H', 110], ...Array.from({ length: 6 }, () => ['K', 20000]), ['L', 90]];
 
 let phaseChecks = 0;
 const worstPhase = { abs: 0, rel: 0 };
@@ -228,7 +237,14 @@ if (!k.hasPhase()) {
                     for (const s of ['r', 't']) {
                         comparePhaseSide(ja[s], jb[s], `${at} ${s} (jac)`);
                         if (!ja[s] || !jb[s]) continue;
-                        for (const q of ['dPhaseDeg', 'dGd', 'dGdd', 'dTod']) {
+                        for (const q of ['dPhaseDeg', 'dGd', 'dGdd', 'dTod',
+                            'dLogMagnitudeSquared']) {
+                            // An overflowing stack gives up on the derivatives.
+                            // Both paths must give up together.
+                            if (ja[s][q] === null || jb[s][q] === null) {
+                                nearPhase(ja[s][q], jb[s][q], `${at} ${s}.${q} (overflow)`);
+                                continue;
+                            }
                             for (let i = 0; i < layers.length; i++) {
                                 nearPhase(ja[s][q][i], jb[s][q][i], `${at} ${s}.${q}[${i}]`);
                             }
@@ -275,6 +291,99 @@ if (!k.hasPhase()) {
         }
     }
 
+    // The batched Jacobian against the point Jacobian, on a grid and on a stack
+    // holding a zero-thickness layer whose derivative slot must survive.
+    if (!k.hasPhaseJacobianSpectrum()) {
+        console.log('\nNOTE : this .wasm predates the batched phase Jacobian; its checks skipped.');
+    } else {
+        for (const stackName of ['chirped 12-layer', 'with a zero layer']) {
+            const rows = PHASE_STACKS[stackName];
+            const stackThick = rows.map(([, d]) => d);
+            const stackJets = rows.map(([name]) => gridLambdas.map((_, i) => jetAt(name, i)));
+            for (const [pol, code] of POLS) {
+                const batch = k.tmmPhaseJacobianSpectrum(
+                    gridLambdas, n0Jets, nsJets, stackJets, stackThick, 22.5, code);
+                for (let i = 0; i < gridLambdas.length; i++) {
+                    const layers = rows.map(([, d], j) => ({ nJet: stackJets[j][i], d }));
+                    const point = tmmPhaseThicknessJacobian(gridLambdas[i], 22.5, pol,
+                        n0Jets[i], nsJets[i], layers);
+                    for (const s of ['r', 't']) {
+                        const at = `batched jacobian ${stackName} ${pol} λ=${gridLambdas[i]} ${s}`;
+                        for (const key of ['phaseRad', 'gd', 'gdd', 'tod', 'magnitudeSquared']) {
+                            nearPhase(point[s][key], batch[s][key][i], `${at}.${key}`);
+                        }
+                        for (const q of ['dPhaseDeg', 'dGd', 'dGdd', 'dTod',
+                            'dLogMagnitudeSquared']) {
+                            for (let j = 0; j < layers.length; j++) {
+                                nearPhase(point[s][q][j], batch[s][q][i * layers.length + j],
+                                    `${at}.${q}[${j}]`);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // The overflow path. The prefix/suffix decomposition cannot carry a
+    // rescaling, so a stack whose matrix product runs past the threshold has to
+    // give up on the derivatives while still reporting the coefficient from the
+    // plain path. Both entry points must say so in the way their callers read:
+    // null arrays from the point call, a NaN-filled block from the batched one.
+    {
+        const lam = 550;
+        const omega = omegaFromLambdaNm(lam);
+        const n0Jet = jetConstant(1);
+        const nsJet = cauchyJet(lam, omega, 1.5, 4.2e3, 0, 0);
+        const rows = OVERFLOW_STACK;
+        const stackThick = rows.map(([, d]) => d);
+        const layers = rows.map(([name, d]) => ({
+            nJet: cauchyJet(lam, omega, ...DISPERSIVE[name]), d,
+        }));
+        const point = tmmPhaseDispersion(lam, 0, 's', n0Jet, nsJet, layers);
+        const jacobian = tmmPhaseThicknessJacobian(lam, 0, 's', n0Jet, nsJet, layers);
+        const kernel = k.tmmPhaseJacobian(lam, 0, 0, n0Jet, nsJet, layers);
+        for (const side of ['r', 't']) {
+            comparePhaseSide(point[side], jacobian[side], `overflow ${side} base`);
+            nearPhase(point[side].magnitudeSquared, kernel[side].magnitudeSquared,
+                `overflow ${side} kernel |c|²`);
+            nearPhase(point[side].phaseRad, kernel[side].phaseRad,
+                `overflow ${side} kernel phase`);
+            for (const quantity of ['dPhaseDeg', 'dGd', 'dGdd', 'dTod',
+                'dLogMagnitudeSquared']) {
+                for (const [label, from] of [['js', jacobian], ['wasm', kernel]]) {
+                    if (from[side][quantity] === null) continue;
+                    failures++;
+                    console.log(`  FAIL overflow ${label} ${side}.${quantity}: expected null`);
+                }
+            }
+        }
+
+        if (k.hasPhaseJacobianSpectrum()) {
+            const one = [lam];
+            const batch = k.tmmPhaseJacobianSpectrum(
+                one, [n0Jet], [nsJet],
+                rows.map(([name]) => [cauchyJet(lam, omega, ...DISPERSIVE[name])]),
+                stackThick, 0, 0);
+            for (const side of ['r', 't']) {
+                // `out` still carries the plain-path values, so a caller can only
+                // tell from the derivative block. Every entry of it must be NaN.
+                nearPhase(point[side].magnitudeSquared, batch[side].magnitudeSquared[0],
+                    `overflow batched ${side}.magnitudeSquared`);
+                for (const quantity of ['dPhaseDeg', 'dGd', 'dGdd', 'dTod',
+                    'dLogMagnitudeSquared']) {
+                    for (let j = 0; j < layers.length; j++) {
+                        phaseChecks++;
+                        if (Number.isNaN(batch[side][quantity][j])) continue;
+                        failures++;
+                        console.log(`  FAIL overflow batched ${side}.${quantity}[${j}]: `
+                            + `expected NaN, got ${batch[side][quantity][j]}`);
+                    }
+                }
+            }
+        }
+    }
+
     // The point path skips negative thickness. The Jacobian must report the
     // same base coefficient and reserve a zero derivative at that layer index.
     {
@@ -288,7 +397,8 @@ if (!k.hasPhase()) {
         const jacobian = tmmPhaseThicknessJacobian(lam, 0, 's', n0Jet, nsJet, layers);
         for (const side of ['r', 't']) {
             comparePhaseSide(point[side], jacobian[side], `negative thickness ${side} base`);
-            for (const quantity of ['dPhaseDeg', 'dGd', 'dGdd', 'dTod']) {
+            for (const quantity of ['dPhaseDeg', 'dGd', 'dGdd', 'dTod',
+                'dLogMagnitudeSquared']) {
                 nearPhase(jacobian[side][quantity][1], 0,
                     `negative thickness ${side}.${quantity}[1]`);
             }

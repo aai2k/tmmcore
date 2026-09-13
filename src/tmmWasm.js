@@ -91,6 +91,10 @@ export class TmmWasmInstance {
         this._tmm_phase_one = ex.tmm_phase_one || ex._tmm_phase_one || null;
         this._tmm_phase_spectrum = ex.tmm_phase_spectrum || ex._tmm_phase_spectrum || null;
         this._tmm_phase_jacobian = ex.tmm_phase_jacobian || ex._tmm_phase_jacobian || null;
+        // Optional, same reason: the batched phase Jacobian arrived after the
+        // three above, for fitting a whole measured Ψ/Δ or group-delay spectrum.
+        this._tmm_phase_jacobian_spectrum = ex.tmm_phase_jacobian_spectrum
+            || ex._tmm_phase_jacobian_spectrum || null;
         // Optional, same reason: the growing-stack kernels (monitor curve and
         // per-step deposition spectra) arrived after all of the above.
         this._tmm_monitor_curve = ex.tmm_monitor_curve || ex._tmm_monitor_curve || null;
@@ -637,17 +641,18 @@ export class TmmWasmInstance {
      * tmmPhaseThicknessJacobian(). Layers used AS-IS (index parity).
      *
      * @returns {{r, t}} each the phase quantities plus `dPhaseDeg`, `dGd`,
-     *   `dGdd`, `dTod` as Float64Array(N), or `null` arrays on overflow.
+     *   `dGdd`, `dTod` and `dLogMagnitudeSquared` as Float64Array(N), or `null`
+     *   arrays on overflow.
      */
     tmmPhaseJacobian(lambda_nm, theta_deg, polCode, n0Jet, nsJet, layers, options = {}) {
         const N = layers.length;
         const M = Math.max(1, N);
         const omega = options.omega ?? omegaFromLambdaNm(lambda_nm);
         const sinJet = options.sinTheta0Jet || null;
-        // arena: layerJets[8N] | thick[N] | n0[8] | ns[8] | sin[8] | out[10] | deriv[8M]
+        // arena: layerJets[8N] | thick[N] | n0[8] | ns[8] | sin[8] | out[10] | deriv[10M]
         const oLay = 0, oThick = 8 * N, oN0 = oThick + N, oNs = oN0 + 8,
               oSin = oNs + 8, oOut = oSin + 8, oDeriv = oOut + 10;
-        const need = oDeriv + 8 * M;
+        const need = oDeriv + 10 * M;
         const ptr = this._scratch(need);
         const buf = this._view(ptr, need);
         for (let i = 0; i < N; i++) {
@@ -674,9 +679,96 @@ export class TmmWasmInstance {
             return {
                 ...base,
                 dPhaseDeg: take(0), dGd: take(1), dGdd: take(2), dTod: take(3),
+                dLogMagnitudeSquared: take(4),
             };
         };
-        return { r: side(oOut, 0), t: side(oOut + 5, 4) };
+        return { r: side(oOut, 0), t: side(oOut + 5, 5) };
+    }
+
+    /** True if the loaded module carries the batched phase Jacobian. */
+    hasPhaseJacobianSpectrum() { return !!this._tmm_phase_jacobian_spectrum; }
+
+    /**
+     * Batched phase Jacobian over a λ grid : tmmPhaseJacobian at every
+     * wavelength in one call, for fitting a whole measured spectrum of phase
+     * quantities. Arguments as tmmPhaseSpectrum.
+     *
+     * @returns {{r: object, t: object}} each the five Float64Array(nLam) of
+     *   tmmPhaseSpectrum plus `dPhaseDeg`, `dGd`, `dGdd`, `dTod` and
+     *   `dLogMagnitudeSquared` as Float64Array(nLam × N), the derivative for
+     *   wavelength i and layer k at `[i * N + k]`. A wavelength whose matrix
+     *   product overflowed holds NaN across its derivative block.
+     */
+    tmmPhaseJacobianSpectrum(lambdas, n0Jets, nsJets, layerJets, thick, theta_deg, polCode, options = {}) {
+        const nLam = lambdas.length;
+        const N = thick.length;
+        const omegas = options.omegas
+            || lambdas.map(lambda => omegaFromLambdaNm(lambda));
+        const sinJets = options.sinJets || null;
+        const nDeriv = Math.max(1, 10 * N * nLam);
+
+        const lamPtr = this._alloc(nLam);
+        const omPtr = this._alloc(nLam);
+        const n0Ptr = this._alloc(8 * nLam);
+        const nsPtr = this._alloc(8 * nLam);
+        const matPtr = this._alloc(Math.max(1, 8 * N * nLam));
+        const thPtr = this._alloc(Math.max(1, N));
+        const sinPtr = sinJets ? this._alloc(8 * nLam) : 0;
+        const outPtr = this._alloc(10 * nLam);
+        const derivPtr = this._alloc(nDeriv);
+
+        const lam = this._view(lamPtr, nLam);
+        const om = this._view(omPtr, nLam);
+        const n0v = this._view(n0Ptr, 8 * nLam);
+        const nsv = this._view(nsPtr, 8 * nLam);
+        const matv = this._view(matPtr, Math.max(1, 8 * N * nLam));
+        const thv = this._view(thPtr, Math.max(1, N));
+        const sinv = sinJets ? this._view(sinPtr, 8 * nLam) : null;
+        for (let i = 0; i < nLam; i++) {
+            lam[i] = lambdas[i];
+            om[i] = omegas[i];
+            writeJet(n0v, 8 * i, n0Jets[i]);
+            writeJet(nsv, 8 * i, nsJets[i]);
+            if (sinv) writeJet(sinv, 8 * i, sinJets[i]);
+        }
+        for (let k = 0; k < N; k++) {
+            thv[k] = thick[k];
+            const row = layerJets[k];
+            const base = k * nLam * 8;
+            for (let i = 0; i < nLam; i++) writeJet(matv, base + 8 * i, row[i]);
+        }
+
+        this._tmm_phase_jacobian_spectrum(lamPtr, omPtr, nLam, n0Ptr, nsPtr, matPtr, thPtr, N,
+            theta_deg, polCode | 0, sinPtr, outPtr, derivPtr);
+
+        // De-interleave: per λ the kernel writes 10 phase values and then a
+        // [side][quantity][layer] block of 10 × N derivatives.
+        const out = this._view(outPtr, 10 * nLam);
+        const deriv = this._view(derivPtr, nDeriv);
+        const side = (base, derivBase) => {
+            const q = {
+                phaseRad: new Float64Array(nLam), gd: new Float64Array(nLam),
+                gdd: new Float64Array(nLam), tod: new Float64Array(nLam),
+                magnitudeSquared: new Float64Array(nLam),
+                dPhaseDeg: new Float64Array(nLam * N), dGd: new Float64Array(nLam * N),
+                dGdd: new Float64Array(nLam * N), dTod: new Float64Array(nLam * N),
+                dLogMagnitudeSquared: new Float64Array(nLam * N),
+            };
+            const keys = ['phaseRad', 'gd', 'gdd', 'tod', 'magnitudeSquared'];
+            const derivKeys = ['dPhaseDeg', 'dGd', 'dGdd', 'dTod', 'dLogMagnitudeSquared'];
+            for (let i = 0; i < nLam; i++) {
+                for (let j = 0; j < 5; j++) q[keys[j]][i] = out[10 * i + base + j];
+                for (let j = 0; j < derivKeys.length; j++) {
+                    const from = 10 * N * i + (derivBase + j) * N;
+                    for (let k = 0; k < N; k++) q[derivKeys[j]][i * N + k] = deriv[from + k];
+                }
+            }
+            return q;
+        };
+        const result = { r: side(0, 0), t: side(5, 5) };
+        for (const p of [lamPtr, omPtr, n0Ptr, nsPtr, matPtr, thPtr, outPtr, derivPtr]) this.free(p);
+        if (sinPtr) this.free(sinPtr);
+        return result;
     }
 
     /**

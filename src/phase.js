@@ -430,14 +430,17 @@ export function coefficientPhaseDispersion(coefficientJet) {
  */
 export function coefficientPhaseThicknessDerivatives(coefficientJet, thicknessJets) {
     if (!thicknessJets) return null;
-    const result = { phaseDeg: [], gd: [], gdd: [], tod: [] };
+    const result = { phaseDeg: [], gd: [], gdd: [], tod: [], logMagnitudeSquared: [] };
     for (const thicknessJet of thicknessJets) {
         const logarithmicDerivative = jetDivide(thicknessJet, coefficientJet);
         const derivatives = jetDerivatives(logarithmicDerivative);
+        // The imaginary part of d(ln c)/dd is the phase derivative; the real
+        // part is d(ln |c|)/dd, so twice it is the relative derivative of |c|².
         result.phaseDeg.push(-derivatives[0][1] * 180 / Math.PI);
         result.gd.push(derivatives[1][1]);
         result.gdd.push(derivatives[2][1]);
         result.tod.push(derivatives[3][1]);
+        result.logMagnitudeSquared.push(2 * derivatives[0][0]);
     }
     return result;
 }
@@ -500,8 +503,10 @@ export function tmmPhaseDispersion(lambda_nm, theta_deg, pol, n0Jet, nsJet, laye
  * thicknesses are skipped and receive zero derivative entries.
  *
  * @returns {{r, t}} where each side is the phase quantities plus
- *   `{dPhaseDeg, dGd, dGdd, dTod}`, arrays of length `layers.length`. The
- *   derivative arrays are `null` if the matrix product overflowed.
+ *   `{dPhaseDeg, dGd, dGdd, dTod, dLogMagnitudeSquared}`, arrays of length
+ *   `layers.length`. `dLogMagnitudeSquared` is d(ln |coefficient|²)/dd, the
+ *   relative intensity derivative. The derivative arrays are `null` if the
+ *   matrix product overflowed.
  */
 export function tmmPhaseThicknessJacobian(lambda_nm, theta_deg, pol, n0Jet, nsJet, layers, options = {}) {
     const prepared = prepare(lambda_nm, layers, options);
@@ -524,6 +529,7 @@ export function tmmPhaseThicknessJacobian(lambda_nm, theta_deg, pol, n0Jet, nsJe
             dGd: derivatives ? derivatives.gd : null,
             dGdd: derivatives ? derivatives.gdd : null,
             dTod: derivatives ? derivatives.tod : null,
+            dLogMagnitudeSquared: derivatives ? derivatives.logMagnitudeSquared : null,
         };
     };
     return {

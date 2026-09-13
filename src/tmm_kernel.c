@@ -1324,25 +1324,47 @@ void tmm_phase_spectrum(const double *lambdas, const double *omegas, int nLam,
  * derivative, matching the point evaluator's base result.
  *
  *   out   : 10        as tmm_phase_one
- *   deriv : 8 × N     [side][quantity][layer], side 0 = r, 1 = t,
- *                     quantity 0 = dPhaseDeg, 1 = dGD, 2 = dGDD, 3 = dTOD
+ *   deriv : 10 × N    [side][quantity][layer], side 0 = r, 1 = t,
+ *                     quantity 0 = dPhaseDeg, 1 = dGD, 2 = dGDD, 3 = dTOD,
+ *                     4 = d(ln |coefficient|²)/dd, the relative intensity
+ *                     derivative, which the amplitude ratio in ellipsometry
+ *                     needs and which costs nothing here: it is the real part
+ *                     of the same logarithmic derivative the phase is the
+ *                     imaginary part of
  *
  * The prefix/suffix decomposition cannot carry a rescaling, so if the matrix
  * product overflows, `out` is still filled from the plain path and every entry
  * of `deriv` is set to NaN. */
 
-TMM_EXPORT("tmm_phase_jacobian")
-void tmm_phase_jacobian(double lambda, double omega, double theta_deg, int pol,
-                        const double *n0jet, const double *nsjet,
-                        const double *layerJets, const double *thick, int N,
-                        const double *sinJet, double *out, double *deriv) {
-    jet n0 = jread(n0jet), ns = jread(nsjet);
-    jet *layerN = (jet *)malloc(sizeof(jet) * (N > 0 ? N : 1));
-    for (int k = 0; k < N; k++) layerN[k] = jread(&layerJets[8 * k]);
-    jet sine;
-    if (sinJet) sine = jread(sinJet);
-    const jet *sinePtr = sinJet ? &sine : NULL;
+/* Scratch for one wavelength of the phase Jacobian: per-layer matrices with
+ * their thickness derivatives, and the prefix/suffix products. Allocated once
+ * per call by the entry points below, so the batched one reuses it across the
+ * whole grid. */
+typedef struct {
+    jmat2 *layerM, *layerDM, *prefix, *suffix;
+} jphase_jacobian_scratch;
 
+static jphase_jacobian_scratch jphase_jacobian_alloc(int N) {
+    int M = (N > 0 ? N : 1);
+    jphase_jacobian_scratch s;
+    s.layerM  = (jmat2 *)malloc(sizeof(jmat2) * M);
+    s.layerDM = (jmat2 *)malloc(sizeof(jmat2) * M);
+    s.prefix  = (jmat2 *)malloc(sizeof(jmat2) * (N + 1));
+    s.suffix  = (jmat2 *)malloc(sizeof(jmat2) * (N + 1));
+    return s;
+}
+
+static void jphase_jacobian_free(jphase_jacobian_scratch s) {
+    free(s.layerM); free(s.layerDM); free(s.prefix); free(s.suffix);
+}
+
+/* One wavelength of the phase Jacobian; see tmm_phase_jacobian for the layout
+ * of `out` and `deriv`. */
+static void jphase_jacobian_core(double lambda, double omega, double theta_deg, int pol,
+                                 jet n0, jet ns, const jet *layerN, const double *thick, int N,
+                                 const jet *sinePtr, double *out, double *deriv,
+                                 jphase_jacobian_scratch s) {
+    jmat2 *layerM = s.layerM, *layerDM = s.layerDM, *prefix = s.prefix, *suffix = s.suffix;
     jet wavelength = jwavelength(lambda, omega);
     jet incidentSine = sinePtr ? *sinePtr : jconst(sin(theta_deg * PI / 180.0), 0.0);
     jet incidentCosine = jincident_cos(n0, incidentSine, sinePtr != NULL, theta_deg);
@@ -1350,9 +1372,6 @@ void tmm_phase_jacobian(double lambda, double omega, double theta_deg, int pol,
     jet substrateCosine = jsnell_cos(n0, incidentSine, ns);
     jet substrateEta = jadmittance(ns, substrateCosine, pol);
 
-    int M = (N > 0 ? N : 1);
-    jmat2 *layerM  = (jmat2 *)malloc(sizeof(jmat2) * M);
-    jmat2 *layerDM = (jmat2 *)malloc(sizeof(jmat2) * M);
     for (int k = 0; k < N; k++) {
         /* Match jphase_core's skip rule for invalid negative/NaN thicknesses,
          * while retaining the useful derivative of a zero-thickness layer. */
@@ -1366,8 +1385,6 @@ void tmm_phase_jacobian(double lambda, double omega, double theta_deg, int pol,
                          &layerM[k], &layerDM[k]);
     }
 
-    jmat2 *prefix = (jmat2 *)malloc(sizeof(jmat2) * (N + 1));
-    jmat2 *suffix = (jmat2 *)malloc(sizeof(jmat2) * (N + 1));
     prefix[0] = jidentity();
     int overflowed = 0;
     for (int k = 0; k < N; k++) {
@@ -1377,8 +1394,7 @@ void tmm_phase_jacobian(double lambda, double omega, double theta_deg, int pol,
 
     if (overflowed) {
         jphase_core(lambda, omega, theta_deg, pol, n0, ns, layerN, thick, N, sinePtr, out);
-        for (long i = 0; i < 8L * N; i++) deriv[i] = NAN;
-        free(layerN); free(layerM); free(layerDM); free(prefix); free(suffix);
+        for (long i = 0; i < 10L * N; i++) deriv[i] = NAN;
         return;
     }
 
@@ -1396,15 +1412,69 @@ void tmm_phase_jacobian(double lambda, double omega, double theta_deg, int pol,
                         &dReflection, &dTransmission);
         const jet sides[2] = { dReflection, dTransmission };
         const jet base[2] = { coefficients.reflection, coefficients.transmission };
-        for (int s = 0; s < 2; s++) {
+        for (int s2 = 0; s2 < 2; s2++) {
             cx dd[4];
-            jderivs(jdiv(sides[s], base[s]), dd);
-            deriv[((long)s * 4 + 0) * N + k] = -dd[0].im * 180.0 / PI;
-            deriv[((long)s * 4 + 1) * N + k] = dd[1].im;
-            deriv[((long)s * 4 + 2) * N + k] = dd[2].im;
-            deriv[((long)s * 4 + 3) * N + k] = dd[3].im;
+            /* d(ln coefficient)/dd: the imaginary part is the phase derivative
+             * (negated for Macleod's sign), the real part is d(ln |c|)/dd, so
+             * twice it is the relative derivative of |c|². */
+            jderivs(jdiv(sides[s2], base[s2]), dd);
+            deriv[((long)s2 * 5 + 0) * N + k] = -dd[0].im * 180.0 / PI;
+            deriv[((long)s2 * 5 + 1) * N + k] = dd[1].im;
+            deriv[((long)s2 * 5 + 2) * N + k] = dd[2].im;
+            deriv[((long)s2 * 5 + 3) * N + k] = dd[3].im;
+            deriv[((long)s2 * 5 + 4) * N + k] = 2.0 * dd[0].re;
         }
     }
+}
 
-    free(layerN); free(layerM); free(layerDM); free(prefix); free(suffix);
+TMM_EXPORT("tmm_phase_jacobian")
+void tmm_phase_jacobian(double lambda, double omega, double theta_deg, int pol,
+                        const double *n0jet, const double *nsjet,
+                        const double *layerJets, const double *thick, int N,
+                        const double *sinJet, double *out, double *deriv) {
+    jet *layerN = (jet *)malloc(sizeof(jet) * (N > 0 ? N : 1));
+    for (int k = 0; k < N; k++) layerN[k] = jread(&layerJets[8 * k]);
+    jet sine;
+    if (sinJet) sine = jread(sinJet);
+    jphase_jacobian_scratch scratch = jphase_jacobian_alloc(N);
+    jphase_jacobian_core(lambda, omega, theta_deg, pol, jread(n0jet), jread(nsjet),
+                         layerN, thick, N, sinJet ? &sine : NULL, out, deriv, scratch);
+    jphase_jacobian_free(scratch);
+    free(layerN);
+}
+
+/* ── Exported: batched phase Jacobian over a wavelength grid ─────────────────
+ * tmm_phase_jacobian at every wavelength of a grid in one call, for a caller
+ * fitting a whole measured spectrum of phase-derived quantities: ellipsometric
+ * Ψ and Δ, or group delay. Inputs are laid out as for tmm_phase_spectrum.
+ *
+ *   out   : nLam × 10        as tmm_phase_spectrum
+ *   deriv : nLam × 10 × N    per λ, the 10 × N block of tmm_phase_jacobian
+ *
+ * A wavelength whose matrix product overflows has its `out` filled from the
+ * plain path and its whole `deriv` block set to NaN, as the single-wavelength
+ * entry point does. */
+
+TMM_EXPORT("tmm_phase_jacobian_spectrum")
+void tmm_phase_jacobian_spectrum(const double *lambdas, const double *omegas, int nLam,
+                                 const double *n0jets, const double *nsjets,
+                                 const double *matJets, const double *thick, int N,
+                                 double theta_deg, int pol,
+                                 const double *sinJets, double *out, double *deriv) {
+    jet *layerN = (jet *)malloc(sizeof(jet) * (N > 0 ? N : 1));
+    jphase_jacobian_scratch scratch = jphase_jacobian_alloc(N);
+    for (int li = 0; li < nLam; li++) {
+        for (int k = 0; k < N; k++) {
+            long base = ((long)k * nLam + li) * 8;
+            layerN[k] = jread(&matJets[base]);
+        }
+        jet sine;
+        if (sinJets) sine = jread(&sinJets[8 * (long)li]);
+        jphase_jacobian_core(lambdas[li], omegas[li], theta_deg, pol,
+                             jread(&n0jets[8 * (long)li]), jread(&nsjets[8 * (long)li]),
+                             layerN, thick, N, sinJets ? &sine : NULL,
+                             &out[10 * (long)li], &deriv[10L * N * li], scratch);
+    }
+    jphase_jacobian_free(scratch);
+    free(layerN);
 }
