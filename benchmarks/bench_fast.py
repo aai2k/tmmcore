@@ -132,7 +132,9 @@ def run_tmmax(mats, thick_j, wl_j, ang_j):
 # ── Driver ───────────────────────────────────────────────────────────────────
 
 def main():
-    cases = json.load(open("cases.json"))["cases"]
+    # Every contender below is called at normal incidence, so the oblique cases
+    # of the accuracy tier are left out rather than timed at the wrong angle.
+    cases = [c for c in json.load(open("cases.json"))["cases"] if c["theta_deg"] == 0]
     out = []
 
     print("=== A: ONE stack, full grid, both polarizations (ms) ===")

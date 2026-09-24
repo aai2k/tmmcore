@@ -58,6 +58,7 @@ Mismatched conventions are the most common cause of two TMM codes disagreeing, s
 |---|---|
 | Refractive index | ñ = n + i·k, with **k ≥ 0** for absorbing media |
 | Time factor | exp(−iωt), so a wave exp(i(kz − ωt)) decays for k > 0 |
+| p-polarized amplitudes | from the tilted admittance n/cos θ, so r_p = r_s at normal incidence, the opposite sign to Born and Wolf's Fresnel r_p |
 | Wavelength, thickness | nanometres |
 | Angle | degrees from normal |
 | Complex numbers | `[re, im]` pairs |
@@ -77,9 +78,9 @@ npm run compare                     # and both agree with an independent impleme
 
 The first tests the equations rather than agreement, and is the only one here that does. A single quarter-wave layer at normal incidence has an exact solution (Macleod §3.2); tmmcore reproduces it to 1.4e-17, inside double-precision epsilon of 2.2e-16.
 
-The second drives both implementations with identical inputs across absorbing, dispersive and oblique-incidence cases and compares every returned quantity. 64,416 comparisons, worst disagreement 4.4e-16. This is two implementations by the same author, so it catches porting bugs and establishes nothing beyond that.
+The second drives both implementations with identical inputs across absorbing, dispersive and oblique-incidence cases and compares every returned quantity. 94,656 comparisons, worst disagreement 4.4e-16. This is two implementations by the same author, so it catches porting bugs and establishes nothing beyond that. The same command also holds every derivative to finite differences and checks grazing incidence and the exact critical angle against closed forms.
 
-The third checks them against [Steven Byrnes' `tmm`](https://github.com/sbyrnes321/tmm), written independently in Python under the same complex-index convention, so only the mathematics is under test. 12,352 values, worst disagreement 8.6e-14, which is float64 accumulation noise over a forty-layer matrix product.
+The third checks them against [Steven Byrnes' `tmm`](https://github.com/sbyrnes321/tmm), written independently in Python under the same complex-index convention, so only the mathematics is under test. At 0°, 30° and 60°, 14,624 values of R and T and the complex r at every point, worst disagreement 8.6e-14, which is float64 accumulation noise over a forty-layer matrix product.
 
 [Validation](https://aai2k.github.io/tmmcore/validation/) sets out what each level does and does not establish, and lists what is not tested at all.
 

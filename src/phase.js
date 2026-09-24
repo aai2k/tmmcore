@@ -58,6 +58,7 @@ import {
 export const C_NM_PER_FS = 299.792458;
 
 const MATRIX_RESCALE_THRESHOLD = 1e100;
+const BINARY_RESCALE_LIMIT = 2 ** 64;
 const MAX_IMAGINARY_PHASE = 50;
 
 /** Angular frequency in rad/fs for a vacuum wavelength in nm. */
@@ -106,6 +107,26 @@ function matrixMagnitude(matrix) {
     return magnitude;
 }
 
+// Divides every order of a jet matrix by a power of two, which is exact, when
+// its largest part at any order exceeds BINARY_RESCALE_LIMIT, and returns that
+// power's exponent. The prefix and suffix products of the thickness Jacobian
+// carry these exponents, as the derivative kernels in tmm.js do.
+function rescaleMatrixBinary(matrix) {
+    const magnitude = matrixMagnitude(matrix);
+    if (!(magnitude > BINARY_RESCALE_LIMIT) || magnitude === Infinity) return 0;
+    const exponent = Math.floor(Math.log2(magnitude));
+    scaleMatrixInPlace(matrix, 2 ** -exponent);
+    return exponent;
+}
+
+function scaleMatrixInPlace(matrix, factor) {
+    for (const row of matrix) {
+        for (let column = 0; column < row.length; column++) {
+            row[column] = jetScale(row[column], factor);
+        }
+    }
+}
+
 // The order-0 matrix controls overflow in the physical coefficient. Once
 // selected, one plain scalar rescales every jet order and cancels from r.
 function rescaleMatrix(matrix, threshold) {
@@ -116,32 +137,57 @@ function rescaleMatrix(matrix, threshold) {
         }
     }
     if (scale <= threshold) return 0;
-    const inverse = 1 / scale;
-    for (const row of matrix) {
-        for (let column = 0; column < row.length; column++) {
-            row[column] = jetScale(row[column], inverse);
-        }
-    }
+    scaleMatrixInPlace(matrix, 1 / scale);
     return Math.log(scale);
 }
 
 // The transverse invariant is Re(n0) sinθ0, as in tmm.js: an absorbing incident
-// medium carries a wave whose amplitude falls along the normal only.
-function snellCosine(incidentIndex, incidentSine, layerIndex) {
-    const layerSine = jetDivide(jetMultiply(jetRealPart(incidentIndex), incidentSine), layerIndex);
+// medium carries a wave whose amplitude falls along the normal only. cos²θ is
+// 1 − (a/n)² or ((n − n0)(n + n0) + (n0 cosθ0)²)/n², chosen on the values by
+// the rule in snellCosTheta there, so that a layer of the incident index keeps
+// its cosine at grazing incidence. `incidentCosineJet` is null when the
+// incident sine arrives as a jet, and then the first form is used.
+function snellCosine(incidentIndex, incidentSine, layerIndex, incidentCosineJet) {
+    const realIndex = jetRealPart(incidentIndex);
+    if (incidentCosineJet) {
+        const nr = incidentIndex[0][0];
+        const nc = nr * incidentCosineJet[0][0];
+        const q = nc * nc;
+        const room = nr * nr - 2 * q;
+        const [lr, li] = layerIndex[0];
+        const near = room > 0 && Math.abs(lr * lr + li * li - nr * nr) < room;
+        const m = near
+            ? jetMultiply(jetSubtract(layerIndex, realIndex), jetAdd(layerIndex, realIndex))
+            : null;
+        if (m && m[0][0] * m[0][0] + m[0][1] * m[0][1] < room * room) {
+            const normal = jetMultiply(realIndex, incidentCosineJet);
+            return jetSqrt(jetDivide(jetAdd(m, jetMultiply(normal, normal)),
+                jetMultiply(layerIndex, layerIndex)));
+        }
+    }
+    const layerSine = jetDivide(jetMultiply(realIndex, incidentSine), layerIndex);
     return jetSqrt(jetSubtract(jetConstant(1), jetMultiply(layerSine, layerSine)));
 }
 
-// cosθ0 of the incident medium: the plain cosine while the index is real at
+// The incident sine as a jet, and the incident cosine: the constant cosθ0 at a
+// fixed angle of incidence, null when the caller gave the sine as a jet.
+function incidentAngle(thetaDeg, incidentSineJet) {
+    return incidentSineJet
+        ? { sine: incidentSineJet, cosine: null }
+        : {
+            sine: jetConstant(Math.sin(thetaDeg * Math.PI / 180)),
+            cosine: jetConstant(Math.cos(thetaDeg * Math.PI / 180)),
+        };
+}
+
+// cosθ0 of the incident medium: its own cosine while the index is real at
 // every order, otherwise from the same real invariant as the layers, so the
 // incident admittance is sqrt(N0² − n0² sin²θ0) and matches tmm.js.
-function incidentCosine(incidentIndex, incidentSine, incidentSineJet, thetaDeg) {
+function incidentCosine(incidentIndex, { sine, cosine }) {
     if (incidentIndex.some(coefficient => coefficient[1] !== 0)) {
-        return snellCosine(incidentIndex, incidentSine, incidentIndex);
+        return snellCosine(incidentIndex, sine, incidentIndex, cosine);
     }
-    return incidentSineJet
-        ? jetSqrt(jetSubtract(jetConstant(1), jetMultiply(incidentSine, incidentSine)))
-        : jetConstant(Math.cos(thetaDeg * Math.PI / 180));
+    return cosine ?? jetSqrt(jetSubtract(jetConstant(1), jetMultiply(sine, sine)));
 }
 
 function admittance(index, cosine, polarization) {
@@ -193,7 +239,9 @@ function layerMatrixWithThicknessDerivative(index, thickness, wavelength, cosine
     };
 }
 
-function coefficientJetsFromMatrix(matrix, incidentEta, substrateEta, logScale = 0) {
+// `transmissionScale` restores the factor a rescaled matrix gave up: it cancels
+// from r but not from t.
+function coefficientJetsFromMatrix(matrix, incidentEta, substrateEta, transmissionScale = 1) {
     const boundaryB = jetAdd(matrix[0][0], jetMultiply(matrix[0][1], substrateEta));
     const boundaryC = jetAdd(matrix[1][0], jetMultiply(matrix[1][1], substrateEta));
     const incidentB = jetMultiply(incidentEta, boundaryB);
@@ -201,7 +249,7 @@ function coefficientJetsFromMatrix(matrix, incidentEta, substrateEta, logScale =
     const reflectionNumerator = jetSubtract(incidentB, boundaryC);
     const reflection = jetDivide(reflectionNumerator, denominator);
     let transmission = jetDivide(jetScale(incidentEta, 2), denominator);
-    if (logScale !== 0) transmission = jetScale(transmission, Math.exp(-logScale));
+    if (transmissionScale !== 1) transmission = jetScale(transmission, transmissionScale);
     return { reflection, transmission, denominator, reflectionNumerator };
 }
 
@@ -263,17 +311,16 @@ export function tmmCoefficientJets({
     rescaleThreshold = MATRIX_RESCALE_THRESHOLD,
     layers,
 }) {
-    const incidentSine = incidentSineJet || jetConstant(Math.sin(thetaDeg * Math.PI / 180));
-    const incidentEta = admittance(incidentIndexJet,
-        incidentCosine(incidentIndexJet, incidentSine, incidentSineJet, thetaDeg), polarization);
-    const substrateCosine = snellCosine(incidentIndexJet, incidentSine, substrateIndexJet);
+    const angle = incidentAngle(thetaDeg, incidentSineJet);
+    const incidentEta = admittance(incidentIndexJet, incidentCosine(incidentIndexJet, angle), polarization);
+    const substrateCosine = snellCosine(incidentIndexJet, angle.sine, substrateIndexJet, angle.cosine);
     const substrateEta = admittance(substrateIndexJet, substrateCosine, polarization);
 
     let matrix = identityMatrix();
     let logScale = 0;
     for (const layer of layers) {
         if (!(layer.thicknessNm > 0)) continue;
-        const cosine = snellCosine(incidentIndexJet, incidentSine, layer.indexJet);
+        const cosine = snellCosine(incidentIndexJet, angle.sine, layer.indexJet, angle.cosine);
         matrix = matrixMultiply(matrix, layerMatrix(
             layer.indexJet,
             layer.thicknessNm,
@@ -284,7 +331,8 @@ export function tmmCoefficientJets({
         logScale += rescaleMatrix(matrix, rescaleThreshold);
     }
 
-    const coefficients = coefficientJetsFromMatrix(matrix, incidentEta, substrateEta, logScale);
+    const coefficients = coefficientJetsFromMatrix(matrix, incidentEta, substrateEta,
+        Math.exp(-logScale));
     return {
         reflection: coefficients.reflection,
         transmission: coefficients.transmission,
@@ -298,9 +346,10 @@ export function tmmCoefficientJets({
  * layer thickness. Frequency remains the Taylor variable, so each thickness
  * derivative is itself a third-order frequency jet.
  *
- * Falls back to `tmmCoefficientJets` and reports `thicknessDerivatives: null`
- * when the matrix product overflows, since the prefix/suffix decomposition
- * cannot carry a rescaling.
+ * Every prefix and suffix product is stored as a mantissa and a binary
+ * exponent, so opaque stacks whose products leave double range still return
+ * their derivatives. Each derivative is one prefix times one suffix over the
+ * full product, and the exponents cancel from it exactly.
  */
 export function tmmCoefficientThicknessJets(options) {
     const {
@@ -310,13 +359,11 @@ export function tmmCoefficientThicknessJets(options) {
         incidentIndexJet,
         substrateIndexJet,
         incidentSineJet = null,
-        rescaleThreshold = MATRIX_RESCALE_THRESHOLD,
         layers,
     } = options;
-    const incidentSine = incidentSineJet || jetConstant(Math.sin(thetaDeg * Math.PI / 180));
-    const incidentEta = admittance(incidentIndexJet,
-        incidentCosine(incidentIndexJet, incidentSine, incidentSineJet, thetaDeg), polarization);
-    const substrateCosine = snellCosine(incidentIndexJet, incidentSine, substrateIndexJet);
+    const angle = incidentAngle(thetaDeg, incidentSineJet);
+    const incidentEta = admittance(incidentIndexJet, incidentCosine(incidentIndexJet, angle), polarization);
+    const substrateCosine = snellCosine(incidentIndexJet, angle.sine, substrateIndexJet, angle.cosine);
     const substrateEta = admittance(substrateIndexJet, substrateCosine, polarization);
     const layerData = layers.map((layer) => {
         // The point evaluator skips values that are not positive. Keep a slot in
@@ -327,7 +374,7 @@ export function tmmCoefficientThicknessJets(options) {
         if (!(layer.thicknessNm >= 0)) {
             return { matrix: identityMatrix(), thicknessDerivative: zeroMatrix() };
         }
-        const cosine = snellCosine(incidentIndexJet, incidentSine, layer.indexJet);
+        const cosine = snellCosine(incidentIndexJet, angle.sine, layer.indexJet, angle.cosine);
         return layerMatrixWithThicknessDerivative(
             layer.indexJet,
             layer.thicknessNm,
@@ -337,31 +384,36 @@ export function tmmCoefficientThicknessJets(options) {
         );
     });
 
-    const prefix = new Array(layerData.length + 1);
+    const count = layerData.length;
+    const prefix = new Array(count + 1);
+    const prefixExponent = new Array(count + 1).fill(0);
     prefix[0] = identityMatrix();
-    for (let index = 0; index < layerData.length; index++) {
+    for (let index = 0; index < count; index++) {
         prefix[index + 1] = matrixMultiply(prefix[index], layerData[index].matrix);
-        if (matrixMagnitude(prefix[index + 1]) > rescaleThreshold) {
-            const coefficients = tmmCoefficientJets(options);
-            return { ...coefficients, thicknessDerivatives: null };
-        }
+        prefixExponent[index + 1] = prefixExponent[index] + rescaleMatrixBinary(prefix[index + 1]);
     }
-    const suffix = new Array(layerData.length + 1);
-    suffix[layerData.length] = identityMatrix();
-    for (let index = layerData.length - 1; index >= 0; index--) {
+    const suffix = new Array(count + 1);
+    const suffixExponent = new Array(count + 1).fill(0);
+    suffix[count] = identityMatrix();
+    for (let index = count - 1; index >= 0; index--) {
         suffix[index] = matrixMultiply(layerData[index].matrix, suffix[index + 1]);
+        suffixExponent[index] = suffixExponent[index + 1] + rescaleMatrixBinary(suffix[index]);
     }
 
+    const totalExponent = prefixExponent[count];
     const coefficientData = coefficientJetsFromMatrix(
-        prefix[layerData.length],
+        prefix[count],
         incidentEta,
         substrateEta,
+        2 ** -totalExponent,
     );
     const thicknessDerivatives = layerData.map((layer, index) => {
         const matrixDerivative = matrixMultiply(
             matrixMultiply(prefix[index], layer.thicknessDerivative),
             suffix[index + 1],
         );
+        scaleMatrixInPlace(matrixDerivative,
+            2 ** (prefixExponent[index] + suffixExponent[index + 1] - totalExponent));
         return coefficientThicknessJets(
             matrixDerivative,
             coefficientData,
@@ -425,8 +477,7 @@ export function coefficientPhaseDispersion(coefficientJet) {
  * Exact derivatives of the reported phase quantities with respect to every layer
  * thickness, from the coefficient jet and its thickness-derivative jets.
  *
- * Returns `null` when the thickness jets are absent, which is how
- * `tmmCoefficientThicknessJets` reports an overflow fallback.
+ * Returns `null` when the thickness jets are absent.
  */
 export function coefficientPhaseThicknessDerivatives(coefficientJet, thicknessJets) {
     if (!thicknessJets) return null;
@@ -499,14 +550,13 @@ export function tmmPhaseDispersion(lambda_nm, theta_deg, pol, n0Jet, nsJet, laye
  * thickness, for gradient-based dispersion design.
  *
  * Arguments are those of `tmmPhaseDispersion`. Zero-thickness layers are kept so
- * derivative indices line up with the design array. Negative or non-finite
+ * derivative indices line up with the design array. Negative or NaN
  * thicknesses are skipped and receive zero derivative entries.
  *
  * @returns {{r, t}} where each side is the phase quantities plus
  *   `{dPhaseDeg, dGd, dGdd, dTod, dLogMagnitudeSquared}`, arrays of length
  *   `layers.length`. `dLogMagnitudeSquared` is d(ln |coefficient|²)/dd, the
- *   relative intensity derivative. The derivative arrays are `null` if the
- *   matrix product overflowed.
+ *   relative intensity derivative.
  */
 export function tmmPhaseThicknessJacobian(lambda_nm, theta_deg, pol, n0Jet, nsJet, layers, options = {}) {
     const prepared = prepare(lambda_nm, layers, options);
@@ -525,11 +575,11 @@ export function tmmPhaseThicknessJacobian(lambda_nm, theta_deg, pol, n0Jet, nsJe
         const derivatives = coefficientPhaseThicknessDerivatives(coefficientJet, thicknessJets);
         return {
             ...base,
-            dPhaseDeg: derivatives ? derivatives.phaseDeg : null,
-            dGd: derivatives ? derivatives.gd : null,
-            dGdd: derivatives ? derivatives.gdd : null,
-            dTod: derivatives ? derivatives.tod : null,
-            dLogMagnitudeSquared: derivatives ? derivatives.logMagnitudeSquared : null,
+            dPhaseDeg: derivatives.phaseDeg,
+            dGd: derivatives.gd,
+            dGdd: derivatives.gdd,
+            dTod: derivatives.tod,
+            dLogMagnitudeSquared: derivatives.logMagnitudeSquared,
         };
     };
     return {

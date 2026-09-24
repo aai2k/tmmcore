@@ -25,21 +25,39 @@ Reflectance, transmittance and absorptance.
 const { R, T, A } = tmm(550, 0, 's', [1, 0], [1.52, 0], layers);
 ```
 
-**Returns** `{ R, T, A }`, each a number in $[0, 1]$.
+**Returns** `{ R, T, A }`: reflectance, transmittance into the substrate, and the absorptance of the layers, each a fraction of the incident irradiance.
 
-Absorptance is computed as $A = 1 - R - T$, so the three always sum to one by construction. That makes `R + T + A` useless as a self-check; use agreement with a closed form or another implementation instead.
+$A$ is the net irradiance entering the front of the stack less the irradiance leaving it into the substrate (Macleod, Eq. 2.120), so it is what the layers absorb. With a transparent incident medium the three sum to one, by construction, which makes `R + T + A` useless as a self-check there; use agreement with a closed form or another implementation instead.
 
-Layers of zero or negative thickness are skipped.
+With an absorbing incident medium they do not sum to one. The incident and reflected waves interfere in the irradiance of the incident medium, and
 
-!!! note "Very thick absorbing layers"
+$$R + T + A = 1 + 2\,\frac{\mathrm{Im}\,\eta_0}{\mathrm{Re}\,\eta_0}\,\mathrm{Im}(r)$$
 
-    The phase thickness of a strongly absorbing layer grows without bound, and $\cosh$ of it overflows to infinity, which would poison the whole matrix product with `NaN`. The imaginary phase is clamped at a magnitude where the layer is already optically opaque, with single-pass transmittance below $10^{-43}$, so the result is exact to machine precision and the matrix stays finite. For non-absorbing or thin layers the clamp never engages.
+in tmmcore's sign convention. $T$ can then exceed one, as Macleod's Eq. 2.84 shows for a bare interface. See [Validation](validation.md#an-absorbing-incident-medium).
+
+A layer whose thickness is not positive, NaN included, is skipped.
+
+!!! note "Grazing incidence and the critical angle"
+
+    The angle of incidence runs up to and including 90°. $\cos\theta_0$ is taken directly rather than as $\sqrt{1 - \sin^2\theta_0}$, which keeps nothing of it near 90°, and a layer of the incident index keeps its own cosine there too. At 90° exactly $R$ is one and $T$ zero to rounding.
+
+    At a medium's critical angle to the last bit, $\cos\theta$ in it is exactly zero and the layer matrix as written is $0/0$. Its limit is finite, and tmmcore uses it: the layer's matrix becomes linear in its thickness, and a substrate at its critical angle reflects everything. The derivative kernels take the same limit.
+
+!!! note "Opaque layers"
+
+    The imaginary part of a layer's phase thickness grows with its thickness, and $\cosh$ of it overflows to infinity, which would poison the whole matrix product with `NaN`. The imaginary phase is clamped at 50, where the layer is already optically opaque, with single-pass transmittance below $10^{-43}$, so the result is exact to machine precision and the matrix stays finite.
+
+    The clamp looks at the phase, not at $k$. A thick absorbing layer reaches it, and so does a lossless one beyond the critical angle, where the wave in it is evanescent: an air gap of 10 µm under a glass prism at 70° is well past it. Thin layers and layers carrying a propagating wave never reach it.
 
 ---
 
 ## Analytic derivatives
 
 Each derivative comes from the same characteristic-matrix product that produced the spectrum, computed exactly rather than by finite differences or automatic differentiation.
+
+The derivatives are those of the function `tmm()` computes, clamp included: past the clamp a layer's matrix moves with its thickness through the real part of the phase only, and its derivatives are taken of that matrix. Through opaque and evanescent stacks the partial products grow past the range of a double, so each one carries a power-of-two scale, which cancels exactly from every derivative. A deep absorbing stack gets the same derivatives as a transparent one, with no wavelength silently dropping to zero. [Validation](validation.md#derivatives-against-finite-differences) checks all of them against finite differences on such stacks.
+
+The derivative functions use the layers as given, so their indices line up with your design array. A layer of zero thickness contributes nothing to the spectrum and keeps its derivative, the rate at which the spectrum moves as that layer starts to grow. A negative or NaN thickness makes the layer absent, as in `tmm()`, and its derivatives are zero.
 
 ### `tmmThicknessJacobian(lambda_nm, theta_deg, pol, n0, ns, layers)`
 
@@ -88,6 +106,8 @@ const scan = tmmNeedleScan(550, 0, 's', [1, 0], [1.52, 0], layers,
 
 `gaps` has `N + 1` entries, one per interface: index 0 is before the first layer, index `N` is against the substrate. Each holds one `{ dR, dT, dA }` per candidate. Insert where the merit-function gradient is negative.
 
+`intra[k][i]` is `{ frac, perCand }` for a needle inside layer `k`, at fraction `intraFracs[i]` of its thickness from the incident side, with `perCand` shaped like a `gaps` entry. Fractions 0 and 1 give the gaps either side of the layer. Inside a layer past the clamp, the part in front of the needle keeps its true phase, so a needle near the surface of a metal sees the field that is really there, and one deep inside it gets a derivative of zero.
+
 This is the $d \to 0$ limit of Sullivan's numerical pre/post method, the analytic P-function of Tikhonravov et al. Unlike the numerical form it needs no trial thickness and no second spectrum evaluation.
 
 !!! tip "A free consistency check"
@@ -97,7 +117,7 @@ This is the $d \to 0$ limit of Sullivan's numerical pre/post method, the analyti
     0's index equals `dRdd[0]` from the Jacobian. The two code paths are derived
     independently and agree to round-off.
 
-Unlike the other functions, this one does **not** skip zero-thickness layers, so gap indices line up with your design array exactly.
+Gap indices count the layers as given, zero-thickness ones included, so they line up with your design array exactly.
 
 ---
 
@@ -117,6 +137,8 @@ const { r, t } = tmmPhaseDispersion(800, 0, 's', n0Jet, nsJet, layers);
 `layers` is `{ nJet, d }[]` here, `d` in nanometres.
 
 **Returns** `{ r, t }`, one per coefficient, each `{ phaseRad, phaseDeg, gd, gdd, tod, magnitudeSquared }`, or `null` where that coefficient is exactly zero and the phase is undefined.
+
+Both are also `null` at the exact critical angle of a layer, where $\cos\theta$ in it is exactly zero, and at the substrate's critical angle in p. At the substrate's critical angle in s the phase and `magnitudeSquared` come back, but `gd`, `gdd` and `tod` are `NaN`. At a critical angle the frequency derivatives of $\cos\theta$ are infinite for a dispersive medium; for a non-dispersive one they are finite, but this kernel does not take that limit as `tmm()` does.
 
 | `options` | |
 |---|---|
@@ -142,9 +164,9 @@ const { r } = tmmPhaseThicknessJacobian(800, 0, 's', n0Jet, nsJet, layers);
 
 Frequency remains the Taylor variable throughout, so every thickness derivative is itself a third-order frequency jet and all four quantities come out of one matrix product. Fitting a GDD target costs one evaluation per step rather than `N + 1`, the same bargain `tmmThicknessJacobian` offers for reflectance.
 
-Zero-thickness layers are retained so their derivatives and indices line up with your design array. Negative or non-finite thicknesses are skipped, matching the point evaluator, and their derivative entries are zero.
+Zero-thickness layers are retained so their derivatives and indices line up with your design array. Negative or NaN thicknesses are skipped, matching the point evaluator, and their derivative entries are zero, as in the derivative functions above.
 
-The derivative arrays are `null` if the matrix product overflowed, since the prefix/suffix decomposition cannot carry a rescaling; the phase quantities themselves are still returned.
+Opaque stacks, whose matrix product runs past the range of a double, return their derivatives like any other stack. Up to 0.4.0 the derivative arrays were `null` there.
 
 ### Refractive index as a jet
 
@@ -188,6 +210,8 @@ tmmcore uses $\tilde n = n + ik$ with $e^{-i\omega t}$, the complex conjugate of
 
 Positive GDD means the red end of the pulse arrives first.
 
+In p polarization $r$ follows the tilted admittances $n/\cos\theta$, so at normal incidence $r_p = r_s$. Codes that follow Born and Wolf's Fresnel coefficients, Byrnes' `tmm` among them, report $r_p$ with the opposite sign, and an ellipsometric $\Delta$ computed from their $r_p/r_s$ differs from one computed here by 180°. See [Conventions](getting-started.md#conventions).
+
 ---
 
 ## Taylor-jet arithmetic
@@ -218,6 +242,8 @@ Jets are arrays of four complex `[re, im]` pairs.
 Load the bytes, instantiate, then call methods on the returned instance. See [Getting started](getting-started.md#turning-on-webassembly) for setup.
 
 Polarization is an integer here: `0` for s, `1` for p.
+
+A kernel that cannot allocate its working state, which happens only when the WebAssembly heap is exhausted, writes `NaN` to every output of that call rather than a number, so the phase methods return `null` for both coefficients.
 
 | Method | Mirrors |
 |---|---|
@@ -299,7 +325,7 @@ Unlike `tmmSpectrum` this takes one polarization rather than doing both, because
 
 `tmmPhaseJacobian` at every wavelength of a grid in one call, for fitting a whole measured spectrum of phase-derived quantities: ellipsometric Ψ and Δ, or group delay. Arguments as `tmmPhaseSpectrum`.
 
-**Returns** `{ r, t }`, each the five arrays of `tmmPhaseSpectrum` plus `dPhaseDeg`, `dGd`, `dGdd`, `dTod` and `dLogMagnitudeSquared` as `Float64Array` of length grid × `N`, the derivative for wavelength `i` and layer `k` at `[i * N + k]`. A wavelength whose matrix product overflowed holds `NaN` across its derivative block, the batched form of the `null` arrays the single-wavelength call returns.
+**Returns** `{ r, t }`, each the five arrays of `tmmPhaseSpectrum` plus `dPhaseDeg`, `dGd`, `dGdd`, `dTod` and `dLogMagnitudeSquared` as `Float64Array` of length grid × `N`, the derivative for wavelength `i` and layer `k` at `[i * N + k]`.
 
 ### Loader functions
 
@@ -328,9 +354,9 @@ Complex numbers are `[re, im]` pairs throughout.
 | `creal`, `cimag` | Parts |
 | `matmul(A, B)` | 2×2 complex matrix product |
 | `cmatvec(M, v)` | 2×2 matrix times 2-vector |
-| `snellCosTheta(n0, sinTheta0, nj)` | Complex $\cos\theta$ in a medium, from the real invariant $\mathrm{Re}(n_0)\sin\theta_0$ |
-| `incidentCosTheta(n0, sinTheta0)` | $\cos\theta_0$ of the incident medium itself; the plain cosine when it is transparent, from the same invariant when it absorbs |
-| `layerMatrix(nj, dj_nm, lambda_nm, cosTheta_j, pol)` | Characteristic matrix of one layer |
+| `snellCosTheta(n0, sinTheta0, nj, cosTheta0?)` | Complex $\cos\theta$ in a medium, from the real invariant $\mathrm{Re}(n_0)\sin\theta_0$. Pass `cosTheta0`, `[cos θ0, 0]`, as `tmm()` does, and a medium whose index is close to the incident one keeps its cosine at grazing incidence |
+| `incidentCosTheta(n0, sinTheta0, cosTheta0?)` | $\cos\theta_0$ of the incident medium itself; its own cosine when it is transparent, from the same invariant when it absorbs |
+| `layerMatrix(nj, dj_nm, lambda_nm, cosTheta_j, pol)` | Characteristic matrix of one layer; its limit where `cosTheta_j` is exactly zero |
 | `rescaleMatrix(M)` | Rescales in place past an overflow threshold; returns the accumulated log scale |
 
 `rescaleMatrix` is what keeps opaque stacks finite. A common real factor cancels from reflectance but not from transmittance, so callers must carry the returned log scale and apply $e^{-2\,\text{logScale}}$ to T.

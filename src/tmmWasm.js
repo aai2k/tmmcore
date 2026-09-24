@@ -641,8 +641,7 @@ export class TmmWasmInstance {
      * tmmPhaseThicknessJacobian(). Layers used AS-IS (index parity).
      *
      * @returns {{r, t}} each the phase quantities plus `dPhaseDeg`, `dGd`,
-     *   `dGdd`, `dTod` and `dLogMagnitudeSquared` as Float64Array(N), or `null`
-     *   arrays on overflow.
+     *   `dGdd`, `dTod` and `dLogMagnitudeSquared` as Float64Array(N).
      */
     tmmPhaseJacobian(lambda_nm, theta_deg, polCode, n0Jet, nsJet, layers, options = {}) {
         const N = layers.length;
@@ -670,12 +669,7 @@ export class TmmWasmInstance {
         const side = (phaseBase, derivBase) => {
             const base = readPhase(out, phaseBase);
             if (!base) return null;
-            // The kernel fills the whole block with NaN when the matrix product
-            // overflowed and the prefix/suffix decomposition had to be abandoned.
-            const overflowed = N > 0 && Number.isNaN(out[oDeriv + derivBase * N]);
-            const take = (q) => overflowed
-                ? null
-                : out.slice(oDeriv + (derivBase + q) * N, oDeriv + (derivBase + q) * N + N);
+            const take = (q) => out.slice(oDeriv + (derivBase + q) * N, oDeriv + (derivBase + q) * N + N);
             return {
                 ...base,
                 dPhaseDeg: take(0), dGd: take(1), dGdd: take(2), dTod: take(3),
@@ -696,8 +690,7 @@ export class TmmWasmInstance {
      * @returns {{r: object, t: object}} each the five Float64Array(nLam) of
      *   tmmPhaseSpectrum plus `dPhaseDeg`, `dGd`, `dGdd`, `dTod` and
      *   `dLogMagnitudeSquared` as Float64Array(nLam × N), the derivative for
-     *   wavelength i and layer k at `[i * N + k]`. A wavelength whose matrix
-     *   product overflowed holds NaN across its derivative block.
+     *   wavelength i and layer k at `[i * N + k]`.
      */
     tmmPhaseJacobianSpectrum(lambdas, n0Jets, nsJets, layerJets, thick, theta_deg, polCode, options = {}) {
         const nLam = lambdas.length;

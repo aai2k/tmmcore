@@ -66,6 +66,9 @@ const LAMBDAS = [400, 550, 632.8, 1064];
 const ANGLES = [0, 15, 45, 60];
 const POLS = [['s', 0], ['p', 1]];
 const CANDIDATES = [H, L, AG];
+// Needle positions inside each layer, as fractions of its thickness from the
+// incident side; 0 and 1 coincide with the gaps either side of it.
+const INTRA_FRACS = [0, 0.37, 1];
 
 const mk = rows => rows.map(([n, d]) => ({ n, d }));
 
@@ -96,6 +99,15 @@ function near(js, wa, kind, label) {
 const nearAll = (js, wa, kind, label) => {
     for (let i = 0; i < js.length; i++) near(js[i], wa[i], kind, `${label}[${i}]`);
 };
+
+// The needle output inside every layer, JavaScript against WebAssembly.
+function nearIntra(na, nb, at) {
+    const entries = na.intra.flatMap((row, layer) => row.flatMap(({ frac, perCand }, f) =>
+        perCand.map((g, c) => [`${at} intra[${layer}] at ${frac} [${c}]`, g, nb.intra[layer][f].perCand[c]])));
+    for (const [where, g, h] of entries) {
+        for (const q of ['dR', 'dT', 'dA']) near(g[q], h[q], 'deriv', `${where} ${q}`);
+    }
+}
 
 // ── Run ──────────────────────────────────────────────────────────────────────
 
@@ -131,8 +143,8 @@ for (const [stackName, rows] of Object.entries(STACKS)) {
                     }
                 }
 
-                const na = tmmNeedleScan(lam, th, pol, n0, ns, layers, CANDIDATES);
-                const nb = k.tmmNeedleScan(lam, th, code, n0, ns, layers, CANDIDATES);
+                const na = tmmNeedleScan(lam, th, pol, n0, ns, layers, CANDIDATES, INTRA_FRACS);
+                const nb = k.tmmNeedleScan(lam, th, code, n0, ns, layers, CANDIDATES, INTRA_FRACS);
                 for (let pos = 0; pos < na.gaps.length; pos++) {
                     for (let c = 0; c < CANDIDATES.length; c++) {
                         const g = na.gaps[pos][c], h = nb.gaps[pos][c];
@@ -141,6 +153,7 @@ for (const [stackName, rows] of Object.entries(STACKS)) {
                         near(g.dA, h.dA, 'deriv', `${at} needle[${pos}][${c}] dA`);
                     }
                 }
+                nearIntra(na, nb, at);
             }
         }
     }
@@ -181,15 +194,18 @@ const PHASE_STACKS = {
     'with a negative layer': [['H', 110], ['L', -25], ['H', 88]],
 };
 
-// Kept out of the sweep above: this one exists to reach the overflow branch,
-// and its saturated phases make TOD a difference of nearly equal terms far
-// noisier than the tolerances tuned for physically ordinary stacks.
+// Kept out of the loop above: this one exists to take the matrix product past
+// the rescale threshold, and its saturated phases make TOD a difference of
+// nearly equal terms far noisier than the tolerances tuned for physically
+// ordinary stacks.
 const OVERFLOW_STACK = [['H', 110], ...Array.from({ length: 6 }, () => ['K', 20000]), ['L', 90]];
 
 let phaseChecks = 0;
 const worstPhase = { abs: 0, rel: 0 };
 
-function nearPhase(js, wa, label) {
+// `floor` replaces ABS_DERIV where a quantity's own cancellation sets a higher
+// noise level than round-off in the result.
+function nearPhase(js, wa, label, floor = ABS_DERIV) {
     phaseChecks++;
     if (js === null && wa === null) return;
     if (js === null || wa === null) {
@@ -200,8 +216,8 @@ function nearPhase(js, wa, label) {
     const diff = Math.abs(js - wa);
     const rel = diff / Math.max(Math.abs(js), Math.abs(wa), Number.MIN_VALUE);
     if (diff > worstPhase.abs) worstPhase.abs = diff;
-    if (diff > ABS_DERIV && rel > worstPhase.rel) worstPhase.rel = rel;
-    if (diff <= ABS_DERIV || rel <= REL_DERIV) return;
+    if (diff > floor && rel > worstPhase.rel) worstPhase.rel = rel;
+    if (diff <= floor || rel <= REL_DERIV) return;
     failures++;
     if (failures <= 10) console.log(`  FAIL ${label}: js=${js} wasm=${wa} Δ=${diff}`);
 }
@@ -239,12 +255,6 @@ if (!k.hasPhase()) {
                         if (!ja[s] || !jb[s]) continue;
                         for (const q of ['dPhaseDeg', 'dGd', 'dGdd', 'dTod',
                             'dLogMagnitudeSquared']) {
-                            // An overflowing stack gives up on the derivatives.
-                            // Both paths must give up together.
-                            if (ja[s][q] === null || jb[s][q] === null) {
-                                nearPhase(ja[s][q], jb[s][q], `${at} ${s}.${q} (overflow)`);
-                                continue;
-                            }
                             for (let i = 0; i < layers.length; i++) {
                                 nearPhase(ja[s][q][i], jb[s][q][i], `${at} ${s}.${q}[${i}]`);
                             }
@@ -325,11 +335,19 @@ if (!k.hasPhase()) {
         }
     }
 
-    // The overflow path. The prefix/suffix decomposition cannot carry a
-    // rescaling, so a stack whose matrix product runs past the threshold has to
-    // give up on the derivatives while still reporting the coefficient from the
-    // plain path. Both entry points must say so in the way their callers read:
-    // null arrays from the point call, a NaN-filled block from the batched one.
+    // The rescaled path. The matrix product of this stack runs past the rescale
+    // threshold. The Jacobian carries binary exponents through its prefix and
+    // suffix products, the point evaluator rescales its one product, and the
+    // two reach the coefficient by different roundings. The derivatives must
+    // come back, and the point call, the kernel and the batched kernel must
+    // agree on them.
+    //
+    // The q-th frequency order of each coefficient is a difference of terms of
+    // order GD^q, GD the group delay through the whole stack, about 800 fs
+    // here; its thickness derivative, of terms of order |Q|·GD^q with Q = dδ/dd
+    // of the opaque layers. That cancellation, not round-off in the result,
+    // sets how closely two roundings of the same quantity can agree, and the
+    // derivatives of the opaque layers are zero up to exactly that noise.
     {
         const lam = 550;
         const omega = omegaFromLambdaNm(lam);
@@ -343,43 +361,43 @@ if (!k.hasPhase()) {
         const point = tmmPhaseDispersion(lam, 0, 's', n0Jet, nsJet, layers);
         const jacobian = tmmPhaseThicknessJacobian(lam, 0, 's', n0Jet, nsJet, layers);
         const kernel = k.tmmPhaseJacobian(lam, 0, 0, n0Jet, nsJet, layers);
+        const groupDelay = Math.abs(point.t.gd);
+        const opaque = DISPERSIVE.K;
+        const phasePerNm = 2 * Math.PI * Math.hypot(opaque[0], opaque[3]) / lam;
+        const cancellation = 64 * Number.EPSILON;
+        const BASE = { phaseRad: 0, phaseDeg: 0, gd: 1, gdd: 2, tod: 3, magnitudeSquared: 0 };
+        const DERIVATIVES = { dPhaseDeg: 0, dGd: 1, dGdd: 2, dTod: 3, dLogMagnitudeSquared: 0 };
+        const baseFloor = order => Math.max(ABS_DERIV, cancellation * groupDelay ** order);
+        const derivativeFloor = order =>
+            Math.max(ABS_DERIV, cancellation * phasePerNm * groupDelay ** order);
+        // [side, quantity, frequency order, layer] for every derivative entry.
+        const entries = ['r', 't'].flatMap(side => Object.entries(DERIVATIVES).flatMap(
+            ([quantity, order]) => layers.map((_, j) => [side, quantity, order, j])));
         for (const side of ['r', 't']) {
-            comparePhaseSide(point[side], jacobian[side], `overflow ${side} base`);
-            nearPhase(point[side].magnitudeSquared, kernel[side].magnitudeSquared,
-                `overflow ${side} kernel |c|²`);
-            nearPhase(point[side].phaseRad, kernel[side].phaseRad,
-                `overflow ${side} kernel phase`);
-            for (const quantity of ['dPhaseDeg', 'dGd', 'dGdd', 'dTod',
-                'dLogMagnitudeSquared']) {
-                for (const [label, from] of [['js', jacobian], ['wasm', kernel]]) {
-                    if (from[side][quantity] === null) continue;
-                    failures++;
-                    console.log(`  FAIL overflow ${label} ${side}.${quantity}: expected null`);
-                }
+            for (const [key, order] of Object.entries(BASE)) {
+                nearPhase(point[side][key], jacobian[side][key], `rescaled ${side} base.${key}`,
+                    baseFloor(order));
+                nearPhase(jacobian[side][key], kernel[side][key], `rescaled ${side} kernel.${key}`,
+                    baseFloor(order));
             }
+        }
+        for (const [side, quantity, order, j] of entries) {
+            nearPhase(jacobian[side][quantity][j], kernel[side][quantity][j],
+                `rescaled ${side}.${quantity}[${j}]`, derivativeFloor(order));
         }
 
         if (k.hasPhaseJacobianSpectrum()) {
-            const one = [lam];
             const batch = k.tmmPhaseJacobianSpectrum(
-                one, [n0Jet], [nsJet],
+                [lam], [n0Jet], [nsJet],
                 rows.map(([name]) => [cauchyJet(lam, omega, ...DISPERSIVE[name])]),
                 stackThick, 0, 0);
             for (const side of ['r', 't']) {
-                // `out` still carries the plain-path values, so a caller can only
-                // tell from the derivative block. Every entry of it must be NaN.
-                nearPhase(point[side].magnitudeSquared, batch[side].magnitudeSquared[0],
-                    `overflow batched ${side}.magnitudeSquared`);
-                for (const quantity of ['dPhaseDeg', 'dGd', 'dGdd', 'dTod',
-                    'dLogMagnitudeSquared']) {
-                    for (let j = 0; j < layers.length; j++) {
-                        phaseChecks++;
-                        if (Number.isNaN(batch[side][quantity][j])) continue;
-                        failures++;
-                        console.log(`  FAIL overflow batched ${side}.${quantity}[${j}]: `
-                            + `expected NaN, got ${batch[side][quantity][j]}`);
-                    }
-                }
+                nearPhase(kernel[side].magnitudeSquared, batch[side].magnitudeSquared[0],
+                    `rescaled batched ${side}.magnitudeSquared`);
+            }
+            for (const [side, quantity, order, j] of entries) {
+                nearPhase(kernel[side][quantity][j], batch[side][quantity][j],
+                    `rescaled batched ${side}.${quantity}[${j}]`, derivativeFloor(order));
             }
         }
     }

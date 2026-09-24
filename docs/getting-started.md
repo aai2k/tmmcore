@@ -19,14 +19,17 @@ someone checks.
 |---|---|
 | Refractive index | $\tilde n = n + ik$, with $k \ge 0$ for absorbing media |
 | Time factor | $\exp(-i\omega t)$, so a wave $\exp(i(kz - \omega t))$ decays for $k > 0$ |
+| p-polarized amplitudes | from the tilted admittance $n/\cos\theta$, so $r_p = r_s$ at normal incidence |
 | Wavelength | nanometres |
 | Thickness | nanometres |
 | Angle of incidence | degrees from normal |
 | Complex numbers | `[re, im]` pairs |
 | Layer order | incident medium first, substrate last |
-| Absorbing incident medium | every angle follows from the real invariant $n_0 \sin\theta_0$, with $n_0$ the real part of the index (Macleod §10.2); the incident wave decays along the normal only |
+| Absorbing incident medium | every angle follows from the real invariant $n_0 \sin\theta_0$, with $n_0$ the real part of the index (Macleod §10.2); the incident wave decays along the normal only, and $A$ is what the layers absorb, so $R + T + A$ is not one |
 
 This is the complex conjugate of the convention in Macleod's *Thin-Film Optical Filters* ($\tilde n = n - ik$, $\exp(+i\omega t)$). Reflectance, transmittance and absorptance are identical under conjugation. Phase-sensitive quantities are not, so mind the sign if you compute phase from these results.
+
+The p amplitudes follow thin-film practice, as Macleod's do, rather than the Fresnel coefficients of Born and Wolf. Byrnes' `tmm` takes the Fresnel sign, and the ellipsometric convention flips the reflected p direction to the same effect: $r_p = -r_s$ at normal incidence. Their $r_p$ is the negative of tmmcore's at every angle, and a $\Delta$ from $r_p/r_s$ differs by 180°. Macleod amends $\Delta$ by $\pm\pi$ in reflection for this reason (§9.7.1, Eq. 9.36). The [cross-library check](validation.md#against-an-independent-implementation) compares both coefficients with Byrnes' at 0°, 30° and 60°.
 
 !!! warning "k is positive for loss"
 

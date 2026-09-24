@@ -36,9 +36,11 @@ values transfer verbatim with no conjugation and there is no material-data
 confound.
 
 Cases are 4-, 7-, 21- and 40-layer stacks (the 7-layer contains absorbing
-silver) on two grids: 400–1100 nm at 10 nm (71 points) and at 1 nm (701 points).
+silver) on two grids: 400–1100 nm at 10 nm (71 points) and at 1 nm (701 points),
+at normal incidence. The coarse grid runs again at 30° and 60°, where s and p
+part.
 
-Adding a case is a pull request against `cases.json`.
+Adding a case is a pull request against `gen_cases.py`.
 
 ## Accuracy tier
 
@@ -47,8 +49,14 @@ npm run compare
 ```
 
 Feeds `cases.json` to tmmcore's JavaScript and WebAssembly paths and diffs
-against `reference_byrnes.json` — output committed from Byrnes' `tmm`, so no
-Python is needed. Exits non-zero if disagreement exceeds 1e-12.
+against `reference_byrnes.json`, output committed from Byrnes' `tmm`, so no
+Python is needed. R and T come from `tmm()`, the complex reflection coefficient
+from the phase kernel. Exits non-zero if either disagrees by more than 1e-12.
+
+r_s is compared as it stands and r_p with its sign reversed. Byrnes follows the
+Fresnel convention, r_p = −r_s at normal incidence; tmmcore uses the tilted
+admittances of thin-film practice, r_p = r_s there. See the conventions in the
+[getting-started guide](../docs/getting-started.md#conventions).
 
 Distrusting a committed reference file is the correct instinct. To regenerate it
 yourself:
@@ -56,12 +64,9 @@ yourself:
 ```bash
 python -m venv .venv
 .venv/Scripts/python -m pip install tmm numpy
-.venv/Scripts/python gen_cases.py     # regenerate the shared inputs
-.venv/Scripts/python bench_py.py      # runs Byrnes, writes results_py.json
+.venv/Scripts/python gen_cases.py       # regenerate the shared inputs
+.venv/Scripts/python gen_reference.py   # runs Byrnes, writes reference_byrnes.json
 ```
-
-`results_py.json` carries the spectra; `reference_byrnes.json` is the same
-values with the timing fields stripped.
 
 Only Byrnes and `tmm_faster` are usable as accuracy references. `tmm_fast` casts
 to single precision internally, and `tmmax` runs on JAX with `jax_enable_x64`
@@ -126,8 +131,9 @@ stated plainly in the published comparison and should stay that way.
 
 | File | Role |
 |---|---|
-| `compare.mjs` | Accuracy tier — Node only |
+| `compare.mjs` | Accuracy tier, Node only |
 | `reference_byrnes.json` | Committed reference spectra |
+| `gen_reference.py` | Runs Byrnes on `cases.json`, writes `reference_byrnes.json` |
 | `gen_cases.py` | Emits `cases.json`, the shared input set |
 | `bench_py.py` | Byrnes timing and reference spectra |
 | `bench_fast.py` | `tmm_faster` / `tmm_fast` / `tmmax`, single and batch |

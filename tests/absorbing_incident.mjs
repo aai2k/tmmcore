@@ -23,7 +23,11 @@
  *     normal incidence gives T = 1 + k0²/n0² and R = k0²/n0² (Eq. 2.84).
  *  3. A transparent incident medium, and normal incidence, are unchanged bit
  *     for bit.
- *  4. The WebAssembly kernel agrees with the JavaScript for an absorbing
+ *  4. A is the absorptance of the layers, the net irradiance they keep: zero
+ *     for lossless layers, and equal to the balance of Re(B C*) at the front
+ *     and Re(ηs) at the back for absorbing ones. R + T + A then differs from 1
+ *     by the interference term above.
+ *  5. The WebAssembly kernel agrees with the JavaScript for an absorbing
  *     incident medium: R/T/A, the thickness Jacobian, the needle scan, the
  *     phase quantities and their thickness Jacobian, with and without a
  *     dispersive incident sine. Skipped when the kernel has not been built.
@@ -49,17 +53,19 @@ const near = (actual, expected, tolerance, message) => assert.ok(
     Math.abs(actual - expected) <= tolerance,
     `${message}: got ${actual}, expected ${expected}, tolerance ${tolerance}`);
 
-// The kernel's own coefficients, from its exported primitives, so r and η0
-// are available; `cosineOf` chooses the incident-side geometry.
+// The kernel's own coefficients, from its exported primitives, so r, η0 and
+// [B, C] are available; `cosineOf` chooses the incident-side geometry.
 function coefficients(lam, thetaDeg, pol, n0, ns, layers, cosineOf) {
-    const sin0 = [Math.sin(thetaDeg * Math.PI / 180), 0];
+    const rad = thetaDeg * Math.PI / 180;
+    const sin0 = [Math.sin(rad), 0];
+    const cos0 = [Math.cos(rad), 0];
     const eta = (n, cos) => (pol === 's' ? cmul(n, cos) : cdiv(n, cos));
-    const eta0 = eta(n0, cosineOf.incident(n0, sin0));
-    const etaS = eta(ns, cosineOf.medium(n0, sin0, ns));
+    const eta0 = eta(n0, cosineOf.incident(n0, sin0, cos0));
+    const etaS = eta(ns, cosineOf.medium(n0, sin0, ns, cos0));
     let M = [[[1, 0], [0, 0]], [[0, 0], [1, 0]]];
     let logScale = 0;
     for (const { n, d } of layers) {
-        M = matmul(M, layerMatrix(n, d, lam, cosineOf.medium(n0, sin0, n), pol));
+        M = matmul(M, layerMatrix(n, d, lam, cosineOf.medium(n0, sin0, n, cos0), pol));
         logScale += rescaleMatrix(M);
     }
     const B = cadd(M[0][0], cmul(M[0][1], etaS));
@@ -67,7 +73,10 @@ function coefficients(lam, thetaDeg, pol, n0, ns, layers, cosineOf) {
     const den = cadd(cmul(eta0, B), C);
     const r = cdiv(csub(cmul(eta0, B), C), den);
     const t = cdiv(cmul([2, 0], eta0), den);
-    return { r, eta0, R: cabs2(r), T: etaS[0] / eta0[0] * cabs2(t) * Math.exp(-2 * logScale) };
+    return {
+        r, eta0, etaS, B, C, R: cabs2(r),
+        T: etaS[0] / eta0[0] * cabs2(t) * Math.exp(-2 * logScale),
+    };
 }
 const plainCosine = sin0 => csqrt(csub([1, 0], cmul(sin0, sin0)));
 // The kernel's geometry: real invariant everywhere.
@@ -144,7 +153,38 @@ for (const [n, k] of [[1.5, 0.01], [1.5, 0.1], [2, 0.3]]) {
     assert.equal(a.R, b.R, 'normal incidence into an absorbing medium is unchanged');
 }
 
-// ── 4. The WebAssembly kernel ───────────────────────────────────────────────
+// ── 4. A is the absorptance of the layers ───────────────────────────────────
+// The net irradiance entering the front surface is ½Re(B C*) and the one
+// leaving into the substrate ½Re(ηs), per unit tangential field at the
+// substrate (Macleod Eq. 2.120); the incident irradiance is ½Re(η0)|E⁺|² with
+// E⁺ = (η0 B + C)/(2η0). Their balance is the absorptance, computed here from
+// [B, C] rather than from r, and it is zero for lossless layers whatever the
+// incident medium absorbs.
+
+const ABSORBING = mk([[[2.3, 0.0005], 110], [L, 95], [[0.15, 3.2], 18], [L, 130], [H, 60]]);
+const SAMPLES = [0, 1e-4, 1e-2].flatMap(k0 => [0, 30, 60].flatMap(theta => ['s', 'p'].flatMap(pol =>
+    Array.from({ length: 61 }, (_, i) => [[1.5, k0], theta, pol, 400 + 5 * i]))));
+let worstLossless = 0;
+let worstField = 0;
+for (const [n0, theta, pol, lam] of SAMPLES) {
+    worstLossless = Math.max(worstLossless, tmm(lam, theta, pol, n0, GLASS, mk(STACKS['QW 21-layer'])).A);
+    const { eta0, etaS, B, C } = coefficients(lam, theta, pol, n0, GLASS, ABSORBING, realInvariant);
+    const netIn = cmul(B, [C[0], -C[1]])[0] - etaS[0];
+    const field = netIn * 4 * cabs2(eta0) / (eta0[0] * cabs2(cadd(cmul(eta0, B), C)));
+    worstField = Math.max(worstField, Math.abs(tmm(lam, theta, pol, n0, GLASS, ABSORBING).A - field));
+}
+assert.ok(worstLossless <= 1e-14, `lossless layers absorb nothing: A up to ${worstLossless}`);
+assert.ok(worstField <= 1e-14, `A is the net irradiance the layers keep: off by ${worstField}`);
+
+// The case that showed R + T + A = 1.047 while A was 1 − R − T clamped at 0:
+// R + T exceeds 1 there by the mixed Poynting term, and A stays 0.
+{
+    const { R, T, A } = tmm(505, 60, 's', [1.5, 0.01], GLASS, mk(STACKS['QW 21-layer']));
+    assert.ok(A <= 1e-14, `lossless 21-layer, 505 nm, 60°, s: A = ${A}`);
+    near(R + T, 1.047, 1e-3, 'lossless 21-layer, 505 nm, 60°, s: R + T carries the interference term');
+}
+
+// ── 5. The WebAssembly kernel ───────────────────────────────────────────────
 
 const WASM = join(HERE, '..', 'src', 'tmm_kernel.wasm');
 let wasmChecks = 0;

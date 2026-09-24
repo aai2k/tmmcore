@@ -43,28 +43,39 @@ GRIDS = {
     "g701": grid(400.0, 1100.0, 1.0),    # typical optical design grid
 }
 
-THETA_DEG = 0.0
+# Normal incidence on both grids. Oblique incidence, where s and p part and the
+# p admittance is n / cos(theta), on the coarse grid: the angle changes what is
+# checked, not how long a spectrum takes.
+ANGLES = {"g71": [0.0, 30.0, 60.0], "g701": [0.0]}
 
-cases = []
-for gname, lambdas in GRIDS.items():
-    for sname, stack in STACKS.items():
-        cases.append({
-            "name": f"{sname}/{gname}",
-            "stack": sname,
-            "grid": gname,
-            "nLayers": len(stack),
-            "theta_deg": THETA_DEG,
-            "lambdas": lambdas,
-            "n0": [list(n_air(l)) for l in lambdas],
-            "ns": [list(n_glass(l)) for l in lambdas],
-            "thick": [d for (_, d) in stack],
-            # layerNK[layer][lambda] = [re, im]
-            "layerNK": [[list(f(l)) for l in lambdas] for (f, _) in stack],
-        })
+
+def case(sname, stack, gname, lambdas, theta):
+    return {
+        "name": f"{sname}/{gname}" + (f"/{theta:g}deg" if theta else ""),
+        "stack": sname,
+        "grid": gname,
+        "nLayers": len(stack),
+        "theta_deg": theta,
+        "lambdas": lambdas,
+        "n0": [list(n_air(l)) for l in lambdas],
+        "ns": [list(n_glass(l)) for l in lambdas],
+        "thick": [d for (_, d) in stack],
+        # layerNK[layer][lambda] = [re, im]
+        "layerNK": [[list(f(l)) for l in lambdas] for (f, _) in stack],
+    }
+
+
+cases = [case(sname, stack, gname, lambdas, 0.0)
+         for gname, lambdas in GRIDS.items()
+         for sname, stack in STACKS.items()]
+cases += [case(sname, stack, gname, GRIDS[gname], theta)
+          for gname, angles in ANGLES.items()
+          for theta in angles if theta
+          for sname, stack in STACKS.items()]
 
 with open("cases.json", "w") as fh:
-    json.dump({"theta_deg": THETA_DEG, "cases": cases}, fh)
+    json.dump({"cases": cases}, fh)
 
 print(f"wrote cases.json: {len(cases)} cases")
 for c in cases:
-    print(f"  {c['name']:12s}  N={c['nLayers']:3d}  nLam={len(c['lambdas']):4d}")
+    print(f"  {c['name']:18s}  N={c['nLayers']:3d}  nLam={len(c['lambdas']):4d}")
