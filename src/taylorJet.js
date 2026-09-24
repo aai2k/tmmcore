@@ -244,12 +244,14 @@ export function jetClampRealMinimum(jet, minimum) {
 }
 
 /**
- * Bound the imaginary part, flattening the jet to a constant when it bites.
+ * Bound the imaginary part, holding it at the limit at every order when it
+ * bites; the real part, which carries the phase, is kept.
  *
  * Guards the same overflow `layerMatrix` guards in tmm.js: the phase thickness
  * of a strongly absorbing layer grows without bound and cosh of it overflows.
- * Past the limit the layer is already opaque, so the derivatives are zero to
- * machine precision and dropping them keeps the matrix finite.
+ * Past the limit the layer matrix built from the held phase is the true one
+ * divided by a real factor, which cancels from r and from every phase; callers
+ * that need |t| carry it as a log scale, as tmm.js does with layerLogScale.
  */
 export function jetClampImaginary(jet, limit) {
     if (jet[0][1] > limit) {

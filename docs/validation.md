@@ -115,19 +115,42 @@ PASS : edge cases
 
 At grazing incidence the check is Fresnel's equations for a bare interface, $T = 4\eta_0\eta_s/(\eta_0 + \eta_s)^2$, with the exact cosine; tmmcore matches them to $10^{-12}$ relative in $T$ from 89.9° to 90°, and an air layer under air changes nothing. The critical angle is searched for among the doubles near 30°, from glass of index 2 into air, and $R$ and $T$ of an air gap there match the limit of the layer matrix in closed form, and the doubles either side of it, which the matrix reaches smoothly. A substrate at its critical angle reflects everything. The same file checks that a negative or NaN thickness leaves a layer out of every evaluator, with zero derivative in both Jacobians, and that $r_p = r_s$ at normal incidence.
 
+### Transmittance through opaque layers
+
+Past the imaginary-phase clamp a layer's matrix is held short by a real factor, which tmmcore carries as a log scale for $t$ (see [Opaque layers](api.md)). The check is the Airy recursion, which builds $r$ and $t$ outward from the substrate from interface coefficients and propagation factors $e^{i\delta}$, never forms $\cosh$, and shares no code with the characteristic matrix. Every evaluator that reports $T$ or $|t|$ is held to it: `tmm()`, $T$ from the Jacobian, Hessian and needle scan, $|t|^2$ and the phase of $t$ from the phase kernel, and in WebAssembly the same plus the batched spectrum and the three growing-stack kernels.
+
+```bash
+node tests/opaque_transmittance.mjs
+```
+
+```
+750 checks against the Airy recursion, WebAssembly included.
+without the held factor, T would be off by up to 2.7e+123
+PASS : transmittance past the opaque-layer bound.
+```
+
+The stacks are 1 µm and 2.5 µm of aluminium at 550 nm, a 10 µm air gap in glass at 45° and 80°, and a dielectric stack as a control. $T$ agrees to $10^{-12}$ relative everywhere, down to $10^{-166}$.
+
+| Stack | $T$ up to 0.4.1 | $T$ now, and from the Airy recursion |
+|---|---|---|
+| SiO2 90 nm over Al 1000 nm, 550 nm, 0°, s | $3.3\times10^{-44}$ | $3.6\times10^{-67}$ |
+| TiO2, air 10 µm, MgF2 in glass, 550 nm, 80°, p | $1.1\times10^{-44}$ | $8.9\times10^{-112}$ |
+
+Up to 0.4.1 the held factor was dropped, and $T$ stopped near $10^{-43}$ for each clamped layer whatever its thickness. $R$ was right then and is bit-identical now.
+
 ---
 
 ## Derivatives against finite differences
 
-The JavaScript and WebAssembly derivative kernels share their formulas, so agreeing with each other proves nothing about the formulas. This check holds every derivative to finite differences of `tmm()` and `tmmPhaseDispersion()`, which share nothing with the kernels but the layer matrix: the thickness Jacobian, every entry of the Hessian, the needle P-function at every gap and inside every layer, and the thickness derivatives of phase, GD, GDD and $\ln|r|^2$.
+The JavaScript and WebAssembly derivative kernels share their formulas, so agreeing with each other proves nothing about the formulas. This check holds every derivative to finite differences of `tmm()` and `tmmPhaseDispersion()`, which share nothing with the kernels but the layer matrix: the thickness Jacobian, every entry of the Hessian, the needle P-function at every gap and inside every layer, and the thickness derivatives of phase, GD, GDD and $\ln|c|^2$ for both $r$ and $t$. Through a clamped layer $T$ is below $10^{-43}$, where an absolute tolerance sees nothing, so every derivative of $T$ is also held relative to $T$.
 
 ```bash
 node tests/derivatives_fd.mjs
 ```
 
 ```
-15668 comparisons against finite differences and the port, 9342 of them WebAssembly.
-worst difference as a fraction of its tolerance: 2.43e-1, six clamped layers λ=550 p dGdd[3]
+20810 comparisons against finite differences and the port, 9342 of them WebAssembly.
+worst difference as a fraction of its tolerance: 2.42e-1, six clamped layers λ=550 p r dGdd[3]
 PASS : analytic derivatives match finite differences.
 ```
 
@@ -146,7 +169,7 @@ The stacks are the ones where derivative kernels go wrong while R and T stay rig
 
 Differences use five-point central stencils in the layer thickness, with a step of 0.01 nm, or 0.25 nm for the phase quantities, where GDD carries enough cancellation to need the wider step. A needle cannot have negative thickness, so its differences are one-sided, third order. The worst case above is that GDD noise, at a quarter of its tolerance.
 
-Up to 0.4.0 these kernels differentiated a different matrix from the one in the product past the clamp, and returned exactly zero at any wavelength where the partial products passed $10^{77}$. On the stacks above that gave derivatives of $10^{38}$ or `NaN` where the true value is zero, zero where it is $10^{-2}$, and needle gradients inside a metal an order of magnitude too large, or large where the true value is zero. The phase Jacobian returned `null` past the rescale threshold.
+Up to 0.4.0 these kernels differentiated a different matrix from the one in the product past the clamp, and returned exactly zero at any wavelength where the partial products passed $10^{77}$. On the stacks above that gave derivatives of $10^{38}$ or `NaN` where the true value is zero, zero where it is $10^{-2}$, and needle gradients inside a metal an order of magnitude too large, or large where the true value is zero. The phase Jacobian returned `null` past the rescale threshold. In 0.4.1 the $dT$ of a needle inside a clamped layer still disagreed with the differences of 0.4.1's own `tmm()`, by 200 to 1500 times relative to $T$ on 700 nm of Al: 40 of the relative checks fail on the four clamped stacks, 24 of them on 700 nm of Al.
 
 ---
 
@@ -187,7 +210,7 @@ The phase quantities amplify that noise, because every derivative order is a dif
 
 About a decade per order of differentiation, which is what cancellation costs. Even the worst case is $10^{-11}$ relative, orders below the precision of any measured $n$ and $k$.
 
-One stack is held to a looser bound: six 20 µm opaque layers, whose product passes the rescale threshold. There the $q$-th frequency order is a difference of terms of order $\mathrm{GD}^q$, with GD the group delay through the whole stack, about 800 fs, so two roundings of it agree to about $64\,\varepsilon\,\mathrm{GD}^q$ and no better. The derivatives with respect to the opaque layers are zero to exactly that noise.
+One stack is held to a looser bound: six 20 µm opaque layers, whose product passes the rescale threshold. There the $q$-th frequency order is a difference of terms of order $\mathrm{GD}^q$, with GD the group delay through the whole stack, about 800 fs, so two roundings of it agree to about $64\,\varepsilon\,\mathrm{GD}^q$ and no better. The derivatives of $r$ with respect to the opaque layers are zero to exactly that noise; those of $t$ are not, since $t$ falls and turns with each opaque layer's thickness.
 
 The test skips cleanly if `tmm_kernel.wasm` has not been built.
 

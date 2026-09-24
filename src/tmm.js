@@ -160,25 +160,37 @@ function incidentCosTheta(n0, sinTheta0, cosTheta0) {
 // ── Layer characteristic matrix ───────────────────────────────────────────────
 
 // Overflow guard on the phase thickness. ccos/csin use cosh/sinh(Im δ), and
-// cosh(710) = Inf would turn the whole product into NaN. By |Im δ| of a few
-// tens the layer is optically opaque, its single-pass transmittance e^{−2 Im δ}
-// below 4e−44 at the bound, and the surface reflectance has converged, so
-// holding Im δ there is exact to machine precision while cosh(50) ≈ 2.6e21
-// stays finite under products. The bound tests Im δ whatever k is: a lossless
-// layer past the critical angle carries an evanescent wave with imaginary δ,
-// and a thick enough one reaches the bound too.
+// cosh(710) = Inf would turn the whole product into NaN. So |Im δ| is held at
+// MAX_IM_DELTA, where cosh(50) ≈ 2.6e21 stays finite under products. Past the
+// bound cosδ and sinδ are each one growing exponential to within e^{−100}
+// relative, so the held matrix is the true one divided by e^{|Im δ| − 50}: the
+// same shape, only smaller. That factor cancels from r and from every
+// admittance, and is carried alongside as a log scale (layerLogScale) for t,
+// T and fields, which it does not cancel from. The bound tests Im δ whatever
+// k is: a lossless layer past the critical angle carries an evanescent wave
+// with imaginary δ, and a thick enough one reaches the bound too.
 const MAX_IM_DELTA = 50;
 
 // Phase thickness δ = (2π/λ) n d cosθ (Macleod 5th ed., Eq. 9.2), complex,
-// with Im δ held to ±MAX_IM_DELTA. `clamped` reports whether the bound held
-// it, in which case δ depends on d through its real part only.
+// with Im δ held to ±MAX_IM_DELTA. `excess` is |Im δ| − MAX_IM_DELTA where
+// the bound held it and 0 elsewhere: the natural log of the factor the held
+// matrix falls short of the true one by.
 function layerPhase(nj, dj_nm, lambda_nm, cosTheta_j) {
     const k0 = (2 * Math.PI) / lambda_nm;
     const delta = cmul(cmul(nj, [k0 * dj_nm, 0]), cosTheta_j);
-    const clamped = Math.abs(delta[1]) > MAX_IM_DELTA;
+    const excess = Math.abs(delta[1]) > MAX_IM_DELTA ? Math.abs(delta[1]) - MAX_IM_DELTA : 0;
     if (delta[1] > MAX_IM_DELTA) delta[1] = MAX_IM_DELTA;
     else if (delta[1] < -MAX_IM_DELTA) delta[1] = -MAX_IM_DELTA;
-    return { delta, clamped };
+    return { delta, excess };
+}
+
+// The log scale layerMatrix leaves out for the same arguments: its matrix
+// times e^{layerLogScale} is the layer's true matrix. A caller building a
+// product adds it to the log scale it carries for t, exactly as it adds the
+// return of rescaleMatrix; T then takes e^{−2·logScale}. Zero for every layer
+// short of the bound, so an ordinary stack is unaffected bit for bit.
+function layerLogScale(nj, dj_nm, lambda_nm, cosTheta_j) {
+    return layerPhase(nj, dj_nm, lambda_nm, cosTheta_j).excess;
 }
 
 // Tilted admittance in units of the free-space admittance: n cosθ for s,
@@ -297,7 +309,7 @@ export function tmm(lambda_nm, theta_deg, pol, n0, ns, layers) {
         const cosThetaJ = snellCosTheta(n0, sinTheta0, n, cosTheta0);
         const Mj = layerMatrix(n, d, lambda_nm, cosThetaJ, pol);
         M = matmul(M, Mj);
-        logScale += rescaleMatrix(M);
+        logScale += layerLogScale(n, d, lambda_nm, cosThetaJ) + rescaleMatrix(M);
     }
 
     // [B, C]^T = M × substrate
@@ -376,17 +388,20 @@ function derivativeLayer(n, d, { n0, sinTheta0, cosTheta0, k0, lambda_nm, pol })
     const present = d >= 0;
     const thickness = present ? d : 0;
     const cosTheta = snellCosTheta(n0, sinTheta0, n, cosTheta0);
-    const { delta, clamped } = layerPhase(n, thickness, lambda_nm, cosTheta);
+    const { delta, excess } = layerPhase(n, thickness, lambda_nm, cosTheta);
     const eta = layerAdmittance(n, cosTheta, pol);
-    // Q = dδ/dd = (2π/λ) n cosθ. Where the bound holds Im δ, the matrix in
-    // the product moves with d through Re δ alone, so Q loses its imaginary
-    // part and every derivative is taken of that same matrix.
-    const rawQ = cmul(cmul(n, [k0, 0]), cosTheta);
-    const Q = !present ? [0, 0] : clamped ? [rawQ[0], 0] : rawQ;
+    // Q = dδ/dd = (2π/λ) n cosθ. Past the bound the layer is the held matrix
+    // times e^{excess}, and together they move with d as the true matrix does:
+    // Q in full, with the held δ in the sines and cosines, is their derivative
+    // to within e^{−100} relative. Its imaginary part is what makes T fall
+    // with d; it cancels from r.
+    const Q = present ? cmul(cmul(n, [k0, 0]), cosTheta) : [0, 0];
     const { P, S } = present
         ? generator(n, cosTheta, Q, k0, pol)
         : { P: [0, 0], S: [0, 0] };
-    const layer = { n, thickness, cosTheta, delta, eta, critical: atCriticalAngle(cosTheta), Q, P, S };
+    const layer = {
+        n, thickness, cosTheta, delta, excess, eta, critical: atCriticalAngle(cosTheta), Q, P, S,
+    };
     layer.M = partMatrix(layer, delta, thickness);
     return layer;
 }
@@ -408,6 +423,8 @@ function derivativeStack({ lambda_nm, theta_deg, pol, n0, ns, layers }) {
     const geometry = { n0, sinTheta0, cosTheta0, k0, lambda_nm, pol };
 
     const data = layers.map(({ n, d }) => derivativeLayer(n, d, geometry));
+    // What the held layers leave out of the product, for t.
+    const logScale = data.reduce((sum, layer) => sum + layer.excess, 0);
 
     const Pre = new Array(N + 1);
     const preExp = new Array(N + 1);
@@ -426,19 +443,21 @@ function derivativeStack({ lambda_nm, theta_deg, pol, n0, ns, layers }) {
         postExp[j] = postExp[j + 1] + rescaleBinary(Post[j]);
     }
 
-    return { geometry, eta0, substrate, N, data, Pre, preExp, Post, postExp };
+    return { geometry, eta0, substrate, N, data, Pre, preExp, Post, postExp, logScale };
 }
 
 // R, T, A of the whole stack from [B, C] = Post[0] (Macleod 5th ed., Eqs.
 // 2.123–2.125), with the pieces the chain rule below needs: r, the true t,
 // b = B/den and c = C/den, and g = 2 Im η0 / Re η0, the weight of Im r in the
-// absorptance. Only t carries the exponent of [B, C].
-function stackResponse({ eta0, substrate, Post, postExp }) {
+// absorptance. Only t carries the exponent of [B, C] and the log scale of the
+// held layers.
+function stackResponse({ eta0, substrate, Post, postExp, logScale }) {
     const [B, C] = Post[0];
     const den = cadd(cmul(eta0, B), C);
     const inverseDen = cdiv([1, 0], den);
     const r = cdiv(csub(cmul(eta0, B), C), den);
-    const t = cscale(cmul(cdiv(cmul([2, 0], eta0), den), substrate[0]), 2 ** -postExp[0]);
+    let t = cscale(cmul(cdiv(cmul([2, 0], eta0), den), substrate[0]), 2 ** -postExp[0]);
+    if (logScale > 0) t = cscale(t, Math.exp(-logScale));
     const Tfac = transmittedFlux(substrate) / creal(eta0);
     const R = cabs2(r);
     const T = Math.max(0, Tfac * cabs2(t));
@@ -532,8 +551,13 @@ export function tmmNeedleScan(lambda_nm, theta_deg, pol, n0, ns, layers,
     const Acache = candidateNs.map(needleA);
 
     // {dR,dT,dA} per candidate for a needle between a prefix and a suffix.
-    const insertAt = (pre, post, exponent) => Acache.map(Amat =>
-        responseDerivative(response, perDen(response, cmatvec(pre, cmatvec(Amat, post)), exponent)));
+    // `factor` is a log-scale correction to the pair, 1 unless it straddles a
+    // held layer.
+    const insertAt = (pre, post, exponent, factor = 1) => Acache.map(Amat => {
+        let v = cmatvec(pre, cmatvec(Amat, post));
+        if (factor !== 1) v = [cscale(v[0], factor), cscale(v[1], factor)];
+        return responseDerivative(response, perDen(response, v, exponent));
+    });
 
     const gaps = new Array(N + 1);
     for (let pos = 0; pos <= N; pos++) {
@@ -546,16 +570,25 @@ export function tmmNeedleScan(lambda_nm, theta_deg, pol, n0, ns, layers,
             const host = data[k];
             const { n, thickness, cosTheta, delta } = host;
             intra.push(intraFracs.map(frac => {
-                // The host splits into halves whose product is M_k itself, bound
-                // included, so the needle sits in the stack R and T came from.
-                // The front half keeps its own phase, bounded only if it alone
-                // passes the bound, so the field at the needle's depth is the
-                // true one; the back half takes the remainder of δ.
-                const front = layerPhase(n, frac * thickness, lambda_nm, cosTheta).delta;
-                const preIn = matmul(Pre[k], partMatrix(host, front, frac * thickness));
-                const postIn = cmatvec(partMatrix(host, csub(delta, front), (1 - frac) * thickness),
-                    Post[k + 1]);
-                return { frac, perCand: insertAt(preIn, postIn, preExp[k] + postExp[k + 1]) };
+                const exponent = preExp[k] + postExp[k + 1];
+                const front = layerPhase(n, frac * thickness, lambda_nm, cosTheta);
+                const preIn = matmul(Pre[k], partMatrix(host, front.delta, frac * thickness));
+                if (host.excess === 0) {
+                    // The halves multiply to M_k itself, so the needle sits in
+                    // the stack R and T came from.
+                    const postIn = cmatvec(partMatrix(host, csub(delta, front.delta),
+                        (1 - frac) * thickness), Post[k + 1]);
+                    return { frac, perCand: insertAt(preIn, postIn, exponent) };
+                }
+                // Past the bound each half is held on its own. The halves times
+                // e^{front.excess + back.excess} are the true host, and the
+                // product carries the host as its held matrix, the true one over
+                // e^{host.excess}, so the pair takes the ratio: between e^{−50}
+                // and 1. The field at the needle's depth is then the true one.
+                const back = layerPhase(n, (1 - frac) * thickness, lambda_nm, cosTheta);
+                const postIn = cmatvec(partMatrix(host, back.delta, (1 - frac) * thickness), Post[k + 1]);
+                const factor = Math.exp(front.excess + back.excess - host.excess);
+                return { frac, perCand: insertAt(preIn, postIn, exponent, factor) };
             }));
         }
     }
@@ -591,9 +624,8 @@ export function tmmNeedleScan(lambda_nm, theta_deg, pol, n0, ns, layers,
 // special case of this; a strong internal-consistency check.
 //
 // δ and Q are those of the matrix in the product: past the imaginary-phase
-// bound, the held δ and the real part of Q (see derivativeLayer). The
-// off-diagonals are written with P = Q/η and S = Qη, which stay finite at the
-// critical angle.
+// bound, the held δ and Q in full (see derivativeLayer). The off-diagonals are
+// written with P = Q/η and S = Qη, which stay finite at the critical angle.
 function layerMatrixDerivative({ delta, Q, P, S }) {
     const cD = ccos(delta), sD = csin(delta);
     return [
@@ -744,5 +776,5 @@ export function tmmThicknessHessian(lambda_nm, theta_deg, pol, n0, ns, layers) {
 
 export {
     cadd, csub, cmul, cdiv, cabs2, cconj, csqrt, ccos, csin, creal, cimag,
-    matmul, rescaleMatrix, snellCosTheta, incidentCosTheta, layerMatrix, cmatvec
+    matmul, rescaleMatrix, snellCosTheta, incidentCosTheta, layerMatrix, layerLogScale, cmatvec
 };

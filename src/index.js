@@ -29,7 +29,7 @@ export {
     tmmNeedleScan,
     // Low-level primitives, for building variants on the same conventions
     cadd, csub, cmul, cdiv, cabs2, cconj, csqrt, ccos, csin, creal, cimag,
-    matmul, rescaleMatrix, snellCosTheta, incidentCosTheta, layerMatrix, cmatvec,
+    matmul, rescaleMatrix, snellCosTheta, incidentCosTheta, layerMatrix, layerLogScale, cmatvec,
 } from './tmm.js';
 
 export {

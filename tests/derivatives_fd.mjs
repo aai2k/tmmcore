@@ -192,6 +192,14 @@ const RUNS = CASES.flatMap(c => c.angles.flatMap(theta => [['s', 0], ['p', 1]].m
 
 const plainOf = run => (layers, q) => tmm(run.lambda, run.theta, run.pol, run.n0, run.ns, layers)[q];
 
+// T through a layer past the imaginary-phase bound is below 1e-43, where the
+// absolute tolerance sees nothing at all, so every derivative of T is held
+// relative to T as well.
+function agreeWithT(q, analytic, reference, T, tolerance, label) {
+    agree(analytic, reference, tolerance, label);
+    if (q === 'T' && T > 0) agree(analytic / T, reference / T, tolerance, `${label} relative to T`);
+}
+
 // ── Jacobian, Hessian and needles against tmm() ──────────────────────────────
 
 const FIRST_KEYS = [['R', 'dRdd'], ['T', 'dTdd'], ['A', 'dAdd']];
@@ -203,7 +211,7 @@ function checkJacobian(run) {
     for (const [k, which] of grid(run.layers.length, FIRST_KEYS.length)) {
         const [q, key] = FIRST_KEYS[which];
         const reference = central(h => plain(shifted(run.layers, k, -1, h, 0), q));
-        agree(jac[key][k], reference, FIRST, `${run.at} ${key}[${k}]`);
+        agreeWithT(q, jac[key][k], reference, jac.T, FIRST, `${run.at} ${key}[${k}]`);
     }
 }
 
@@ -214,7 +222,7 @@ function checkHessian(run) {
     for (const [i, j, which] of grid(N, N, SECOND_KEYS.length).filter(([i, j]) => j >= i)) {
         const [q, key] = SECOND_KEYS[which];
         const reference = secondPartial(layers => plain(layers, q), run.layers, i, j);
-        agree(hess[key][i][j], reference, SECOND, `${run.at} ${key}[${i}][${j}]`);
+        agreeWithT(q, hess[key][i][j], reference, hess.T, SECOND, `${run.at} ${key}[${i}][${j}]`);
     }
 }
 
@@ -226,13 +234,14 @@ function checkNeedles(run) {
     for (const [pos, ci, which] of grid(N + 1, nc, 3)) {
         const q = ['R', 'T', 'A'][which];
         const reference = forward(h => plain(withNeedle(run.layers, pos, run.candidates[ci])(h), q));
-        agree(scan.gaps[pos][ci][`d${q}`], reference, FIRST, `${run.at} gap[${pos}][${ci}] d${q}`);
+        agreeWithT(q, scan.gaps[pos][ci][`d${q}`], reference, scan.T, FIRST,
+            `${run.at} gap[${pos}][${ci}] d${q}`);
     }
     for (const [k, fi, ci, which] of grid(N, run.fracs.length, nc, 3)) {
         const q = ['R', 'T', 'A'][which];
         const split = splitAt(run.layers, k, run.fracs[fi]);
         const reference = forward(h => plain(withNeedle(split, k + 1, run.candidates[ci])(h), q));
-        agree(scan.intra[k][fi].perCand[ci][`d${q}`], reference, FIRST,
+        agreeWithT(q, scan.intra[k][fi].perCand[ci][`d${q}`], reference, scan.T, FIRST,
             `${run.at} intra[${k}] at ${run.fracs[fi]} [${ci}] d${q}`);
     }
 }
@@ -258,25 +267,32 @@ const PHASE_RUNS = Object.entries(PHASE_CASES).flatMap(([name, rows]) => [550, 1
 
 const wrap = angle => angle - 2 * Math.PI * Math.round(angle / (2 * Math.PI));
 
+// Both coefficients. t is checked where |t|² is still inside the double
+// range: through the six clamped layers it is 1e-736 at 550 nm and 1e-381 at
+// 1064 nm.
 function checkPhase({ name, lambda, pol, layers }) {
     const n0Jet = jetConstant(1);
     const nsJet = jetConstant(1.52);
-    const jac = tmmPhaseThicknessJacobian(lambda, 30, pol, n0Jet, nsJet, layers).r;
-    const base = tmmPhaseDispersion(lambda, 30, pol, n0Jet, nsJet, layers).r;
-    const reflectionAt = (k, h) => tmmPhaseDispersion(lambda, 30, pol, n0Jet, nsJet,
-        layers.map((layer, j) => ({ nJet: layer.nJet, d: layer.d + (j === k ? h : 0) }))).r;
-    const quantities = [
-        ['dPhaseDeg', r => wrap(r.phaseRad - base.phaseRad) * 180 / Math.PI],
-        ['dGd', r => r.gd],
-        ['dGdd', r => r.gdd],
-        ['dLogMagnitudeSquared', r => Math.log(r.magnitudeSquared)],
-    ];
-    for (const [k, which] of grid(layers.length, quantities.length)) {
-        const [key, read] = quantities[which];
-        const reference = central(h => read(reflectionAt(k, h)), PHASE_STEP_NM);
-        const scale = Math.max(1, Math.abs(read(base)));
-        agree((jac[key] || [])[k], reference, { abs: PHASE.abs * scale, rel: PHASE.rel },
-            `${name} λ=${lambda} ${pol} ${key}[${k}]`);
+    const jacobian = tmmPhaseThicknessJacobian(lambda, 30, pol, n0Jet, nsJet, layers);
+    const plain = tmmPhaseDispersion(lambda, 30, pol, n0Jet, nsJet, layers);
+    for (const side of ['r', 't'].filter(s => plain[s].magnitudeSquared > 0)) {
+        const jac = jacobian[side];
+        const base = plain[side];
+        const coefficientAt = (k, h) => tmmPhaseDispersion(lambda, 30, pol, n0Jet, nsJet,
+            layers.map((layer, j) => ({ nJet: layer.nJet, d: layer.d + (j === k ? h : 0) })))[side];
+        const quantities = [
+            ['dPhaseDeg', c => wrap(c.phaseRad - base.phaseRad) * 180 / Math.PI],
+            ['dGd', c => c.gd],
+            ['dGdd', c => c.gdd],
+            ['dLogMagnitudeSquared', c => Math.log(c.magnitudeSquared)],
+        ];
+        for (const [k, which] of grid(layers.length, quantities.length)) {
+            const [key, read] = quantities[which];
+            const reference = central(h => read(coefficientAt(k, h)), PHASE_STEP_NM);
+            const scale = Math.max(1, Math.abs(read(base)));
+            agree((jac[key] || [])[k], reference, { abs: PHASE.abs * scale, rel: PHASE.rel },
+                `${name} λ=${lambda} ${pol} ${side} ${key}[${k}]`);
+        }
     }
 }
 
@@ -284,7 +300,8 @@ PHASE_RUNS.forEach(checkPhase);
 
 // ── The WebAssembly kernel on the same stacks ────────────────────────────────
 
-// [label, JavaScript value, WebAssembly value] for every derivative of one run.
+// [label, JavaScript value, WebAssembly value, quantity] for every derivative
+// of one run, the quantity being 'R', 'T' or 'A'.
 function portPairs(kernel, run) {
     const N = run.layers.length;
     const ja = tmmThicknessJacobian(...run.args);
@@ -294,28 +311,31 @@ function portPairs(kernel, run) {
     const na = tmmNeedleScan(...run.args, run.candidates, run.fracs);
     const nb = kernel.tmmNeedleScan(...run.kernelArgs, run.candidates, run.fracs);
     const Q = ['dR', 'dT', 'dA'];
+    const RTA = ['R', 'T', 'A'];
     return [
         ...grid(N, 3).map(([i, w]) => {
             const key = FIRST_KEYS[w][1];
-            return [`${key}[${i}]`, ja[key][i], jb[key][i]];
+            return [`${key}[${i}]`, ja[key][i], jb[key][i], RTA[w]];
         }),
         ...grid(N, N, 3).map(([i, j, w]) => {
             const key = ['d2Rdd', 'd2Tdd', 'd2Add'][w];
-            return [`${key}[${i}][${j}]`, ha[key][i][j], hb[key][i][j]];
+            return [`${key}[${i}][${j}]`, ha[key][i][j], hb[key][i][j], RTA[w]];
         }),
         ...grid(N + 1, run.candidates.length, 3).map(([pos, ci, w]) =>
-            [`gap[${pos}][${ci}] ${Q[w]}`, na.gaps[pos][ci][Q[w]], nb.gaps[pos][ci][Q[w]]]),
+            [`gap[${pos}][${ci}] ${Q[w]}`, na.gaps[pos][ci][Q[w]], nb.gaps[pos][ci][Q[w]], RTA[w]]),
         ...grid(N, run.fracs.length, run.candidates.length, 3).map(([k, fi, ci, w]) =>
             [`intra[${k}][${fi}][${ci}] ${Q[w]}`,
-                na.intra[k][fi].perCand[ci][Q[w]], nb.intra[k][fi].perCand[ci][Q[w]]]),
-    ];
+                na.intra[k][fi].perCand[ci][Q[w]], nb.intra[k][fi].perCand[ci][Q[w]], RTA[w]]),
+    ].map(pair => [...pair, ja.T]);
 }
 
+// Derivatives of T are held relative to T here too, or the port of every
+// derivative through a clamped layer, where T is below 1e-43, goes unchecked.
 const WASM = join(HERE, '..', 'src', 'tmm_kernel.wasm');
 const kernel = existsSync(WASM) ? await instantiateTmmWasm(readFileSync(WASM)) : null;
-const pairs = kernel ? RUNS.flatMap(run => portPairs(kernel, run).map(([label, js, wa]) =>
-    [`${run.at} ${label}`, js, wa])) : [];
-for (const [label, js, wa] of pairs) agree(wa, js, PORT, `wasm ${label}`);
+const pairs = kernel ? RUNS.flatMap(run => portPairs(kernel, run).map(([label, ...rest]) =>
+    [`${run.at} ${label}`, ...rest])) : [];
+for (const [label, js, wa, q, T] of pairs) agreeWithT(q, wa, js, T, PORT, `wasm ${label}`);
 if (!kernel) console.log('NOTE : src/tmm_kernel.wasm not built; the WebAssembly checks were skipped.');
 
 console.log(`${checks} comparisons against finite differences and the port, ${pairs.length} of them WebAssembly.`);

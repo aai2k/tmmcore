@@ -196,18 +196,30 @@ function admittance(index, cosine, polarization) {
         : jetDivide(index, cosine);
 }
 
+// |Im δ| − MAX_IMAGINARY_PHASE where the bound held the phase, else 0: the log
+// of the real factor the held matrix falls short of the true one by, at the
+// wavelength itself. It cancels from r and from the phase of t, and only |t|
+// needs it; see layerLogScale in tmm.js.
+function heldExcess(rawPhase, phase) {
+    return rawPhase[0][1] === phase[0][1] ? 0 : Math.abs(rawPhase[0][1]) - MAX_IMAGINARY_PHASE;
+}
+
 function layerMatrix(index, thickness, wavelength, cosine, polarization) {
-    const phase = jetClampImaginary(jetScale(
+    const rawPhase = jetScale(
         jetDivide(jetMultiply(index, cosine), wavelength),
         2 * Math.PI * thickness,
-    ), MAX_IMAGINARY_PHASE);
+    );
+    const phase = jetClampImaginary(rawPhase, MAX_IMAGINARY_PHASE);
     const { sine, cosine: cosinePhase } = jetSinCos(phase);
     const eta = admittance(index, cosine, polarization);
     const minusI = jetConstant(0, -1);
-    return [
-        [cosinePhase, jetMultiply(minusI, jetDivide(sine, eta))],
-        [jetMultiply(minusI, jetMultiply(eta, sine)), cosinePhase],
-    ];
+    return {
+        matrix: [
+            [cosinePhase, jetMultiply(minusI, jetDivide(sine, eta))],
+            [jetMultiply(minusI, jetMultiply(eta, sine)), cosinePhase],
+        ],
+        excess: heldExcess(rawPhase, phase),
+    };
 }
 
 function layerMatrixWithThicknessDerivative(index, thickness, wavelength, cosine, polarization) {
@@ -217,11 +229,12 @@ function layerMatrixWithThicknessDerivative(index, thickness, wavelength, cosine
     );
     const rawPhase = jetScale(phasePerUnit, thickness);
     const phase = jetClampImaginary(rawPhase, MAX_IMAGINARY_PHASE);
-    // Where the clamp bit, the layer is opaque and the thickness derivative of
-    // the imaginary phase is zero to machine precision.
-    const phaseDerivative = rawPhase[0][1] === phase[0][1]
-        ? phasePerUnit
-        : phasePerUnit.map(coefficient => [coefficient[0], 0]);
+    // Past the bound the layer is the held matrix times a real factor, and
+    // the full phase derivative, taken with the held sines and cosines, is
+    // their derivative to within e^{−100} relative, as derivativeLayer in
+    // tmm.js has it. Its imaginary part is what |t| falls by; it cancels from
+    // r and from every phase.
+    const phaseDerivative = phasePerUnit;
     const { sine, cosine: cosinePhase } = jetSinCos(phase);
     const sineDerivative = jetMultiply(cosinePhase, phaseDerivative);
     const cosineDerivative = jetScale(jetMultiply(sine, phaseDerivative), -1);
@@ -236,6 +249,7 @@ function layerMatrixWithThicknessDerivative(index, thickness, wavelength, cosine
             [cosineDerivative, jetMultiply(minusI, jetDivide(sineDerivative, eta))],
             [jetMultiply(minusI, jetMultiply(eta, sineDerivative)), cosineDerivative],
         ],
+        excess: heldExcess(rawPhase, phase),
     };
 }
 
@@ -291,6 +305,13 @@ function coefficientThicknessJets(matrixDerivative, coefficientData, incidentEta
  * Lower level than `tmmPhaseDispersion`: use this when you want the coefficient
  * jets themselves rather than the phase quantities read off them.
  *
+ * A layer past the opaque-layer bound enters the product short by a real
+ * factor (see layerLogScale in tmm.js), which makes `transmission` too large
+ * by it. The factor is returned as `transmissionLogScale` rather than applied,
+ * so that t keeps its phase and every derivative of it however far below the
+ * double range |t| falls: the true |t| at this wavelength is |transmission|
+ * times e^{−transmissionLogScale}.
+ *
  * @param {object} options
  * @param {number[][]} options.wavelengthJet   jet of λ(ω), from `wavelengthOmegaJet`
  * @param {number} options.thetaDeg            angle of incidence, degrees
@@ -299,7 +320,7 @@ function coefficientThicknessJets(matrixDerivative, coefficientData, incidentEta
  * @param {number[][]} options.substrateIndexJet
  * @param {number[][]} [options.incidentSineJet]  see `tmmPhaseDispersion`
  * @param {{indexJet:number[][], thicknessNm:number}[]} options.layers
- * @returns {{reflection, transmission, incidentEta, substrateEta}}
+ * @returns {{reflection, transmission, transmissionLogScale, incidentEta, substrateEta}}
  */
 export function tmmCoefficientJets({
     wavelengthJet,
@@ -318,17 +339,20 @@ export function tmmCoefficientJets({
 
     let matrix = identityMatrix();
     let logScale = 0;
+    let transmissionLogScale = 0;
     for (const layer of layers) {
         if (!(layer.thicknessNm > 0)) continue;
         const cosine = snellCosine(incidentIndexJet, angle.sine, layer.indexJet, angle.cosine);
-        matrix = matrixMultiply(matrix, layerMatrix(
+        const held = layerMatrix(
             layer.indexJet,
             layer.thicknessNm,
             wavelengthJet,
             cosine,
             polarization,
-        ));
+        );
+        matrix = matrixMultiply(matrix, held.matrix);
         logScale += rescaleMatrix(matrix, rescaleThreshold);
+        transmissionLogScale += held.excess;
     }
 
     const coefficients = coefficientJetsFromMatrix(matrix, incidentEta, substrateEta,
@@ -336,6 +360,7 @@ export function tmmCoefficientJets({
     return {
         reflection: coefficients.reflection,
         transmission: coefficients.transmission,
+        transmissionLogScale,
         incidentEta,
         substrateEta,
     };
@@ -349,7 +374,9 @@ export function tmmCoefficientJets({
  * Every prefix and suffix product is stored as a mantissa and a binary
  * exponent, so opaque stacks whose products leave double range still return
  * their derivatives. Each derivative is one prefix times one suffix over the
- * full product, and the exponents cancel from it exactly.
+ * full product, and the exponents cancel from it exactly. `transmission` and
+ * `transmissionLogScale` are as in `tmmCoefficientJets`; the thickness jets
+ * of t are those of `transmission`, so their ratio to it is the true one.
  */
 export function tmmCoefficientThicknessJets(options) {
     const {
@@ -372,7 +399,7 @@ export function tmmCoefficientThicknessJets(options) {
         // Zero is different: its nonzero derivative is useful for candidate
         // layers and is why the Jacobian deliberately retains it.
         if (!(layer.thicknessNm >= 0)) {
-            return { matrix: identityMatrix(), thicknessDerivative: zeroMatrix() };
+            return { matrix: identityMatrix(), thicknessDerivative: zeroMatrix(), excess: 0 };
         }
         const cosine = snellCosine(incidentIndexJet, angle.sine, layer.indexJet, angle.cosine);
         return layerMatrixWithThicknessDerivative(
@@ -424,6 +451,7 @@ export function tmmCoefficientThicknessJets(options) {
     return {
         reflection: coefficientData.reflection,
         transmission: coefficientData.transmission,
+        transmissionLogScale: layerData.reduce((sum, layer) => sum + layer.excess, 0),
         reflectionThickness: thicknessDerivatives.map(value => value.reflection),
         transmissionThickness: thicknessDerivatives.map(value => value.transmission),
         incidentEta,
@@ -437,10 +465,14 @@ export function tmmCoefficientThicknessJets(options) {
 /**
  * Read phase, GD, GDD and TOD off a coefficient jet.
  *
+ * `logScale` is the log of a real factor the jet is too large by, as
+ * `transmissionLogScale` from `tmmCoefficientJets`: it leaves every phase
+ * quantity alone and divides `magnitudeSquared` by e^{2·logScale}.
+ *
  * Returns `null` when the coefficient is exactly zero, where the phase and every
  * derivative of it are undefined.
  */
-export function coefficientPhaseDispersion(coefficientJet) {
+export function coefficientPhaseDispersion(coefficientJet, logScale = 0) {
     const [value, first, second, third] = jetDerivatives(coefficientJet);
     const magnitudeSquared = value[0] * value[0] + value[1] * value[1];
     if (magnitudeSquared === 0 || !Number.isFinite(magnitudeSquared)) return null;
@@ -469,7 +501,7 @@ export function coefficientPhaseDispersion(coefficientJet) {
         gd: firstRatio[1],
         gdd: secondRatio[1] - squareFirst[1],
         tod: thirdRatio[1] - 3 * firstTimesSecond[1] + 2 * cubeFirst[1],
-        magnitudeSquared,
+        magnitudeSquared: logScale > 0 ? magnitudeSquared * Math.exp(-2 * logScale) : magnitudeSquared,
     };
 }
 
@@ -541,7 +573,7 @@ export function tmmPhaseDispersion(lambda_nm, theta_deg, pol, n0Jet, nsJet, laye
     });
     return {
         r: coefficientPhaseDispersion(coefficients.reflection),
-        t: coefficientPhaseDispersion(coefficients.transmission),
+        t: coefficientPhaseDispersion(coefficients.transmission, coefficients.transmissionLogScale),
     };
 }
 
@@ -569,8 +601,8 @@ export function tmmPhaseThicknessJacobian(lambda_nm, theta_deg, pol, n0Jet, nsJe
         incidentSineJet: prepared.incidentSineJet,
         layers: prepared.layers,
     });
-    const side = (coefficientJet, thicknessJets) => {
-        const base = coefficientPhaseDispersion(coefficientJet);
+    const side = (coefficientJet, thicknessJets, logScale = 0) => {
+        const base = coefficientPhaseDispersion(coefficientJet, logScale);
         if (!base) return null;
         const derivatives = coefficientPhaseThicknessDerivatives(coefficientJet, thicknessJets);
         return {
@@ -584,6 +616,7 @@ export function tmmPhaseThicknessJacobian(lambda_nm, theta_deg, pol, n0Jet, nsJe
     };
     return {
         r: side(coefficients.reflection, coefficients.reflectionThickness),
-        t: side(coefficients.transmission, coefficients.transmissionThickness),
+        t: side(coefficients.transmission, coefficients.transmissionThickness,
+            coefficients.transmissionLogScale),
     };
 }

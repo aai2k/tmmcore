@@ -171,21 +171,32 @@ static inline cx incidentCosTheta(cx n0, incidence_t a) {
 }
 
 /* ── Layer characteristic matrix (pol: 0 = s, 1 = p) ───────────────────────
- * MAX_IM_DELTA bounds |Im δ|: past it the layer is opaque (single-pass
- * transmittance e^{−2 Im δ} below 4e−44) and holding Im δ keeps cosh and sinh
- * finite. The bound tests Im δ whatever k is, so a thick lossless layer past
- * the critical angle reaches it too. Mirrors layerPhase / layerAdmittance /
- * phaseMatrix / layerMatrix in tmm.js. */
+ * MAX_IM_DELTA bounds |Im δ| so that cosh and sinh stay finite. Past it the
+ * held matrix is the true one divided by e^{|Im δ| − MAX_IM_DELTA}, to within
+ * e^{−100} relative; that factor cancels from r and every admittance, and is
+ * carried as a log scale for t, T and fields. The bound tests Im δ whatever k
+ * is, so a thick lossless layer past the critical angle reaches it too.
+ * Mirrors layerPhase / layerLogScale / layerAdmittance / phaseMatrix /
+ * layerMatrix in tmm.js. */
 
 /* Phase thickness δ = (2π/λ) n d cosθ (Macleod 5th ed., Eq. 9.2) with Im δ
- * held to ±MAX_IM_DELTA; *clamped, when given, reports whether it was held. */
-static inline cx layerPhase(cx nj, double dj_nm, double lambda_nm, cx cosTheta_j, int *clamped) {
+ * held to ±MAX_IM_DELTA. *excess, when given, is |Im δ| − MAX_IM_DELTA where
+ * the bound held it and 0 elsewhere. */
+static inline cx layerPhase(cx nj, double dj_nm, double lambda_nm, cx cosTheta_j, double *excess) {
     double k0 = (2.0 * PI) / lambda_nm;
     cx delta = cmul(cmul(nj, cmk(k0 * dj_nm, 0.0)), cosTheta_j);
-    if (clamped) *clamped = fabs(delta.im) > MAX_IM_DELTA;
+    if (excess) *excess = fabs(delta.im) > MAX_IM_DELTA ? fabs(delta.im) - MAX_IM_DELTA : 0.0;
     if (delta.im > MAX_IM_DELTA) delta.im = MAX_IM_DELTA;
     else if (delta.im < -MAX_IM_DELTA) delta.im = -MAX_IM_DELTA;
     return delta;
+}
+
+/* The log scale layerMatrix leaves out for the same arguments; added to the
+ * log scale a product carries for t, like the return of rescaleMatrix. */
+static inline double layerLogScale(cx nj, double dj_nm, double lambda_nm, cx cosTheta_j) {
+    double excess;
+    layerPhase(nj, dj_nm, lambda_nm, cosTheta_j, &excess);
+    return excess;
 }
 
 /* Tilted admittance: n cosθ for s, n / cosθ for p (Macleod 5th ed., §9.2). */
@@ -306,7 +317,7 @@ static void tmm_core(double lambda_nm, double theta_deg, int pol,
         cx cosThetaJ = snellCosTheta(n0, a, n);
         mat2 Mj = layerMatrix(n, d, lambda_nm, cosThetaJ, pol);
         M = matmul(M, Mj);
-        logScale += rescaleMatrix(&M);
+        logScale += layerLogScale(n, d, lambda_nm, cosThetaJ) + rescaleMatrix(&M);
     }
 
     vec2 BC = cmatvec(M, substrate);
@@ -476,7 +487,7 @@ void tmm_monitor_curve(double lambda_nm, double theta_deg,
             if (!(d > 0.0)) continue;
             cx cosThetaJ = snellCosTheta(n0, a, n);
             Mb = matmul(Mb, layerMatrix(n, d, lambda_nm, cosThetaJ, pol));
-            logScaleB += rescaleMatrix(&Mb);
+            logScaleB += layerLogScale(n, d, lambda_nm, cosThetaJ) + rescaleMatrix(&Mb);
         }
         cx cosThetaG = snellCosTheta(n0, a, ng);
 
@@ -490,7 +501,7 @@ void tmm_monitor_curve(double lambda_nm, double theta_deg,
             double d = dArr[k];
             if (d > 0.0) {
                 M = matmul(layerMatrix(ng, d, lambda_nm, cosThetaG, pol), Mb);
-                logScale += rescaleMatrix(&M);
+                logScale += layerLogScale(ng, d, lambda_nm, cosThetaG) + rescaleMatrix(&M);
             }
             growingTailFwd(M, eta0, substrate, logScale, &oR[k], &oT[k]);
             oRr[k] = growingTailRev(M, eta0, substrate);
@@ -564,7 +575,7 @@ int tmm_deposition_spectra(const double *lambdas, int nLam,
                 if (d > 0.0) {
                     cx cosThetaJ = snellCosTheta(n0, a, n);
                     M[at] = matmul(layerMatrix(n, d, lam, cosThetaJ, pol), M[at]);
-                    logScale[at] += rescaleMatrix(&M[at]);
+                    logScale[at] += layerLogScale(n, d, lam, cosThetaJ) + rescaleMatrix(&M[at]);
                 }
                 size_t out = (size_t)k * nLam + li;
                 double *oR  = pol ? outRp  : outRs;
@@ -670,7 +681,7 @@ growing_eval *tmm_growing_eval_create(const double *lambdas, int nLam,
                            matNK[((size_t)k * nLam + li) * 2 + 1]);
                 cx cosThetaJ = snellCosTheta(n0, h->angle, n);
                 M = matmul(M, layerMatrix(n, d, lambdas[li], cosThetaJ, pol));
-                logScale += rescaleMatrix(&M);
+                logScale += layerLogScale(n, d, lambdas[li], cosThetaJ) + rescaleMatrix(&M);
             }
             h->Mb[at] = M;
             h->logScaleB[at] = logScale;
@@ -707,7 +718,8 @@ int tmm_growing_eval_sample(growing_eval *h, double d,
             if (d > 0.0) {
                 M = matmul(layerMatrix(h->ng[li], d, h->lam[li], h->cosThetaG[li], pol),
                            h->Mb[at]);
-                logScale += rescaleMatrix(&M);
+                logScale += layerLogScale(h->ng[li], d, h->lam[li], h->cosThetaG[li])
+                          + rescaleMatrix(&M);
             }
             double *oR  = pol ? outRp  : outRs;
             double *oT  = pol ? outTp  : outTs;
@@ -769,9 +781,10 @@ static inline generator_t generatorOf(cx nj, cx cosTheta, cx Q, double k0, int p
  * triples [n_re, n_im, d] used as given, with no d > 0 filter, for index parity
  * with the caller's design. A thickness that is not a number ≥ 0 leaves the
  * layer out: identity matrix, and Q = P = S = 0 so its derivative is zero. Q is
- * dδ/dd, reduced to its real part where the bound holds Im δ, so every
- * derivative is taken of the matrix in the product. Mirrors derivativeLayer
- * and derivativeStack in tmm.js. */
+ * dδ/dd in full: past the bound the held matrix times e^{excess} moves with d
+ * as the true one does, and Q with the held δ is its derivative. `logScale`
+ * sums the excesses, which t carries. Mirrors derivativeLayer and
+ * derivativeStack in tmm.js. */
 typedef struct {
     int N;
     double k0;
@@ -781,7 +794,8 @@ typedef struct {
     cx *n, *cosTheta, *delta, *eta, *Q;
     generator_t *G;
     int *critical;
-    double *thickness;
+    double *thickness, *excess;
+    double logScale;
     mat2 *M, *Pre;
     vec2 *Post;
     int *preExp, *postExp;
@@ -799,7 +813,7 @@ typedef struct {
 static void deriv_stack_free(deriv_stack *s) {
     free(s->n); free(s->cosTheta); free(s->delta); free(s->eta); free(s->Q);
     free(s->G); free(s->critical);
-    free(s->thickness); free(s->M); free(s->Pre); free(s->Post);
+    free(s->thickness); free(s->excess); free(s->M); free(s->Pre); free(s->Post);
     free(s->preExp); free(s->postExp);
 }
 
@@ -830,18 +844,20 @@ static int deriv_stack_build(const deriv_request *q, deriv_stack *out) {
     s.G         = (generator_t *)malloc(sizeof(generator_t) * count);
     s.critical  = (int *)        malloc(sizeof(int) * count);
     s.thickness = (double *)     malloc(sizeof(double) * count);
+    s.excess    = (double *)     malloc(sizeof(double) * count);
     s.M         = (mat2 *)       malloc(sizeof(mat2) * count);
     s.Pre       = (mat2 *)       malloc(sizeof(mat2) * ((size_t)N + 1));
     s.Post      = (vec2 *)       malloc(sizeof(vec2) * ((size_t)N + 1));
     s.preExp    = (int *)        malloc(sizeof(int) * ((size_t)N + 1));
     s.postExp   = (int *)        malloc(sizeof(int) * ((size_t)N + 1));
     void *const blocks[] = { s.n, s.cosTheta, s.delta, s.eta, s.Q, s.G, s.critical,
-                             s.thickness, s.M, s.Pre, s.Post, s.preExp, s.postExp };
+                             s.thickness, s.excess, s.M, s.Pre, s.Post, s.preExp, s.postExp };
     if (!all_allocated(blocks, (int)(sizeof blocks / sizeof blocks[0]))) {
         deriv_stack_free(&s);
         return 0;
     }
 
+    s.logScale = 0.0;
     for (int k = 0; k < N; k++) {
         double d = layers[3 * k + 2];
         int present = d >= 0.0;
@@ -849,11 +865,11 @@ static int deriv_stack_build(const deriv_request *q, deriv_stack *out) {
         s.n[k] = cmk(layers[3 * k + 0], layers[3 * k + 1]);
         s.thickness[k] = d;
         s.cosTheta[k] = snellCosTheta(n0, s.angle, s.n[k]);
-        int clamped;
-        s.delta[k] = layerPhase(s.n[k], d, lambda_nm, s.cosTheta[k], &clamped);
+        s.delta[k] = layerPhase(s.n[k], d, lambda_nm, s.cosTheta[k], &s.excess[k]);
+        s.logScale += s.excess[k];
         s.eta[k] = layerAdmittance(s.n[k], s.cosTheta[k], pol);
         cx Q = cmul(cmul(s.n[k], cmk(s.k0, 0.0)), s.cosTheta[k]);   /* (2π/λ) n cosθ */
-        s.Q[k] = !present ? cmk(0.0, 0.0) : clamped ? cmk(Q.re, 0.0) : Q;
+        s.Q[k] = present ? Q : cmk(0.0, 0.0);
         if (present) {
             s.G[k] = generatorOf(s.n[k], s.cosTheta[k], s.Q[k], s.k0, pol);
         } else {
@@ -882,7 +898,8 @@ static int deriv_stack_build(const deriv_request *q, deriv_stack *out) {
 
 /* R, T, A from [B, C] = Post[0] (Macleod Eqs. 2.123–2.125), with r, the true
  * t, b = B/den and c = C/den, and g = 2 Im η0 / Re η0, the weight of Im r in
- * the absorptance. Only t carries the exponent of [B, C]. */
+ * the absorptance. Only t carries the exponent of [B, C] and the log scale of
+ * the held layers. */
 typedef struct {
     double R, T, A, Tfac, g;
     cx eta0, r, t, b, c, inverseDen;
@@ -897,6 +914,7 @@ static stack_response stack_response_of(const deriv_stack *s) {
     o.r = cdiv(csub(cmul(s->eta0, B), C), den);
     o.t = cscale(cmul(cdiv(cmul(cmk(2.0, 0.0), s->eta0), den), s->substrate.x),
                  ldexp(1.0, -s->postExp[0]));
+    if (s->logScale > 0.0) o.t = cscale(o.t, exp(-s->logScale));
     o.Tfac = transmittedFlux(s->substrate) / s->eta0.re;
     o.R = cabs2(o.r);
     o.T = o.Tfac * cabs2(o.t); if (o.T < 0.0) o.T = 0.0;
@@ -1025,20 +1043,29 @@ void tmm_needle_scan(double lambda_nm, double theta_deg, int pol,
         }
     }
 
-    /* Intra-layer positions. The host splits into halves whose product is its
-     * own matrix, bound included: the front half keeps its own phase, bounded
-     * only if it alone passes the bound, and the back half takes the rest. */
+    /* Intra-layer positions. Short of the bound the host splits into halves
+     * whose product is its own matrix: the front half keeps its own phase and
+     * the back half takes the rest. Past it each half is held on its own, and
+     * the pair takes e^{front excess + back excess − host excess}, between
+     * e^{−50} and 1, the ratio of what the halves and the host leave out. */
     if (nFrac > 0) {
         for (int k = 0; k < N; k++) {
             for (int fi = 0; fi < nFrac; fi++) {
+                double frontExcess, backExcess, factor = 1.0;
                 cx front = layerPhase(s.n[k], fracs[fi] * s.thickness[k], lambda_nm,
-                                      s.cosTheta[k], NULL);
+                                      s.cosTheta[k], &frontExcess);
+                cx back = csub(s.delta[k], front);
+                if (s.excess[k] > 0.0) {
+                    back = layerPhase(s.n[k], (1.0 - fracs[fi]) * s.thickness[k], lambda_nm,
+                                      s.cosTheta[k], &backExcess);
+                    factor = exp(frontExcess + backExcess - s.excess[k]);
+                }
                 mat2 preIn  = matmul(s.Pre[k], partMatrix(&s, k, front, fracs[fi] * s.thickness[k]));
-                vec2 postIn = cmatvec(partMatrix(&s, k, csub(s.delta[k], front),
-                                                 (1.0 - fracs[fi]) * s.thickness[k]),
+                vec2 postIn = cmatvec(partMatrix(&s, k, back, (1.0 - fracs[fi]) * s.thickness[k]),
                                       s.Post[k + 1]);
                 for (int c = 0; c < nCand; c++) {
                     vec2 dV = cmatvec(preIn, cmatvec(Ac[c], postIn));
+                    if (factor != 1.0) { dV.x = cscale(dV.x, factor); dV.y = cscale(dV.y, factor); }
                     long off = (((long)k * nFrac + fi) * nCand + c) * 3;
                     response_derivative(&resp, per_den(&resp, dV, s.preExp[k] + s.postExp[k + 1]),
                                         &intra[off]);
@@ -1248,8 +1275,9 @@ static void jsincos(jet a, jet *sine, jet *cosine) {
     }
 }
 
-/* Past the limit the layer is opaque: the derivatives are zero to machine
- * precision and dropping them keeps cosh from overflowing the whole product. */
+/* Past the limit the imaginary part is held at it at every order and the real
+ * part, which carries the phase, is kept: the matrix is then the true one over
+ * a real factor, which callers carry for |t|. Mirrors jetClampImaginary. */
 static inline jet jclampim(jet a, double limit) {
     if (a.c[0].im > limit || a.c[0].im < -limit) {
         double held = (a.c[0].im > limit) ? limit : -limit;
@@ -1386,9 +1414,17 @@ static inline jet jadmittance(jet n, jet cosv, int pol) {
     return (pol == 0) ? jmul(n, cosv) : jdiv(n, cosv);
 }
 
-static jmat2 jlayer_matrix(jet index, double thickness, jet wavelength, jet cosine, int pol) {
-    jet phase = jclampim(jscale(jdiv(jmul(index, cosine), wavelength),
-                                2.0 * PI * thickness), MAX_IM_DELTA);
+/* |Im δ| − MAX_IM_DELTA where the bound held the phase, else 0; see
+ * heldExcess in phase.js. */
+static inline double jheld_excess(jet rawPhase, jet phase) {
+    return rawPhase.c[0].im == phase.c[0].im ? 0.0 : fabs(rawPhase.c[0].im) - MAX_IM_DELTA;
+}
+
+static jmat2 jlayer_matrix(jet index, double thickness, jet wavelength, jet cosine, int pol,
+                           double *excess) {
+    jet rawPhase = jscale(jdiv(jmul(index, cosine), wavelength), 2.0 * PI * thickness);
+    jet phase = jclampim(rawPhase, MAX_IM_DELTA);
+    *excess = jheld_excess(rawPhase, phase);
     jet sine, cosinePhase;
     jsincos(phase, &sine, &cosinePhase);
     jet eta = jadmittance(index, cosine, pol);
@@ -1401,18 +1437,16 @@ static jmat2 jlayer_matrix(jet index, double thickness, jet wavelength, jet cosi
     return M;
 }
 
+/* The full phase derivative with the held sines and cosines is the derivative
+ * of the held matrix times its factor, as in layerMatrixWithThicknessDerivative
+ * in phase.js. */
 static void jlayer_matrix_dd(jet index, double thickness, jet wavelength, jet cosine, int pol,
-                             jmat2 *M, jmat2 *dM) {
+                             jmat2 *M, jmat2 *dM, double *excess) {
     jet phasePerUnit = jscale(jdiv(jmul(index, cosine), wavelength), 2.0 * PI);
     jet rawPhase = jscale(phasePerUnit, thickness);
     jet phase = jclampim(rawPhase, MAX_IM_DELTA);
-    jet phaseDerivative;
-    if (rawPhase.c[0].im == phase.c[0].im) {
-        phaseDerivative = phasePerUnit;
-    } else {
-        for (int i = 0; i < JET_N; i++)
-            phaseDerivative.c[i] = cmk(phasePerUnit.c[i].re, 0.0);
-    }
+    *excess = jheld_excess(rawPhase, phase);
+    jet phaseDerivative = phasePerUnit;
     jet sine, cosinePhase;
     jsincos(phase, &sine, &cosinePhase);
     jet sineDerivative = jmul(cosinePhase, phaseDerivative);
@@ -1526,16 +1560,21 @@ static void jphase_core(double lambda, double omega, double theta_deg, int pol,
     jet substrateEta = jadmittance(ns, substrateCosine, pol);
 
     jmat2 M = jidentity();
-    double logScale = 0.0;
+    double logScale = 0.0, transmissionLogScale = 0.0;
     for (int k = 0; k < N; k++) {
         if (!(thick[k] > 0.0)) continue;
         jet cosine = jsnell_cos(n0, angle.sine, angle.cosine, layerN[k]);
-        M = jmatmul(M, jlayer_matrix(layerN[k], thick[k], wavelength, cosine, pol));
+        double excess;
+        M = jmatmul(M, jlayer_matrix(layerN[k], thick[k], wavelength, cosine, pol, &excess));
         logScale += jrescale(&M, MATRIX_RESCALE_THRESHOLD);
+        transmissionLogScale += excess;
     }
     jcoef coefficients = jcoef_from_matrix(M, incidentEta, substrateEta, exp(-logScale));
     jphase(coefficients.reflection, &out10[0]);
     jphase(coefficients.transmission, &out10[5]);
+    /* The phase of t is the held one's; |t|² takes what the held layers leave
+     * out, as the logScale of coefficientPhaseDispersion in phase.js. */
+    if (transmissionLogScale > 0.0) out10[9] *= exp(-2.0 * transmissionLogScale);
 }
 
 /* ── Exported: phase dispersion at one wavelength ─────────────────────────────
@@ -1665,6 +1704,7 @@ static void jphase_jacobian_core(double lambda, double omega, double theta_deg, 
     jet substrateCosine = jsnell_cos(n0, angle.sine, angle.cosine, ns);
     jet substrateEta = jadmittance(ns, substrateCosine, pol);
 
+    double transmissionLogScale = 0.0;
     for (int k = 0; k < N; k++) {
         /* Match jphase_core's skip rule for invalid negative/NaN thicknesses,
          * while retaining the useful derivative of a zero-thickness layer. */
@@ -1674,8 +1714,10 @@ static void jphase_jacobian_core(double lambda, double omega, double theta_deg, 
             continue;
         }
         jet cosine = jsnell_cos(n0, angle.sine, angle.cosine, layerN[k]);
+        double excess;
         jlayer_matrix_dd(layerN[k], thick[k], wavelength, cosine, pol,
-                         &layerM[k], &layerDM[k]);
+                         &layerM[k], &layerDM[k], &excess);
+        transmissionLogScale += excess;
     }
 
     prefix[0] = jidentity();
@@ -1696,6 +1738,7 @@ static void jphase_jacobian_core(double lambda, double omega, double theta_deg, 
                                            ldexp(1.0, -totalExp));
     jphase(coefficients.reflection, &out[0]);
     jphase(coefficients.transmission, &out[5]);
+    if (transmissionLogScale > 0.0) out[9] *= exp(-2.0 * transmissionLogScale);
 
     for (int k = 0; k < N; k++) {
         jmat2 matrixDerivative = jmatmul(jmatmul(prefix[k], layerDM[k]), suffix[k + 1]);

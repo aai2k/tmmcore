@@ -45,7 +45,7 @@ A layer whose thickness is not positive, NaN included, is skipped.
 
 !!! note "Opaque layers"
 
-    The imaginary part of a layer's phase thickness grows with its thickness, and $\cosh$ of it overflows to infinity, which would poison the whole matrix product with `NaN`. The imaginary phase is clamped at 50, where the layer is already optically opaque, with single-pass transmittance below $10^{-43}$, so the result is exact to machine precision and the matrix stays finite.
+    The imaginary part of a layer's phase thickness grows with its thickness, and $\cosh$ of it overflows to infinity, which would poison the whole matrix product with `NaN`. So the imaginary phase is held at 50 when building the matrix. Past that point the held matrix is the true one divided by a real factor, $e^{|\mathrm{Im}\,\delta| - 50}$, to within $e^{-100}$ relative. The factor cancels from $r$ and from every phase; tmmcore carries it as a log scale for $t$, so $T$ stays exact however opaque the layer, until it falls below the range of a double, about $10^{-308}$, and reads 0. Up to 0.4.1 the factor was dropped, and $T$ stopped near $10^{-43}$ for each such layer.
 
     The clamp looks at the phase, not at $k$. A thick absorbing layer reaches it, and so does a lossless one beyond the critical angle, where the wave in it is evanescent: an air gap of 10 µm under a glass prism at 70° is well past it. Thin layers and layers carrying a propagating wave never reach it.
 
@@ -55,7 +55,7 @@ A layer whose thickness is not positive, NaN included, is skipped.
 
 Each derivative comes from the same characteristic-matrix product that produced the spectrum, computed exactly rather than by finite differences or automatic differentiation.
 
-The derivatives are those of the function `tmm()` computes, clamp included: past the clamp a layer's matrix moves with its thickness through the real part of the phase only, and its derivatives are taken of that matrix. Through opaque and evanescent stacks the partial products grow past the range of a double, so each one carries a power-of-two scale, which cancels exactly from every derivative. A deep absorbing stack gets the same derivatives as a transparent one, with no wavelength silently dropping to zero. [Validation](validation.md#derivatives-against-finite-differences) checks all of them against finite differences on such stacks.
+The derivatives are those of the function `tmm()` computes, clamp included: past the clamp a layer is its held matrix times the factor above, and the two together move with its thickness as the true layer does, so $T$ falls with the thickness of an opaque layer at the true rate and $R$ does not move. Through opaque and evanescent stacks the partial products grow past the range of a double, so each one carries a power-of-two scale, which cancels exactly from every derivative. A deep absorbing stack gets the same derivatives as a transparent one, with no wavelength silently dropping to zero. [Validation](validation.md#derivatives-against-finite-differences) checks all of them against finite differences on such stacks.
 
 The derivative functions use the layers as given, so their indices line up with your design array. A layer of zero thickness contributes nothing to the spectrum and keeps its derivative, the rate at which the spectrum moves as that layer starts to grow. A negative or NaN thickness makes the layer absent, as in `tmm()`, and its derivatives are zero.
 
@@ -106,7 +106,7 @@ const scan = tmmNeedleScan(550, 0, 's', [1, 0], [1.52, 0], layers,
 
 `gaps` has `N + 1` entries, one per interface: index 0 is before the first layer, index `N` is against the substrate. Each holds one `{ dR, dT, dA }` per candidate. Insert where the merit-function gradient is negative.
 
-`intra[k][i]` is `{ frac, perCand }` for a needle inside layer `k`, at fraction `intraFracs[i]` of its thickness from the incident side, with `perCand` shaped like a `gaps` entry. Fractions 0 and 1 give the gaps either side of the layer. Inside a layer past the clamp, the part in front of the needle keeps its true phase, so a needle near the surface of a metal sees the field that is really there, and one deep inside it gets a derivative of zero.
+`intra[k][i]` is `{ frac, perCand }` for a needle inside layer `k`, at fraction `intraFracs[i]` of its thickness from the incident side, with `perCand` shaped like a `gaps` entry. Fractions 0 and 1 give the gaps either side of the layer. Inside a layer past the clamp, each part is held on its own and keeps its own factor, so a needle anywhere in a metal sees the field that is really there: near the surface its derivatives are those of an ordinary layer, and deep inside $dR$ is zero while $dT$ keeps its true value relative to $T$.
 
 This is the $d \to 0$ limit of Sullivan's numerical pre/post method, the analytic P-function of Tikhonravov et al. Unlike the numerical form it needs no trial thickness and no second spectrum evaluation.
 
@@ -356,7 +356,8 @@ Complex numbers are `[re, im]` pairs throughout.
 | `cmatvec(M, v)` | 2×2 matrix times 2-vector |
 | `snellCosTheta(n0, sinTheta0, nj, cosTheta0?)` | Complex $\cos\theta$ in a medium, from the real invariant $\mathrm{Re}(n_0)\sin\theta_0$. Pass `cosTheta0`, `[cos θ0, 0]`, as `tmm()` does, and a medium whose index is close to the incident one keeps its cosine at grazing incidence |
 | `incidentCosTheta(n0, sinTheta0, cosTheta0?)` | $\cos\theta_0$ of the incident medium itself; its own cosine when it is transparent, from the same invariant when it absorbs |
-| `layerMatrix(nj, dj_nm, lambda_nm, cosTheta_j, pol)` | Characteristic matrix of one layer; its limit where `cosTheta_j` is exactly zero |
+| `layerMatrix(nj, dj_nm, lambda_nm, cosTheta_j, pol)` | Characteristic matrix of one layer; its limit where `cosTheta_j` is exactly zero. Past the opaque-layer bound, the held matrix |
+| `layerLogScale(nj, dj_nm, lambda_nm, cosTheta_j)` | The log of the factor `layerMatrix` leaves out past the bound, 0 short of it |
 | `rescaleMatrix(M)` | Rescales in place past an overflow threshold; returns the accumulated log scale |
 
-`rescaleMatrix` is what keeps opaque stacks finite. A common real factor cancels from reflectance but not from transmittance, so callers must carry the returned log scale and apply $e^{-2\,\text{logScale}}$ to T.
+`layerLogScale` and `rescaleMatrix` are what keep opaque stacks finite and their transmittance right. Both are real factors that cancel from reflectance but not from transmittance, so a caller building its own product adds both to one log scale and applies $e^{-2\,\text{logScale}}$ to T, as `tmm()` does. A field computed from a partial product carries its own log scale the same way.

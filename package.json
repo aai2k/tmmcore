@@ -1,6 +1,6 @@
 {
   "name": "tmmcore",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Transfer-matrix method for multilayer thin-film optics, with exact analytic derivatives and phase dispersion. JavaScript, C and WebAssembly.",
   "type": "module",
   "main": "./src/index.js",
@@ -20,7 +20,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node tests/equivalence.mjs && node tests/growing_equivalence.mjs && node tests/growing_eval_equivalence.mjs && node tests/absorbing_incident.mjs && node tests/derivatives_fd.mjs && node tests/edge_cases.mjs && node tests/wasm_allocation.mjs",
+    "test": "node tests/equivalence.mjs && node tests/growing_equivalence.mjs && node tests/growing_eval_equivalence.mjs && node tests/absorbing_incident.mjs && node tests/derivatives_fd.mjs && node tests/edge_cases.mjs && node tests/opaque_transmittance.mjs && node tests/wasm_allocation.mjs",
     "compare": "node benchmarks/compare.mjs",
     "examples": "node examples/01-single-layer.mjs && node examples/02-ar-coating.mjs && node examples/03-metal-mirror.mjs && node examples/04-refine.mjs && node examples/05-angle-map.mjs && node examples/06-needle.mjs && node examples/07-jacobian-map.mjs && node examples/08-group-delay.mjs",
     "build:wasm": "emcc src/tmm_kernel.c -O3 --no-entry -sSTANDALONE_WASM=1 -sALLOW_MEMORY_GROWTH=1 -sEXPORTED_FUNCTIONS=_tmm_one,_tmm_spectrum,_tmm_jacobian,_tmm_needle_scan,_tmm_hessian,_tmm_phase_one,_tmm_phase_spectrum,_tmm_phase_jacobian,_tmm_phase_jacobian_spectrum,_tmm_monitor_curve,_tmm_deposition_spectra,_tmm_growing_eval_create,_tmm_growing_eval_set_top,_tmm_growing_eval_sample,_tmm_growing_eval_free,_malloc,_free -o src/tmm_kernel.wasm",

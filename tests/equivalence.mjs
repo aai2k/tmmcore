@@ -347,7 +347,8 @@ if (!k.hasPhase()) {
     // here; its thickness derivative, of terms of order |Q|·GD^q with Q = dδ/dd
     // of the opaque layers. That cancellation, not round-off in the result,
     // sets how closely two roundings of the same quantity can agree, and the
-    // derivatives of the opaque layers are zero up to exactly that noise.
+    // derivatives of r with respect to the opaque layers are zero up to exactly
+    // that noise; those of t are not, since t falls and turns with each one.
     {
         const lam = 550;
         const omega = omegaFromLambdaNm(lam);
