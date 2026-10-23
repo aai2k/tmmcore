@@ -13,6 +13,8 @@ All functions take the same leading arguments:
 
 Thicknesses are in nanometres. The sign and phase conventions are in [Getting started](getting-started.md#conventions).
 
+Each call reads the layer keys given with it. A layer without one of them throws a `TypeError` naming the keys and the layer's position, such as `layer 0 needs {n, d}`. Up to 0.4.2 such a layer was skipped as if absent, so a design passed in another call's shape gave the bare substrate.
+
 ---
 
 ## Spectral quantities
@@ -35,7 +37,7 @@ $$R + T + A = 1 + 2\,\frac{\mathrm{Im}\,\eta_0}{\mathrm{Re}\,\eta_0}\,\mathrm{Im
 
 in tmmcore's sign convention. $T$ can then exceed one, as Macleod's Eq. 2.84 shows for a bare interface. See [Validation](validation.md#an-absorbing-incident-medium).
 
-A layer whose thickness is not positive, NaN included, is skipped.
+`layers` is `{ n, d }[]`. A layer whose thickness is not positive, NaN included, is skipped.
 
 !!! note "Grazing incidence and the critical angle"
 
@@ -57,7 +59,7 @@ Each derivative comes from the same characteristic-matrix product that produced 
 
 The derivatives are those of the function `tmm()` computes, clamp included: past the clamp a layer is its held matrix times the factor above, and the two together move with its thickness as the true layer does, so $T$ falls with the thickness of an opaque layer at the true rate and $R$ does not move. Through opaque and evanescent stacks the partial products grow past the range of a double, so each one carries a power-of-two scale, which cancels exactly from every derivative. A deep absorbing stack gets the same derivatives as a transparent one, with no wavelength silently dropping to zero. [Validation](validation.md#derivatives-against-finite-differences) checks all of them against finite differences on such stacks.
 
-The derivative functions use the layers as given, so their indices line up with your design array. A layer of zero thickness contributes nothing to the spectrum and keeps its derivative, the rate at which the spectrum moves as that layer starts to grow. A negative or NaN thickness makes the layer absent, as in `tmm()`, and its derivatives are zero.
+The three functions below take `layers` as `{ n, d }[]`, as `tmm()` does. They use the layers as given, so their indices line up with your design array. A layer of zero thickness contributes nothing to the spectrum and keeps its derivative, the rate at which the spectrum moves as that layer starts to grow. A negative or NaN thickness makes the layer absent, as in `tmm()`, and its derivatives are zero.
 
 ### `tmmThicknessJacobian(lambda_nm, theta_deg, pol, n0, ns, layers)`
 
@@ -164,7 +166,7 @@ const { r } = tmmPhaseThicknessJacobian(800, 0, 's', n0Jet, nsJet, layers);
 
 Frequency remains the Taylor variable throughout, so every thickness derivative is itself a third-order frequency jet and all four quantities come out of one matrix product. Fitting a GDD target costs one evaluation per step rather than `N + 1`, the same bargain `tmmThicknessJacobian` offers for reflectance.
 
-Zero-thickness layers are retained so their derivatives and indices line up with your design array. Negative or NaN thicknesses are skipped, matching the point evaluator, and their derivative entries are zero, as in the derivative functions above.
+`layers` is `{ nJet, d }[]`, as in `tmmPhaseDispersion`. Zero-thickness layers are retained so their derivatives and indices line up with your design array. Negative or NaN thicknesses are skipped, matching the point evaluator, and their derivative entries are zero, as in the derivative functions above.
 
 Opaque stacks, whose matrix product runs past the range of a double, return their derivatives like any other stack. Up to 0.4.0 the derivative arrays were `null` there.
 
@@ -242,6 +244,8 @@ Jets are arrays of four complex `[re, im]` pairs.
 Load the bytes, instantiate, then call methods on the returned instance. See [Getting started](getting-started.md#turning-on-webassembly) for setup.
 
 Polarization is an integer here: `0` for s, `1` for p.
+
+A method that takes a layer list takes it in the shape of the call it mirrors, `{ n, d }[]` or `{ nJet, d }[]` (and `baseLayers` of `monitorCurve` as `{ n, d }[]`), and throws the same `TypeError` on a layer without those keys.
 
 A kernel that cannot allocate its working state, which happens only when the WebAssembly heap is exhausted, writes `NaN` to every output of that call rather than a number, so the phase methods return `null` for both coefficients.
 

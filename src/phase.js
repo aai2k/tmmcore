@@ -53,6 +53,7 @@ import {
     jetSubtract,
     wavelengthOmegaJet,
 } from './taylorJet.js';
+import { checkLayerKeys } from './layerKeys.js';
 
 /** Speed of light in vacuum, nm/fs. Sets the default time unit to fs. */
 export const C_NM_PER_FS = 299.792458;
@@ -332,6 +333,7 @@ export function tmmCoefficientJets({
     rescaleThreshold = MATRIX_RESCALE_THRESHOLD,
     layers,
 }) {
+    checkLayerKeys(layers, 'indexJet', 'thicknessNm');
     const angle = incidentAngle(thetaDeg, incidentSineJet);
     const incidentEta = admittance(incidentIndexJet, incidentCosine(incidentIndexJet, angle), polarization);
     const substrateCosine = snellCosine(incidentIndexJet, angle.sine, substrateIndexJet, angle.cosine);
@@ -388,6 +390,7 @@ export function tmmCoefficientThicknessJets(options) {
         incidentSineJet = null,
         layers,
     } = options;
+    checkLayerKeys(layers, 'indexJet', 'thicknessNm');
     const angle = incidentAngle(thetaDeg, incidentSineJet);
     const incidentEta = admittance(incidentIndexJet, incidentCosine(incidentIndexJet, angle), polarization);
     const substrateCosine = snellCosine(incidentIndexJet, angle.sine, substrateIndexJet, angle.cosine);
@@ -531,6 +534,7 @@ export function coefficientPhaseThicknessDerivatives(coefficientJet, thicknessJe
 // ── Public entry points ──────────────────────────────────────────────────────
 
 function prepare(lambda, layers, options) {
+    checkLayerKeys(layers, 'nJet', 'd');
     const omega = options.omega ?? omegaFromLambdaNm(lambda);
     return {
         wavelengthJet: wavelengthOmegaJet(lambda, omega),

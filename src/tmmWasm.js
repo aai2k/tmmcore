@@ -18,6 +18,7 @@
  */
 
 import { omegaFromLambdaNm } from './phase.js';
+import { checkLayerKeys } from './layerKeys.js';
 
 let _instance = null;     // TmmWasmInstance | null
 let _enabled = false;     // feature flag (default OFF)
@@ -144,6 +145,7 @@ export class TmmWasmInstance {
      * @returns {{R:number,T:number,A:number}}
      */
     tmmOne(lambda_nm, theta_deg, polCode /* 0=s,1=p */, n0, ns, layers) {
+        checkLayerKeys(layers, 'n', 'd');
         const N = layers.length;
         const need = 3 * N + 3;                  // layers [0..3N) + out [3N..3N+3)
         const ptr = this._scratch(need);         // may grow→detach; view created AFTER
@@ -241,6 +243,7 @@ export class TmmWasmInstance {
      * @returns {{Rs,Ts,Rp,Tp,Rrs,Rrp}} each a Float64Array(dArr.length)
      */
     monitorCurve(lambda_nm, theta_deg, n0, ns, baseLayers, ngNK, dArr) {
+        checkLayerKeys(baseLayers, 'n', 'd');
         const NB = baseLayers.length;
         const nD = dArr.length;
         // arena: base[3NB] | d[nD] | Rs,Ts,Rp,Tp,Rrs,Rrp [6·nD]
@@ -449,6 +452,7 @@ export class TmmWasmInstance {
      * @returns {{R,T,A, dRdd:Float64Array, dTdd, dAdd, N}}
      */
     tmmJacobian(lambda_nm, theta_deg, polCode, n0, ns, layers) {
+        checkLayerKeys(layers, 'n', 'd');
         const N = layers.length;
         const M = Math.max(1, N);
         // arena layout: layers[3N] | dRdd[M] | dTdd[M] | dAdd[M] | base[3]
@@ -488,6 +492,7 @@ export class TmmWasmInstance {
      * @returns {{R,T,A, dRdd, dTdd, dAdd, d2Rdd, d2Tdd, d2Add, N}}
      */
     tmmHessian(lambda_nm, theta_deg, polCode, n0, ns, layers) {
+        checkLayerKeys(layers, 'n', 'd');
         const N = layers.length;
         const M = Math.max(1, N);
         const NN = Math.max(1, N * N);
@@ -536,6 +541,7 @@ export class TmmWasmInstance {
      * @returns {{r: object|null, t: object|null}}
      */
     tmmPhaseOne(lambda_nm, theta_deg, polCode, n0Jet, nsJet, layers, options = {}) {
+        checkLayerKeys(layers, 'nJet', 'd');
         const N = layers.length;
         const omega = options.omega ?? omegaFromLambdaNm(lambda_nm);
         const sinJet = options.sinTheta0Jet || null;
@@ -644,6 +650,7 @@ export class TmmWasmInstance {
      *   `dGdd`, `dTod` and `dLogMagnitudeSquared` as Float64Array(N).
      */
     tmmPhaseJacobian(lambda_nm, theta_deg, polCode, n0Jet, nsJet, layers, options = {}) {
+        checkLayerKeys(layers, 'nJet', 'd');
         const N = layers.length;
         const M = Math.max(1, N);
         const omega = options.omega ?? omegaFromLambdaNm(lambda_nm);
@@ -776,6 +783,7 @@ export class TmmWasmInstance {
      *   intra[k][fi]  = {frac, perCand:[{dR,dT,dA}]}
      */
     tmmNeedleScan(lambda_nm, theta_deg, polCode, n0, ns, layers, candidateNs, intraFracs = []) {
+        checkLayerKeys(layers, 'n', 'd');
         const N = layers.length;
         const nCand = candidateNs.length;
         const nFrac = intraFracs.length;

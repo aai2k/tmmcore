@@ -28,6 +28,8 @@
  *   • Tikhonravov, Trubetskov & DeBell, Appl. Opt. 35, 5493 (1996)
  */
 
+import { checkLayerKeys } from './layerKeys.js';
+
 // ── Complex number arithmetic ─────────────────────────────────────────────────
 // All complex numbers are [re, im] arrays.
 
@@ -291,6 +293,7 @@ function layerAbsorptance(R, T, eta0, r) {
  * @returns {{ R:number, T:number, A:number }}
  */
 export function tmm(lambda_nm, theta_deg, pol, n0, ns, layers) {
+    checkLayerKeys(layers, 'n', 'd');
     const { sinTheta0, cosTheta0 } = incidence(theta_deg);
 
     // Admittance of incident medium
@@ -415,6 +418,7 @@ function partMatrix(layer, delta, thickness) {
 // common arguments. Layers are used as given, with no d > 0 filter, so
 // derivative indices match the caller's design.
 function derivativeStack({ lambda_nm, theta_deg, pol, n0, ns, layers }) {
+    checkLayerKeys(layers, 'n', 'd');
     const { sinTheta0, cosTheta0 } = incidence(theta_deg);
     const eta0 = layerAdmittance(n0, incidentCosTheta(n0, sinTheta0, cosTheta0), pol);
     const substrate = substrateVector(ns, snellCosTheta(n0, sinTheta0, ns, cosTheta0), pol);
