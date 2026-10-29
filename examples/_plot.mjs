@@ -1,5 +1,5 @@
 /**
- * Minimal SVG line plot — no dependencies.
+ * Minimal SVG line plot with no dependencies.
  *
  * Every figure in docs/ is written by an example script through this helper, so
  * the images cannot drift from the code that produced them. Colours are chosen
@@ -12,7 +12,7 @@ const AXIS = '#8b949e';
 
 export function linePlot({
     series, xLabel = '', yLabel = '', title = '',
-    width = 720, height = 380, yMin = null, yMax = null,
+    width = 720, height = 380, xMin = null, xMax = null, yMin = null, yMax = null,
     vlines = [], zeroLine = false,
 }) {
     const m = { top: title ? 44 : 24, right: 20, bottom: 52, left: 64 };
@@ -21,7 +21,7 @@ export function linePlot({
 
     const xs = series.flatMap(s => s.x);
     const ys = series.flatMap(s => s.y);
-    const x0 = Math.min(...xs), x1 = Math.max(...xs);
+    const x0 = xMin ?? Math.min(...xs), x1 = xMax ?? Math.max(...xs);
     const y0 = yMin ?? Math.min(...ys);
     const y1 = yMax ?? Math.max(...ys);
     const pad = (y1 - y0) * 0.05 || 0.05;

@@ -1,44 +1,32 @@
 # Benchmarks and cross-library comparison
 
-Two tiers. They differ in what you have to install, not in which libraries are
-covered.
+Two tiers. They differ in what you have to install, not in which libraries are covered.
 
 | | Command | Needs |
 |---|---|---|
 | **Accuracy** | `npm run compare` | Node only |
 | **Timing** | see [below](#timing-tier) | A ~1.3 GB Python environment |
 
-Results are published in [`../docs/comparison.md`](../docs/comparison.md),
-which is the only place they live. `summarize.mjs` emits `tables.md` here as an
-intermediate; its numbers are transcribed into the published page along with the
-caveats that give them meaning.
+Results are published in [`../docs/comparison.md`](../docs/comparison.md), which is the only place they live. `summarize.mjs` emits `tables.md` here as an intermediate; its numbers are transcribed into the published page along with the caveats that give them meaning.
 
 ## Implementations compared
 
 | Label | What it is |
 |---|---|
-| `byrnes` | The [`tmm`](https://github.com/sbyrnes321/tmm) PyPI package, `coh_tmm`. Pure Python and NumPy, scalar in wavelength. The de-facto standard. |
-| `tmm_faster` | [`tmm-faster`](https://github.com/clembron/tmm_faster) — C++ core with a Python wrapper. Returns both polarizations per call. Multithreaded by default. |
-| `tmm_fast` | [`tmm_fast`](https://github.com/MLResearchAtOSRAM/tmm_fast) — PyTorch, batched, GPU-capable, autograd. |
-| `tmmax` | [`tmmax`](https://github.com/bahremsd/tmmax) — JAX with JIT and vmap. |
-| `tmmcore js` | The JavaScript `tmm()`, one call per (λ, polarization). |
+| `byrnes` | The [`tmm`](https://github.com/sbyrnes321/tmm) PyPI package, `coh_tmm`. Pure Python and NumPy, scalar in wavelength. |
+| `tmm_faster` | [`tmm-faster`](https://github.com/clembron/tmm_faster), a C++ core with a Python wrapper. Returns both polarizations per call. Multithreaded by default. |
+| `tmm_fast` | [`tmm_fast`](https://github.com/MLResearchAtOSRAM/tmm_fast), on PyTorch: batched, GPU-capable, autograd. |
+| `tmmax` | [`tmmax`](https://github.com/bahremsd/tmmax), on JAX with JIT and vmap. |
+| `tmmcore js` | The one-wavelength JavaScript kernel, one call per (λ, polarization). |
 | `tmmcore wasm` | The C kernel's `tmm_rta_spectrum()`, one call for the whole grid and both polarizations. |
 
 ## The shared input set
 
-`gen_cases.py` precomputes the wavelength grid, per-layer complex indices and
-thicknesses into `cases.json`, which every driver reads. Dispersion evaluation
-and material lookup therefore sit **outside** the timed region: what is measured
-is the transfer-matrix core alone.
+`gen_cases.py` precomputes the wavelength grid, per-layer complex indices and thicknesses into `cases.json`, which every driver reads. Dispersion evaluation and material lookup therefore sit **outside** the timed region: what is measured is the transfer-matrix core alone.
 
-Indices use ñ = n + ik with k ≥ 0 — the convention tmmcore and Byrnes share — so
-values transfer verbatim with no conjugation and there is no material-data
-confound.
+Indices use ñ = n + ik with k ≥ 0, the convention tmmcore and Byrnes share, so values transfer verbatim with no conjugation and there is no material-data confound.
 
-Cases are 4-, 7-, 21- and 40-layer stacks (the 7-layer contains absorbing
-silver) on two grids: 400–1100 nm at 10 nm (71 points) and at 1 nm (701 points),
-at normal incidence. The coarse grid runs again at 30° and 60°, where s and p
-part.
+Cases are 4-, 7-, 21- and 40-layer stacks (the 7-layer contains absorbing silver) on two grids: 400-1100 nm at 10 nm (71 points) and at 1 nm (701 points), at normal incidence. The coarse grid runs again at 30° and 60°, where s and p part.
 
 Adding a case is a pull request against `gen_cases.py`.
 
@@ -48,18 +36,11 @@ Adding a case is a pull request against `gen_cases.py`.
 npm run compare
 ```
 
-Feeds `cases.json` to tmmcore's JavaScript and WebAssembly paths and diffs
-against `reference_byrnes.json`, output committed from Byrnes' `tmm`, so no
-Python is needed. R and T come from `tmm()`, the complex reflection coefficient
-from the phase kernel. Exits non-zero if either disagrees by more than 1e-12.
+Feeds `cases.json` to tmmcore's JavaScript and WebAssembly paths and diffs against `reference_byrnes.json`, output committed from Byrnes' `tmm`, so no Python is needed. R and T come from `rta()`, the complex reflection coefficient from `phase()`. Exits non-zero if either disagrees by more than 1e-12.
 
-r_s is compared as it stands and r_p with its sign reversed. Byrnes follows the
-Fresnel convention, r_p = −r_s at normal incidence; tmmcore uses the tilted
-admittances of thin-film practice, r_p = r_s there. See the conventions in the
-[getting-started guide](../docs/getting-started.md#conventions).
+r_s is compared as it stands and r_p with its sign reversed, for the reason the [conventions](../docs/getting-started.md#conventions) give.
 
-Distrusting a committed reference file is the correct instinct. To regenerate it
-yourself:
+To regenerate the reference file:
 
 ```bash
 python -m venv .venv
@@ -68,10 +49,7 @@ python -m venv .venv
 .venv/Scripts/python gen_reference.py   # runs Byrnes, writes reference_byrnes.json
 ```
 
-Only Byrnes and `tmm_faster` are usable as accuracy references. `tmm_fast` casts
-to single precision internally, and `tmmax` runs on JAX with `jax_enable_x64`
-left at its default of false — both agree only to ~1e-7 regardless of the input
-dtype.
+Only Byrnes and `tmm_faster` are usable as accuracy references. `tmm_fast` and `tmmax` agree only to about 1e-7 whatever dtype they are given, the size of single-precision round-off; `tmmax` runs on JAX, which computes in single precision unless `jax_enable_x64` is set.
 
 ## Timing tier
 
@@ -93,39 +71,23 @@ On PowerShell set the thread pin with `$env:TMMBENCH_THREADS="1"` beforehand.
 
 `bench_js*.mjs` need `src/wasm/tmm_kernel.wasm`, which ships prebuilt.
 
-Timing is best-of-N with both a repetition floor and a wall-time floor per case.
-One "spectrum" is every wavelength on the grid for **both** polarizations — the
-unit an optimizer evaluates thousands of times per design.
+Timing is best-of-N with both a repetition floor and a wall-time floor per case. One "spectrum" is every wavelength on the grid for **both** polarizations, the unit an optimizer evaluates thousands of times per design.
 
-Run the whole tier in one session on an otherwise idle machine. Timings drift by
-tens of percent between sessions, so mixing runs produces a table whose rows are
-not comparable with one another.
+Run the whole tier in one session on an otherwise idle machine. Timings drift by tens of percent between sessions, so mixing runs produces a table whose rows are not comparable with one another.
 
 ### Threading
 
-`tmm_faster` and `tmm_fast` are multithreaded by default; tmmcore's kernels are
-single-threaded and expect the caller to parallelize above them.
-`TMMBENCH_THREADS=1` pins the Python side to one thread for a per-core
-comparison, which is what the published tables report. `probe_threads.py` measures the
-cpu/wall ratio that motivated the pinning.
+`tmm_faster` and `tmm_fast` are multithreaded by default; tmmcore's kernels are single-threaded and expect the caller to parallelize above them. `TMMBENCH_THREADS=1` pins the Python side to one thread for a per-core comparison, which is what the published tables report. `probe_threads.py` measures the cpu/wall ratio that motivated the pinning.
 
-In default configuration `tmm_faster` beats tmmcore on large problems. That is
-stated plainly in the published comparison and should stay that way.
+With its default threads, `tmm_faster` is faster than tmmcore on large problems.
 
 ## Fairness notes
 
-- `coh_tmm` also returns `vw_list`, `kz_list`, `r`, `t` and `power_entering` —
-  strictly more than R and T, with no cheaper entry point in its API.
-- `overhead_py.py` confirms the Python driver loop is under 1% of total time, so
-  the Byrnes figures measure the library rather than the harness.
-- Byrnes must be fed Python `complex`, not NumPy scalars; `coh_tmm` is markedly
-  slower on `np.complex128` elements, which would flatter every other contender.
-- `tmmax` reads materials from its own bundled database rather than accepting
-  explicit n,k, so it is timed at matching layer and grid sizes but not
-  value-checked, and its timing includes an interpolation the others do not
-  perform.
-- Canonical Byrnes timings come from `bench_py.py` in a dedicated process; the
-  copy inside `results_fast_t1.json` shares a process with torch and JAX.
+- `coh_tmm` also returns `vw_list`, `kz_list`, `r`, `t` and `power_entering`: strictly more than R and T, with no cheaper entry point in its API.
+- `overhead_py.py` confirms the Python driver loop is under 1% of total time, so the Byrnes figures measure the library rather than the harness.
+- Byrnes must be fed Python `complex`, not NumPy scalars; `coh_tmm` is markedly slower on `np.complex128` elements, which would make every other package look faster.
+- `tmmax` reads materials from its own bundled database rather than accepting explicit n,k, so it is timed at matching layer and grid sizes but not value-checked, and its timing includes an interpolation the others do not perform.
+- Canonical Byrnes timings come from `bench_py.py` in a dedicated process; the copy inside `results_fast_t1.json` shares a process with torch and JAX.
 
 ## Files
 

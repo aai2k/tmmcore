@@ -7,10 +7,8 @@
  * The mechanism is the phase thickness at oblique incidence, delta =
  * 2*pi*n*d*cos(theta)/lambda, which reads as an apparent optical thickness
  * n*d*cos(theta), so the layers behave as though they were thinner when tilted
- * (Macleod, Thin-Film Optical Filters 5th ed., ch. 8, "Simple Tilts in
- * Collimated Light"). For the quarter-wave stack specifically: "As the
- * multilayer is tilted to greater angles of incidence, the characteristic moves
- * to a shorter wavelength" (ch. 10, One-Dimensional Photonic Crystals).
+ * (Macleod, Thin-Film Optical Filters 5th ed., §8.2.5.1, "Simple Tilts in
+ * Collimated Light").
  *
  * Indices are non-dispersive here so the shift is the only effect in view.
  *
@@ -20,29 +18,28 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { tmm } from '../src/js/index.js';
+import { rta, rtaSpectrum } from '../src/js/index.js';
 import { heatMap } from './_heatmap.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, '..', 'docs', 'img');
 
-const nH = [2.35, 0];          // high index, TiO2-like
-const nL = [1.46, 0];          // low index, SiO2-like
-const AIR = [1, 0];
-const GLASS = [1.52, 0];
+const nH = 2.35;               // high index, TiO2-like
+const nL = 1.46;               // low index, SiO2-like
 
 const LAMBDA0 = 700;           // nm, reference wavelength of the quarter waves
 const PAIRS = 8;               // (HL)^8 H  ->  17 layers
 
-const dH = LAMBDA0 / (4 * nH[0]);
-const dL = LAMBDA0 / (4 * nL[0]);
+const dH = LAMBDA0 / (4 * nH);
+const dL = LAMBDA0 / (4 * nL);
 
-const stack = [];
+const layers = [];
 for (let i = 0; i < PAIRS; i++) {
-    stack.push({ n: nH, d: dH });
-    stack.push({ n: nL, d: dL });
+    layers.push({ n: nH, d: dH });
+    layers.push({ n: nL, d: dL });
 }
-stack.push({ n: nH, d: dH });
+layers.push({ n: nH, d: dH });
+const stack = { incident: 1, substrate: 1.52, layers };
 
 const lambdas = [];
 for (let lam = 400; lam <= 1000; lam += 5) lambdas.push(lam);
@@ -54,12 +51,8 @@ for (let a = 0; a <= 80; a += 1) angles.push(a);
 // z[angle][wavelength] is the row-major order heatMap expects.
 const Zs = [], Zp = [];
 for (const theta of angles) {
-    const rs = [], rp = [];
-    for (const lam of lambdas) {
-        rs.push(tmm(lam, theta, 's', AIR, GLASS, stack).R);
-        rp.push(tmm(lam, theta, 'p', AIR, GLASS, stack).R);
-    }
-    Zs.push(rs); Zp.push(rp);
+    const { Rs, Rp } = rtaSpectrum(stack, lambdas, { angle: theta });
+    Zs.push(Array.from(Rs)); Zp.push(Array.from(Rp));
 }
 
 // For display only. The sidelobe fringes on the short-wavelength side are
@@ -69,32 +62,32 @@ for (const theta of angles) {
 const SUB = 4;
 const STEP = lambdas[1] - lambdas[0];
 function binned(pol) {
-    return angles.map(theta => lambdas.map(lam => {
-        let acc = 0;
+    return angles.map(theta => {
+        const acc = new Array(lambdas.length).fill(0);
         for (let k = 0; k < SUB; k++) {
-            acc += tmm(lam + ((k + 0.5) / SUB - 0.5) * STEP, theta, pol, AIR, GLASS, stack).R;
+            const shifted = lambdas.map(lam => lam + ((k + 0.5) / SUB - 0.5) * STEP);
+            rtaSpectrum(stack, shifted, { angle: theta, pol }).R.forEach((R, i) => { acc[i] += R; });
         }
-        return acc / SUB;
-    }));
+        return acc.map(sum => sum / SUB);
+    });
 }
 
-// Band edges, defined as where R crosses 0.9, reported rather than asserted:
-// "high-reflectance zone" is a judgement about a number.
+// Band edges: where R crosses 0.9.
 function band(row) {
     const hits = row.map((r, i) => (r >= 0.9 ? lambdas[i] : null)).filter(v => v !== null);
     return hits.length ? [hits[0], hits[hits.length - 1]] : null;
 }
 
 console.log(`quarter-wave stack  (HL)^${PAIRS} H   lambda0 = ${LAMBDA0} nm`);
-console.log(`  H  n = ${nH[0]}  d = ${dH.toFixed(2)} nm`);
-console.log(`  L  n = ${nL[0]}  d = ${dL.toFixed(2)} nm\n`);
+console.log(`  H  n = ${nH}  d = ${dH.toFixed(2)} nm`);
+console.log(`  L  n = ${nL}  d = ${dL.toFixed(2)} nm\n`);
 console.log('R >= 0.9 band, nm');
 console.log('  AOI      s-pol           p-pol');
 for (const theta of [0, 30, 45, 60]) {
     const i = angles.indexOf(theta);
     const bs = band(Zs[i]), bp = band(Zp[i]);
-    const f = b => (b ? `${b[0]}-${b[1]}`.padEnd(14) : 'none'.padEnd(14));
-    console.log(`  ${String(theta).padStart(2)}°   ${f(bs)}  ${f(bp)}`);
+    const f = b => (b ? `${b[0]}-${b[1]}` : 'none');
+    console.log(`  ${String(theta).padStart(2)}°   ${f(bs).padEnd(14)}  ${f(bp)}`);
 }
 
 const c0 = band(Zs[0]);
@@ -113,7 +106,7 @@ for (const [lam, theta, pol] of [
     [700, 45, 's'], [700, 45, 'p'],
     [600, 60, 's'], [600, 60, 'p'],
 ]) {
-    const { R } = tmm(lam, theta, pol, AIR, GLASS, stack);
+    const { R } = rta(stack, lam, { angle: theta, pol });
     console.log(`  ${String(lam).padStart(4)} nm  ${String(theta).padStart(2)}°  ${pol}   R = ${R.toFixed(12)}`);
 }
 

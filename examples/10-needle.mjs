@@ -15,22 +15,20 @@
  * The script also checks P against a finite difference, which is the point:
  * the analytic value has to be the limit the numerical one approaches.
  *
- *   node examples/06-needle.mjs
+ *   node examples/10-needle.mjs
  */
 
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { tmm, tmmNeedleScan } from '../src/js/index.js';
+import { rtaSpectrum, tmmNeedleScan } from '../src/js/index.js';
 import { linePlot } from './_plot.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, '..', 'docs', 'img');
 
-const H = [2.35, 0];
-const L = [1.46, 0];
-const AIR = [1, 0];
-const GLASS = [1.52, 0];
+const H = 2.35;
+const L = 1.46;
 
 // A deliberately mediocre antireflection start, so there is something to find.
 const design = [
@@ -45,11 +43,15 @@ const design = [
 const band = [];
 for (let lam = 450; lam <= 650; lam += 20) band.push(lam);
 
-const meritOf = layers =>
-    band.reduce((acc, lam) => acc + tmm(lam, 0, 's', AIR, GLASS, layers).R ** 2, 0) / band.length;
+const meritOf = layers => rtaSpectrum({ incident: 1, substrate: 1.52, layers }, band, { pol: 's' })
+    .R.reduce((acc, R) => acc + R ** 2, 0) / band.length;
 
 const FRACS = Array.from({ length: 49 }, (_, i) => (i + 1) / 50);
 const CANDS = [H, L];
+
+// tmmNeedleScan takes each index as an [re, im] pair.
+const pair = n => [n, 0];
+const designPairs = design.map(({ n, d }) => ({ n: pair(n), d }));
 
 // P(z) for each candidate, sampled inside every layer. Depth is measured from
 // the incident medium, which is the order the layers are stored in.
@@ -65,7 +67,7 @@ for (let k = 0; k < design.length; k++) {
 for (let c = 0; c < CANDS.length; c++) {
     const acc = new Array(Z.length).fill(0);
     for (const lam of band) {
-        const scan = tmmNeedleScan(lam, 0, 's', AIR, GLASS, design, CANDS, FRACS);
+        const scan = tmmNeedleScan(lam, 0, 's', pair(1), pair(1.52), designPairs, CANDS.map(pair), FRACS);
         let i = 0;
         for (let k = 0; k < design.length; k++) {
             for (let f = 0; f < FRACS.length; f++) {

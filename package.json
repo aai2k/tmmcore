@@ -23,7 +23,7 @@
   "scripts": {
     "test": "node tests/equivalence.mjs && node tests/growing_equivalence.mjs && node tests/growing_eval_equivalence.mjs && node tests/absorbing_incident.mjs && node tests/derivatives_fd.mjs && node tests/edge_cases.mjs && node tests/opaque_transmittance.mjs && node tests/wasm_allocation.mjs && node tests/layer_keys.mjs && node tests/kernel_exports.mjs && node tests/calls.mjs && node tests/old_names.mjs && node tests/js_grid_kernels.mjs && node tests/parity.mjs",
     "compare": "node benchmarks/compare.mjs",
-    "examples": "node examples/01-single-layer.mjs && node examples/02-ar-coating.mjs && node examples/03-metal-mirror.mjs && node examples/04-refine.mjs && node examples/05-angle-map.mjs && node examples/06-needle.mjs && node examples/07-jacobian-map.mjs && node examples/08-group-delay.mjs",
+    "examples": "node examples/01-single-layer.mjs && node examples/02-ar-coating.mjs && node examples/03-coated-plate.mjs && node examples/04-metal-mirror.mjs && node examples/05-angle-map.mjs && node examples/06-tilted-filter.mjs && node examples/07-jacobian-map.mjs && node examples/08-refine.mjs && node examples/09-tolerance.mjs && node examples/10-needle.mjs && node examples/11-ellipsometry.mjs && node examples/12-group-delay.mjs",
     "build:wasm": "node scripts/build-wasm.mjs",
     "build:native": "cc -std=c99 -pedantic -Wall -Wextra -O2 -c src/c/tmm_kernel.c -o tmm_kernel.o"
   },

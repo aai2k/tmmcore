@@ -1,367 +1,400 @@
 # API reference
 
-All functions take the same leading arguments:
-
-| Argument | Type | Meaning |
-|---|---|---|
-| `lambda_nm` | number | Wavelength in nanometres |
-| `theta_deg` | number | Angle of incidence, degrees from normal |
-| `pol` | `'s'` \| `'p'` | Polarization |
-| `n0` | `[re, im]` | Incident medium index, $\tilde n = n + ik$ |
-| `ns` | `[re, im]` | Substrate index |
-| `layers` | `{ n: [re, im], d }[]` | Stack, incident medium first |
-
-Thicknesses are in nanometres. The sign and phase conventions are in [Getting started](getting-started.md#conventions).
-
-Each call reads the layer keys given with it. A layer without one of them throws a `TypeError` naming the keys and the layer's position, such as `layer 0 needs {n, d}`. Up to 0.4.2 such a layer was skipped as if absent, so a design passed in another call's shape gave the bare substrate.
-
----
-
-## Spectral quantities
-
-### `tmm(lambda_nm, theta_deg, pol, n0, ns, layers)`
-
-Reflectance, transmittance and absorptance.
+The R/T, derivative and phase calls take a stack, a wavelength in nm or, in a `Spectrum` call, a list of them, and an options object:
 
 ```js
-const { R, T, A } = tmm(550, 0, 's', [1, 0], [1.52, 0], layers);
+import { rta, rtaSpectrum } from 'tmmcore';
+
+const stack = {
+    incident: 1,
+    substrate: 1.52,
+    layers: [{ n: 2.35, d: 58.5 }, { n: 1.46, d: 94.2 }],   // d in nm
+};
+const wavelengths = [450, 500, 550, 600, 650];
+
+rta(stack, 550).R;                                            // natural light, normal incidence
+rtaSpectrum(stack, wavelengths, { angle: 45, pol: 's' }).R;   // one value per wavelength
+```
+
+The [WebAssembly instance](#webassembly) has the same calls, and the [Python package](python.md) has them under snake_case names. The sign and phase conventions are in [Getting started](getting-started.md#conventions).
+
+| Call | Returns |
+|---|---|
+| [`rta`, `rtaSpectrum`](#r-t-and-a) | R, T and A |
+| [`jacobian`, `jacobianSpectrum`](#thickness-derivatives) | R, T and A, and their derivatives in each layer's thickness |
+| [`hessian`, `hessianSpectrum`](#thickness-derivatives) | the same, and the second derivatives |
+| [`tmmNeedleScan`](#needle-scan) | the derivatives of R, T and A for inserting a thin layer anywhere in the stack |
+| [`phase`, `phaseSpectrum`](#phase-gd-gdd-and-tod) | phase, GD, GDD and TOD of r and t |
+| [`phaseJacobian`, `phaseJacobianSpectrum`](#phase-gd-gdd-and-tod) | the same, and their thickness derivatives |
+| [`jetConstant` … `jetIsFinite`](#jet-arithmetic) | Taylor-jet arithmetic, which builds the dispersive indices the phase calls take |
+| [`monitorCurve`, `depositionSpectra`, `growingEval`](#monitoring-and-deposition) | spectra during deposition, on the WebAssembly instance |
+
+## Arguments
+
+### The stack
+
+`{ incident, substrate, layers }`, the layers ordered from the incident medium toward the substrate.
+
+| | |
+|---|---|
+| `layers` | `{ n, k, d }[]`, with `d` the thickness in nm |
+| `incident`, `substrate` | a number `n`, or `{ n, k }` |
+| `n`, `k` | a number, or in a `Spectrum` call a list with one value per wavelength |
+
+$\tilde n = n + ik$, with $k \ge 0$ for absorbing media. `k` may be left out and is then 0. A medium given as a bare list is refused, since an `[re, im]` pair would read as two wavelengths. A layer of zero, negative or NaN thickness adds nothing to the spectrum.
+
+In the phase calls an index is a number, which is a constant index with no dispersion, or a [jet](#indices-as-jets) with `k` inside it: one jet at one wavelength, a list with one jet per wavelength in a `Spectrum` call. A list of plain numbers per wavelength is refused there, since the group delay computed from it would leave out the material's dispersion.
+
+### Options
+
+| | |
+|---|---|
+| `angle` | Angle of incidence in degrees from the normal, 0 when left out. A `Spectrum` call also takes a list with one angle per wavelength. |
+| `pol` | In the R/T and derivative calls `'s'`, `'p'` or `'avg'`, the mean of the two, which is the default. In the phase calls `'s'` or `'p'`, and it must be given. |
+
+### Results over a grid
+
+Each value is a `Float64Array` with one entry per wavelength. `N`, where a result has it, is the number of layers. A derivative over a grid is flat and wavelength-major: wavelength `i`, layer `k` at `[i * N + k]`.
+
+### Errors
+
+A wrong argument throws a `TypeError` that names it, such as `layer 0 needs {n, d}`, `pol must be 's' or 'p'` or `unknown option 'polarization'; the options are angle and pol`. The needle scan and the monitoring calls check their layers the same way.
+
+## R, T and A
+
+### `rta(stack, wavelength, options?)`
+
+```js
+const { R, T, A } = rta(stack, 550, { pol: 's' });
 ```
 
 **Returns** `{ R, T, A }`: reflectance, transmittance into the substrate, and the absorptance of the layers, each a fraction of the incident irradiance.
 
-$A$ is the net irradiance entering the front of the stack less the irradiance leaving it into the substrate (Macleod, Eq. 2.120), so it is what the layers absorb. With a transparent incident medium the three sum to one, by construction, which makes `R + T + A` useless as a self-check there; use agreement with a closed form or another implementation instead.
+$A$ is the net irradiance entering the front of the stack less the irradiance leaving it into the substrate (Macleod, Eq. 2.120), so it is what the layers absorb. With a transparent incident medium $R + T + A = 1$ by construction, so the sum is no check on the calculation.
 
 With an absorbing incident medium they do not sum to one. The incident and reflected waves interfere in the irradiance of the incident medium, and
 
 $$R + T + A = 1 + 2\,\frac{\mathrm{Im}\,\eta_0}{\mathrm{Re}\,\eta_0}\,\mathrm{Im}(r)$$
 
-in tmmcore's sign convention. $T$ can then exceed one, as Macleod's Eq. 2.84 shows for a bare interface. See [Validation](validation.md#an-absorbing-incident-medium).
+in tmmcore's sign convention. $T$ can then exceed one: Macleod finds $T = 1 + k_0^2/n_0^2$ for a surface whose admittance is the complex conjugate of the incident one (Eq. 2.84). See [Validation](validation.md#an-absorbing-incident-medium).
 
-`layers` is `{ n, d }[]`. A layer whose thickness is not positive, NaN included, is skipped.
+### `rtaSpectrum(stack, wavelengths, options?)`
 
-!!! note "Grazing incidence and the critical angle"
-
-    The angle of incidence runs up to and including 90°. $\cos\theta_0$ is taken directly rather than as $\sqrt{1 - \sin^2\theta_0}$, which keeps nothing of it near 90°, and a layer of the incident index keeps its own cosine there too. At 90° exactly $R$ is one and $T$ zero to rounding.
-
-    At a medium's critical angle to the last bit, $\cos\theta$ in it is exactly zero and the layer matrix as written is $0/0$. Its limit is finite, and tmmcore uses it: the layer's matrix becomes linear in its thickness, and a substrate at its critical angle reflects everything. The derivative kernels take the same limit.
-
-!!! note "Opaque layers"
-
-    The imaginary part of a layer's phase thickness grows with its thickness, and $\cosh$ of it overflows to infinity, which would poison the whole matrix product with `NaN`. So the imaginary phase is held at 50 when building the matrix. Past that point the held matrix is the true one divided by a real factor, $e^{|\mathrm{Im}\,\delta| - 50}$, to within $e^{-100}$ relative. The factor cancels from $r$ and from every phase; tmmcore carries it as a log scale for $t$, so $T$ stays exact however opaque the layer, until it falls below the range of a double, about $10^{-308}$, and reads 0. Up to 0.4.1 the factor was dropped, and $T$ stopped near $10^{-43}$ for each such layer.
-
-    The clamp looks at the phase, not at $k$. A thick absorbing layer reaches it, and so does a lossless one beyond the critical angle, where the wave in it is evanescent: an air gap of 10 µm under a glass prism at 70° is well past it. Thin layers and layers carrying a propagating wave never reach it.
-
----
-
-## Analytic derivatives
-
-Each derivative comes from the same characteristic-matrix product that produced the spectrum, computed exactly rather than by finite differences or automatic differentiation.
-
-The derivatives are those of the function `tmm()` computes, clamp included: past the clamp a layer is its held matrix times the factor above, and the two together move with its thickness as the true layer does, so $T$ falls with the thickness of an opaque layer at the true rate and $R$ does not move. Through opaque and evanescent stacks the partial products grow past the range of a double, so each one carries a power-of-two scale, which cancels exactly from every derivative. A deep absorbing stack gets the same derivatives as a transparent one, with no wavelength silently dropping to zero. [Validation](validation.md#derivatives-against-finite-differences) checks all of them against finite differences on such stacks.
-
-The three functions below take `layers` as `{ n, d }[]`, as `tmm()` does. They use the layers as given, so their indices line up with your design array. A layer of zero thickness contributes nothing to the spectrum and keeps its derivative, the rate at which the spectrum moves as that layer starts to grow. A negative or NaN thickness makes the layer absent, as in `tmm()`, and its derivatives are zero.
-
-### `tmmThicknessJacobian(lambda_nm, theta_deg, pol, n0, ns, layers)`
-
-First derivatives of R, T and A with respect to every layer thickness.
+R, T and A over a wavelength grid, s and p in one pass.
 
 ```js
-const { R, dRdd } = tmmThicknessJacobian(550, 0, 's', [1, 0], [1.52, 0], layers);
-// dRdd[j] = ∂R/∂d_j, in units of 1/nm
+const { R, Rs, Rp } = rtaSpectrum(stack, wavelengths, { angle: 45 });
 ```
 
-**Returns** `{ R, T, A, dRdd, dTdd, dAdd, N }` where the three derivative arrays have length `N`, the layer count.
+**Returns** `{ R, T, A, Rs, Ts, As, Rp, Tp, Ap }`: R, T and A for the `pol` asked, and the s and p values they come from.
 
-The spectrum comes back with the derivatives, so a Gauss–Newton or Levenberg–Marquardt step costs one evaluation rather than `N + 1`. See the [refinement example](examples.md#refinement-with-the-analytic-jacobian).
+## Thickness derivatives
 
-### `tmmThicknessHessian(lambda_nm, theta_deg, pol, n0, ns, layers)`
+The derivatives come from the same characteristic-matrix product as the spectrum, exactly, not by finite differences. They are the derivatives of what `rta` computes, [opaque layers](#opaque-layers) included, and [Validation](validation.md#derivatives-against-finite-differences) checks them against finite differences.
 
-Second derivatives, for Newton-type methods and curvature analysis.
+They line up with `stack.layers` as given. A layer of zero thickness keeps its derivative, the rate at which the spectrum moves as that layer starts to grow. A layer of negative or NaN thickness is absent, and its derivatives are zero. With `pol: 'avg'` the derivatives are the mean of the s and p ones.
+
+### `jacobian(stack, wavelength, options?)`
 
 ```js
-const { d2Rdd } = tmmThicknessHessian(550, 0, 's', [1, 0], [1.52, 0], layers);
-// d2Rdd[i][j] = ∂²R/∂d_i∂d_j
+import { jacobian } from 'tmmcore';
+
+const { R, dRdd } = jacobian(stack, 550, { pol: 's' });   // dRdd[j] = ∂R/∂d_j, in 1/nm
 ```
 
-**Returns** `{ R, T, A, dRdd, dTdd, dAdd, d2Rdd, d2Tdd, d2Add, N }`. The second derivatives are `N × N` symmetric arrays; first derivatives and the spectrum come along at no extra cost.
+**Returns** `{ R, T, A, dRdd, dTdd, dAdd, N }`: R, T and A, and their derivatives as `Float64Array`s of length `N`.
 
-Cost is $O(N^2)$ small-matrix operations per evaluation.
+The spectrum comes with its derivatives, so a Gauss-Newton or Levenberg-Marquardt step costs one evaluation rather than $N + 1$. See the [refinement example](examples.md#refinement-with-the-analytic-jacobian).
+
+### `jacobianSpectrum(stack, wavelengths, options?)`
+
+The Jacobian at every wavelength of a grid. **Returns** R, T and A over the grid, `dRdd`, `dTdd` and `dAdd` with nLam × N values each, and `N`.
+
+### `hessian(stack, wavelength, options?)`
+
+```js
+import { hessian } from 'tmmcore';
+
+const { d2Rdd } = hessian(stack, 550, { pol: 's' });   // d2Rdd[i][j] = ∂²R/∂d_i∂d_j
+```
+
+**Returns** `{ R, T, A, dRdd, dTdd, dAdd, d2Rdd, d2Tdd, d2Add, N }`: the fields of `jacobian`, and the second derivatives as `N` rows of `N`, symmetric. The cost is $O(N^2)$ small-matrix operations. See the [tolerance example](examples.md#what-thickness-errors-cost-from-the-exact-hessian).
+
+### `hessianSpectrum(stack, wavelengths, options?)`
+
+The Hessian at every wavelength of a grid. **Returns** the fields of `jacobianSpectrum`, and `d2Rdd`, `d2Tdd` and `d2Add` with nLam × N × N values each, wavelength `i` and layers `j`, `k` at `[(i * N + j) * N + k]`.
+
+## Needle scan
 
 ### `tmmNeedleScan(lambda_nm, theta_deg, pol, n0, ns, layers, candidateNs, intraFracs?)`
 
-The needle P-function: the gradient of each spectral quantity with respect to inserting an infinitesimally thin layer of a candidate material, evaluated at every position in the stack at once.
+The derivatives of R, T and A for inserting a layer of zero thickness of a candidate material, at every interface of the stack at once and, if asked, inside its layers. This is the analytic P-function of Tikhonravov et al. (*Appl. Opt.* **35**, 5493, 1996), the $d \to 0$ limit of the numerical method of Sullivan and Dobrowolski (*Appl. Opt.* **35**, 5484, 1996), so it needs no trial thickness and no second evaluation.
+
+It takes its arguments one by one: `pol` is `'s'` or `'p'`, `n0`, `ns` and each candidate are `[re, im]`, and `layers` is `{ n: [re, im], d }[]`.
 
 ```js
-const scan = tmmNeedleScan(550, 0, 's', [1, 0], [1.52, 0], layers,
+import { tmmNeedleScan } from 'tmmcore';
+
+const scan = tmmNeedleScan(550, 0, 's', [1, 0], [1.52, 0],
+                           [{ n: [2.35, 0], d: 58.5 }, { n: [1.46, 0], d: 94.2 }],
                            [[2.35, 0], [1.46, 0]]);
 // scan.gaps[position][candidate] = { dR, dT, dA }
 ```
 
-**Arguments**
-
-| | |
+| Argument | |
 |---|---|
 | `candidateNs` | `[re, im][]`, the materials that could be inserted |
-| `intraFracs` | optional `number[]`, fractional positions for splitting a host layer |
+| `intraFracs` | optional `number[]`, positions inside each layer as fractions of its thickness from the incident side |
 
 **Returns** `{ R, T, A, gaps, intra, N }`.
 
-`gaps` has `N + 1` entries, one per interface: index 0 is before the first layer, index `N` is against the substrate. Each holds one `{ dR, dT, dA }` per candidate. Insert where the merit-function gradient is negative.
+- `gaps` has $N + 1$ entries, one per interface: 0 is in front of the first layer and `N` against the substrate. Each holds one `{ dR, dT, dA }` per candidate, per nm of needle. Insert where the derivative of your merit function is negative.
+- `intra[k][i]` is `{ frac, perCand }` for a needle inside layer `k` at fraction `intraFracs[i]`, with `perCand` shaped like an entry of `gaps`. Fractions 0 and 1 give the interfaces either side of the layer.
 
-`intra[k][i]` is `{ frac, perCand }` for a needle inside layer `k`, at fraction `intraFracs[i]` of its thickness from the incident side, with `perCand` shaped like a `gaps` entry. Fractions 0 and 1 give the gaps either side of the layer. Inside a layer past the clamp, each part is held on its own and keeps its own factor, so a needle anywhere in a metal sees the field that is really there: near the surface its derivatives are those of an ordinary layer, and deep inside $dR$ is zero while $dT$ keeps its true value relative to $T$.
+The positions count the layers as given, zero-thickness ones included. A needle of a layer's own material at its boundary is that layer made thicker, so `gaps[0][c].dR` for a candidate with layer 0's index equals `dRdd[0]` from `jacobian`; the two are computed independently. See the [needle example](examples.md#the-needle-p-function-where-the-next-layer-goes).
 
-This is the $d \to 0$ limit of Sullivan's numerical pre/post method, the analytic P-function of Tikhonravov et al. Unlike the numerical form it needs no trial thickness and no second spectrum evaluation.
+## Phase, GD, GDD and TOD
 
-!!! tip "A free consistency check"
+Phase, group delay, group delay dispersion and third-order dispersion of r and t. They depend on how each index changes with frequency, so these calls take an index as a number, which has no dispersion, or as a [jet](#indices-as-jets) that carries it.
 
-    A needle of the host layer's own index, inserted at that layer's boundary,
-    is just a thicker layer. So `gaps[0][c].dR` for a candidate matching layer
-    0's index equals `dRdd[0]` from the Jacobian. The two code paths are derived
-    independently and agree to round-off.
+GD, GDD and TOD are exact frequency derivatives at the wavelength asked, from the frequency derivatives of the characteristic matrix. No phase unwrapping and no wavelength stencil is involved, so a value does not depend on the grid around it.
 
-Gap indices count the layers as given, zero-thickness ones included, so they line up with your design array exactly.
-
----
-
-## Phase dispersion
-
-Phase, group delay, group delay dispersion and third-order dispersion, for chirped mirrors and any other design where the shape of a pulse matters.
-
-These take refractive indices as **Taylor jets** rather than plain complex numbers, because the answer depends on how the index varies with frequency and not only on its value. See [Refractive index as a jet](#refractive-index-as-a-jet) below.
-
-### `tmmPhaseDispersion(lambda_nm, theta_deg, pol, n0Jet, nsJet, layers, options?)`
+### `phase(stack, wavelength, { pol, angle? })`
 
 ```js
-const { r, t } = tmmPhaseDispersion(800, 0, 's', n0Jet, nsJet, layers);
-// r.gdd = group delay dispersion on reflection, fs²
+import { phase } from 'tmmcore';
+
+const { r, t } = phase(stack, 800, { pol: 's' });   // r.gdd: GDD on reflection, in fs²
 ```
 
-`layers` is `{ nJet, d }[]` here, `d` in nanometres.
+**Returns** `{ r, t }`, each `{ phaseRad, phaseDeg, gd, gdd, tod, magnitudeSquared }`, or `null` where that coefficient is exactly zero and has no phase. Units are in [Units and signs](#units-and-signs).
 
-**Returns** `{ r, t }`, one per coefficient, each `{ phaseRad, phaseDeg, gd, gdd, tod, magnitudeSquared }`, or `null` where that coefficient is exactly zero and the phase is undefined.
+Both are also `null` at the exact critical angle of a layer, and at the substrate's critical angle in p. At the substrate's critical angle in s the phase and `magnitudeSquared` come back, and `gd`, `gdd` and `tod` are `NaN`.
 
-Both are also `null` at the exact critical angle of a layer, where $\cos\theta$ in it is exactly zero, and at the substrate's critical angle in p. At the substrate's critical angle in s the phase and `magnitudeSquared` come back, but `gd`, `gdd` and `tod` are `NaN`. At a critical angle the frequency derivatives of $\cos\theta$ are infinite for a dispersive medium; for a non-dispersive one they are finite, but this kernel does not take that limit as `tmm()` does.
+### `phaseSpectrum(stack, wavelengths, { pol, angle? })`
 
-| `options` | |
-|---|---|
-| `omega` | Angular frequency. Sets the time unit of the result; defaults to $2\pi c/\lambda$ in rad/fs. |
-| `sinTheta0Jet` | Sine of the incident angle as a jet, for a stack embedded in a dispersive medium at a fixed external angle. Defaults to the constant $\sin\theta_0$. |
+`phase` at every wavelength of a grid. **Returns** `{ r, t }`, each `{ phaseRad, gd, gdd, tod, magnitudeSquared }` with one value per wavelength, `NaN` where the coefficient vanishes.
 
-!!! note "Sampling does not change these numbers"
+### `phaseJacobian(stack, wavelength, { pol, angle? })`
 
-    GD, GDD and TOD here are pointwise logarithmic derivatives of the coefficient, computed from analytic frequency derivatives of the characteristic matrix. No phase unwrapping and no wavelength stencil takes part, so a value at one wavelength does not depend on any neighbouring sample. Plot on whatever grid suits you; only the drawn polyline changes.
-
-    That is the practical difference from differencing an unwrapped phase curve, where the answer moves with the step, and a step that is too coarse can lock onto a wrong value that looks stable as you refine it.
-
-### `tmmPhaseThicknessJacobian(lambda_nm, theta_deg, pol, n0Jet, nsJet, layers, options?)`
-
-The same quantities plus their exact derivatives with respect to every layer thickness, for gradient-based dispersion design.
+The phase quantities and their exact derivatives in every layer's thickness.
 
 ```js
-const { r } = tmmPhaseThicknessJacobian(800, 0, 's', n0Jet, nsJet, layers);
-// r.dGdd[j] = ∂GDD/∂d_j, in fs²/nm
+import { phaseJacobian } from 'tmmcore';
+
+const { r } = phaseJacobian(stack, 800, { pol: 's' });   // r.dGdd[j] = ∂GDD/∂d_j, in fs²/nm
 ```
 
-**Returns** `{ r, t }`, each the phase quantities plus `dPhaseDeg`, `dGd`, `dGdd`, `dTod` and `dLogMagnitudeSquared`, arrays of length `layers.length`. `dLogMagnitudeSquared` is d(ln |coefficient|²)/dd, the relative intensity derivative.
+**Returns** `{ r, t }`, each the fields of `phase` and `dPhaseDeg`, `dGd`, `dGdd`, `dTod` and `dLogMagnitudeSquared`, `Float64Array`s of length `N`. `dLogMagnitudeSquared` is the derivative of ln |r|² or ln |t|², the relative change in intensity. The derivatives line up with `stack.layers` as in the [thickness derivatives](#thickness-derivatives), and a GDD fit costs one evaluation per step rather than $N + 1$.
 
-Frequency remains the Taylor variable throughout, so every thickness derivative is itself a third-order frequency jet and all four quantities come out of one matrix product. Fitting a GDD target costs one evaluation per step rather than `N + 1`, the same bargain `tmmThicknessJacobian` offers for reflectance.
+### `phaseJacobianSpectrum(stack, wavelengths, { pol, angle? })`
 
-`layers` is `{ nJet, d }[]`, as in `tmmPhaseDispersion`. Zero-thickness layers are retained so their derivatives and indices line up with your design array. Negative or NaN thicknesses are skipped, matching the point evaluator, and their derivative entries are zero, as in the derivative functions above.
+`phaseJacobian` at every wavelength of a grid, for fitting measured phase quantities such as group delay or ellipsometric Ψ and Δ. **Returns** `{ r, t }`, each the five arrays of `phaseSpectrum` and the five derivatives with nLam × N values each.
 
-Opaque stacks, whose matrix product runs past the range of a double, return their derivatives like any other stack. Up to 0.4.0 the derivative arrays were `null` there.
+### Indices as jets
 
-### Refractive index as a jet
+A jet is a truncated Taylor series in angular frequency, `[f, f', f''/2!, f'''/3!]`, each entry a complex `[re, im]` pair. An index jet is $[\tilde n,\ d\tilde n/d\omega,\ (d^2\tilde n/d\omega^2)/2,\ (d^3\tilde n/d\omega^3)/6]$.
 
-A jet is a truncated Taylor series, `[f, f', f''/2!, f'''/3!]`, each entry a complex `[re, im]` pair. The phase functions differentiate with respect to angular frequency, so an index jet means $[\tilde n,\ d\tilde n/d\omega,\ (d^2\tilde n/d\omega^2)/2,\ (d^3\tilde n/d\omega^3)/6]$.
-
-tmmcore ships no material models on purpose: your dispersion data is yours. What it exports instead is the [jet arithmetic](#taylor-jet-arithmetic), so you compose the jet from whatever formula you already use. A Cauchy index, written straight through:
+tmmcore has no material models. You build the jet from your own dispersion formula with the [jet arithmetic](#jet-arithmetic). A Cauchy index:
 
 ```js
-import { wavelengthOmegaJet, jetReciprocal, jetMultiply,
+import { phaseSpectrum, wavelengthOmegaJet, jetReciprocal, jetMultiply,
          jetScale, jetAdd, jetConstant, omegaFromLambdaNm } from 'tmmcore';
 
-// n(λ) = A + B/λ² + C/λ⁴, with a constant k
+// n(λ) = A + B/λ² + C/λ⁴ with a constant k, λ in nm
 function cauchyJet(lambda_nm, A, B, C, k) {
-    const omega = omegaFromLambdaNm(lambda_nm);
-    const lambda = wavelengthOmegaJet(lambda_nm, omega);      // λ(ω)
+    const lambda = wavelengthOmegaJet(lambda_nm, omegaFromLambdaNm(lambda_nm));   // λ(ω)
     const inverseSquare = jetReciprocal(jetMultiply(lambda, lambda));
     return jetAdd(jetConstant(A, k),
         jetAdd(jetScale(inverseSquare, B),
                jetScale(jetMultiply(inverseSquare, inverseSquare), C)));
 }
+
+const grid = [700, 750, 800, 850, 900];
+const glass = { n: grid.map(l => cauchyJet(l, 1.5, 4200, 0, 0)) };
+const layers = [{ n: grid.map(l => cauchyJet(l, 2.21, 2.4e4, 0, 0)), d: 85 }];
+const { r } = phaseSpectrum({ incident: 1, substrate: glass, layers }, grid, { pol: 's' });
 ```
 
-Nothing there differentiates anything by hand. `wavelengthOmegaJet` carries the $\lambda(\omega)$ derivatives and every operation after it propagates them. Sellmeier, Lorentz oscillators, and any composition of them work the same way.
+Nothing there is differentiated by hand: `wavelengthOmegaJet` carries the derivatives of λ(ω), and every operation after it carries them on. Sellmeier and Lorentz formulas work the same way.
 
-For a non-dispersive medium, `jetConstant(n, k)` is the whole story.
+For tabulated data, interpolate with something at least three times differentiable and pass the value and its first three derivatives to `jetCompose`. A PCHIP interpolant is only $C^1$, and its GDD and TOD jump at every knot.
 
-If your data is a table rather than a formula, interpolate it with something at least three times differentiable and use `jetCompose`, which takes a value and its first three derivatives and chains them onto the $\omega$ jet. An interpolant that is only $C^1$, such as PCHIP, gives a GDD and TOD that jump at every knot. That is a real property of the interpolant rather than a bug, and it is worth showing your users rather than smoothing over.
+### Units and signs
 
-### Units
-
-The differentiation variable is angular frequency, and you choose its unit by choosing `omega`. GD comes back in the reciprocal of that unit, GDD in its square, TOD in its cube. The default uses `C_NM_PER_FS` with wavelengths in nm, giving **fs, fs² and fs³**.
+The phase calls differentiate with respect to the angular frequency $\omega = 2\pi c/\lambda$ in rad/fs, with wavelengths in nm, so GD is in fs, GDD in fs² and TOD in fs³.
 
 | | |
 |---|---|
-| `C_NM_PER_FS` | Speed of light in vacuum, 299.792458 nm/fs |
-| `omegaFromLambdaNm(lambda_nm)` | Angular frequency in rad/fs |
+| `C_NM_PER_FS` | the speed of light in vacuum, 299.792458 nm/fs |
+| `omegaFromLambdaNm(lambda_nm)` | angular frequency in rad/fs |
 
-### Sign convention
+tmmcore uses $\tilde n = n + ik$ with $e^{-i\omega t}$, the complex conjugate of Macleod's convention. `phaseRad` and `phaseDeg` are the phase $\phi$ in Macleod's convention, the negative of the argument of $r$ or $t$ as tmmcore computes them, and GD, GDD and TOD are $-d\phi/d\omega$, $-d^2\phi/d\omega^2$ and $-d^3\phi/d\omega^3$, as he defines them. So all of them equal his. Positive GDD means the red end of a pulse arrives first.
 
-tmmcore uses $\tilde n = n + ik$ with $e^{-i\omega t}$, the complex conjugate of Macleod's convention. Macleod defines each reported order as minus the derivative of physical phase, so all three quantities equal derivatives of the raw transfer-matrix phase computed here, and the numbers agree with his.
+$r_p$ has the sign of thin-film practice, $r_p = r_s$ at normal incidence. [Conventions](getting-started.md#conventions) explains the 180° this puts into an ellipsometric $\Delta$, and the [ellipsometry example](examples.md#ellipsometry-of-an-oxide-on-silicon) computes one.
 
-Positive GDD means the red end of the pulse arrives first.
+## Jet arithmetic
 
-In p polarization $r$ follows the tilted admittances $n/\cos\theta$, so at normal incidence $r_p = r_s$. Codes that follow Born and Wolf's Fresnel coefficients, Byrnes' `tmm` among them, report $r_p$ with the opposite sign, and an ellipsometric $\Delta$ computed from their $r_p/r_s$ differs from one computed here by 180°. See [Conventions](getting-started.md#conventions).
-
----
-
-## Taylor-jet arithmetic
-
-Exported so you can build index jets from your own dispersion model, as above. Same status as the complex primitives: lower level, and correspondingly less stable across versions.
-
-Jets are arrays of four complex `[re, im]` pairs.
+Jets are arrays of four complex `[re, im]` pairs. These calls are lower level than the ones above and may change between versions.
 
 | | |
 |---|---|
-| `jetConstant(re, im?)` | A constant: value with zero derivatives |
-| `jetFromDerivatives(f, f', f'', f''')` | Build from plain derivatives, applying the factorials |
-| `jetDerivatives(jet)` | Read back as `[f, f', f'', f''']` |
-| `jetAdd`, `jetSubtract`, `jetMultiply`, `jetDivide`, `jetReciprocal` | Arithmetic |
-| `jetScale(jet, s)` | Multiply every order by a real scalar |
-| `jetSqrt`, `jetExp`, `jetLog`, `jetPower`, `jetSin`, `jetCos`, `jetSinCos` | Elementary functions |
-| `jetCompose(value, [f', f'', f'''], xJet)` | Chain rule for a function known only through its derivatives |
-| `wavelengthOmegaJet(lambda, omega)` | $\lambda(\omega)$, the usual starting point |
-| `jetClampImaginary`, `jetClampRealMinimum`, `jetWithImaginaryPart`, `jetIsFinite` | Guards and helpers |
+| `jetConstant(re, im?)` | a constant: the value, with zero derivatives |
+| `jetFromDerivatives(f, f', f'', f''')` | a jet from plain derivatives, applying the factorials |
+| `jetDerivatives(jet)` | the plain derivatives `[f, f', f'', f''']` back |
+| `jetAdd`, `jetSubtract`, `jetMultiply`, `jetDivide`, `jetReciprocal` | arithmetic |
+| `jetScale(jet, s)` | every order times a real number |
+| `jetSqrt`, `jetExp`, `jetLog`, `jetPower`, `jetSin`, `jetCos`, `jetSinCos` | elementary functions |
+| `jetCompose(value, [f', f'', f'''], xJet)` | the chain rule, for a function known through its derivatives |
+| `wavelengthOmegaJet(lambda, omega)` | λ as a jet in ω, the usual starting point |
+| `jetRealPart(jet)` | the real part, order by order |
+| `jetWithImaginaryPart(realJet, imaginaryJet)` | a real jet and an imaginary jet combined into one complex jet |
+| `jetClampImaginary`, `jetClampRealMinimum`, `jetIsFinite` | guards |
 | `JET_ORDER` | 3 |
 
-`wavelengthOmegaJet` needs no value for $c$: given both $\lambda$ and $\omega$, every derivative follows from $\lambda' = -\lambda/\omega$. Its output is in whatever unit $\lambda$ was given in.
-
----
+`wavelengthOmegaJet` needs no value of $c$: given λ and ω, every derivative follows from $\lambda' = -\lambda/\omega$, in the unit λ was given in.
 
 ## WebAssembly
 
-Load the bytes, instantiate, then call methods on the returned instance. See [Getting started](getting-started.md#turning-on-webassembly) for setup.
+The C kernel compiled to WebAssembly, with the same calls. [Getting started](getting-started.md#turning-on-webassembly) shows how to load it in Node and in a browser.
 
-Polarization is an integer here: `0` for s, `1` for p.
+```js
+import { instantiateTmmWasm } from 'tmmcore';
 
-A method that takes a layer list takes it in the shape of the call it mirrors, `{ n, d }[]` or `{ nJet, d }[]` (and `baseLayers` of `monitorCurve` as `{ n, d }[]`), and throws the same `TypeError` on a layer without those keys.
+const wasm = await instantiateTmmWasm(bytes);   // bytes: the contents of tmm_kernel.wasm
+const { R } = wasm.rtaSpectrum(stack, wavelengths);
+```
 
-A kernel that cannot allocate its working state, which happens only when the WebAssembly heap is exhausted, writes `NaN` to every output of that call rather than a number, so the phase methods return `null` for both coefficients.
+The grid calls are where the speed is: they cross from JavaScript into WebAssembly per grid, not per wavelength. The loader is also its own entry point, `tmmcore/wasm`, for code that needs only the WebAssembly side.
 
-| Method | Mirrors |
+An instance is not shared between threads, since there is no shared memory. Each worker instantiates its own from the same bytes.
+
+### The instance
+
+| Method | |
 |---|---|
-| `tmmOne(lambda_nm, theta_deg, polCode, n0, ns, layers)` | `tmm` |
-| `tmmJacobian(lambda_nm, theta_deg, polCode, n0, ns, layers)` | `tmmThicknessJacobian` |
-| `tmmHessian(lambda_nm, theta_deg, polCode, n0, ns, layers)` | `tmmThicknessHessian` |
-| `tmmNeedleScan(lambda_nm, theta_deg, polCode, n0, ns, layers, candidateNs, intraFracs?)` | `tmmNeedleScan` |
-| `tmmPhaseOne(lambda_nm, theta_deg, polCode, n0Jet, nsJet, layers, options?)` | `tmmPhaseDispersion` |
-| `tmmPhaseJacobian(lambda_nm, theta_deg, polCode, n0Jet, nsJet, layers, options?)` | `tmmPhaseThicknessJacobian` |
-| `hasHessian()`, `hasPhase()`, `hasPhaseJacobianSpectrum()`, `hasGrowingKernels()`, `hasGrowingEval()` | Always `true`: a module missing any kernel is refused when it loads |
+| `rta`, `rtaSpectrum`, `jacobian`, `jacobianSpectrum`, `hessian`, `hessianSpectrum`, `phase`, `phaseSpectrum`, `phaseJacobian`, `phaseJacobianSpectrum` | the calls above, with the same arguments and results |
+| `jetConstant` … `jetIsFinite`, `wavelengthOmegaJet`, `omegaFromLambdaNm` | the jet arithmetic |
+| `tmmNeedleScan(lambda_nm, theta_deg, polCode, n0, ns, layers, candidateNs, intraFracs?)` | the [needle scan](#needle-scan), with the polarization as `0` for s or `1` for p |
+| `monitorCurve`, `depositionSpectra`, `growingEval` | [below](#monitoring-and-deposition) |
+| `hasHessian()`, `hasPhase()`, `hasPhaseJacobianSpectrum()`, `hasGrowingKernels()`, `hasGrowingEval()` | always `true`: a module missing a kernel is refused when it loads |
 
-### `tmmSpectrum(lambdas, n0List, nsList, layerNK, thick, theta_deg)`
+If the WebAssembly heap is exhausted, a call that cannot allocate memory for its arguments and results throws `Error('tmmWasm: malloc failed')`; the one-wavelength calls reuse theirs from call to call and need more only for a larger stack. A kernel that cannot allocate its own working state writes `NaN` to every output instead: numbers and arrays come back `NaN`, and `phase` and `phaseJacobian` return `null` for both coefficients. `depositionSpectra` and `growingEval` throw.
 
-Evaluates an entire wavelength grid for **both** polarizations in a single call. That is where the speed advantage comes from: it amortizes the JavaScript-to-WebAssembly boundary crossing, which otherwise dominates.
+### Loading
 
-| Argument | Shape |
+| | |
+|---|---|
+| `instantiateTmmWasm(bytes)` | instantiates from an `ArrayBuffer` or `Uint8Array`, and resolves to the instance |
+| `initTmmWasmFromUrl(url)` | fetches and instantiates. Resolves `true` or `false` and does not throw; a second call returns the first call's promise |
+| `getTmmWasm()` | the last instance loaded, or `null`. A failed `initTmmWasmFromUrl` also leaves it `null` |
+| `isTmmWasmReady()` | whether an instance is loaded |
+| `setTmmWasmEnabled(on)`, `isTmmWasmEnabled()` | a flag for whether to use the instance, off at first |
+| `tmmWasmActive()` | whether the flag is on and an instance is loaded |
+| `TmmWasmInstance` | the class of the instance |
+
+For workers that cannot fetch the file themselves, the main thread hands them its bytes:
+
+| | |
+|---|---|
+| `initTmmWasmMainThread(bytes, enabled)` | main thread: keeps the bytes for workers, then instantiates and turns the flag on if `enabled`, or turns it off if not. Resolves `true` when the flag is on |
+| `getTmmWasmBytesForWorker()` | main thread: the bytes to send a worker, or `null` while the flag is off |
+| `noteTmmWasmBytes(bytes)` | worker: starts instantiating from the bytes it was sent and turns its flag on; does nothing once an instance is loaded |
+| `awaitTmmWasmReady()` | worker: resolves when that instantiation ends, `true` if an instance is loaded |
+
+### Monitoring and deposition
+
+Methods of the instance, with their arguments one by one, each index as `[re, im]`, and results in both polarizations.
+
+#### `monitorCurve(lambda_nm, theta_deg, n0, ns, baseLayers, ngNK, dArr)`
+
+The signal of one layer growing on a completed stack, at one wavelength. The completed stack's matrix is built once, and each sample thickness then costs one 2×2 product, so a whole monitoring curve is one call: the incremental control algorithm of Tikhonravov and Trubetskov, *Appl. Opt.* **44**, 6877 (2005).
+
+| Argument | |
+|---|---|
+| `n0`, `ns` | `[re, im]` |
+| `baseLayers` | `{ n: [re, im], d }[]`, the completed stack, the layer facing the incident medium first |
+| `ngNK` | `[re, im]`, the growing layer |
+| `dArr` | `number[]`, thicknesses of the growing layer in nm |
+
+**Returns** `{ Rs, Ts, Rp, Tp, Rrs, Rrp }`, each a `Float64Array` over `dArr`: the reflectance and transmittance of the coated surface, and its reflectance seen from the substrate side. A caller that treats the substrate as a thick slab combines all three itself; for a semi-infinite substrate, $A = 1 - R - T$.
+
+#### `depositionSpectra(lambdas, n0List, nsList, layerNK, thick, theta_deg)`
+
+The spectrum after every layer of a deposition run, in one call. Each layer is added to the running product and the grid evaluated after it, so all N spectra together cost about what the last one costs alone.
+
+| Argument | |
 |---|---|
 | `lambdas` | `number[]` |
 | `n0List`, `nsList` | `[re, im][]`, one per wavelength |
-| `layerNK` | `[re, im][][]`, indexed `[layer][wavelength]` |
-| `thick` | `number[]`, length `N` |
+| `layerNK` | `[re, im][][]`, indexed `[layer][wavelength]`, the first layer deposited first |
+| `thick` | `number[]` of length N, in the same order; a zero thickness repeats the previous spectrum |
 
-**Returns** `{ Rs, Ts, As, Rp, Tp, Ap }`, each a `Float64Array` of grid length.
+**Returns** `{ Rs, Ts, Rp, Tp, Rrs, Rrp }`, each a `Float64Array` of N × nLam values, layer `k` and wavelength `i` at `[k * nLam + i]`.
 
-### `monitorCurve(lambda_nm, theta_deg, n0, ns, baseLayers, ngNK, dArr)`
+#### `growingEval(lambdas, n0List, nsList, layerNK, thick, theta_deg)`
 
-The signal of one layer growing on a completed stack, at one wavelength. The completed stack's characteristic matrix is built once and each sample thickness then costs one 2x2 multiply, so a whole monitoring curve is one call: the incremental control algorithm of Tikhonravov and Trubetskov, Appl. Opt. 44, 6877 (2005).
+A layer growing on a completed stack over a whole wavelength grid, one thickness per call: what a broadband monitor reads at each scan. The completed stack is multiplied out once for every wavelength and polarization and kept in kernel memory, so each sample costs one layer matrix and one 2×2 product per wavelength and polarization.
 
-| Argument | Shape |
-|---|---|
-| `n0`, `ns` | `[re, im]` |
-| `baseLayers` | `{ n: [re, im], d }[]`, the completed stack, outermost first |
-| `ngNK` | `[re, im]`, the growing layer |
-| `dArr` | `number[]`, sample thicknesses of the growing layer in nm |
-
-**Returns** `{ Rs, Ts, Rp, Tp, Rrs, Rrp }`, each a `Float64Array` over `dArr`: the forward reflectance and transmittance of the coated surface, and its reflectance seen from the substrate side, taken from the anti-transposed matrix. A caller that models the substrate as an incoherent slab feeds all three into its own combination; a semi-infinite caller forms A = 1 - R - T itself.
-
-### `depositionSpectra(lambdas, n0List, nsList, layerNK, thick, theta_deg)`
-
-The spectrum after every step of a deposition run, in one call. Layers arrive in deposition order, first deposited first; each is folded into the running product and the grid is evaluated after every fold, so all N step spectra together cost about what the final one costs alone. Arguments as `tmmSpectrum`, with `layerNK` and `thick` in deposition order; a zero thickness repeats the previous step.
-
-**Returns** `{ Rs, Ts, Rp, Tp, Rrs, Rrp }`, each a `Float64Array` of N x grid length, step-major: step k, wavelength i at `[k * nLam + i]`. Throws if the kernel could not allocate its working state, rather than returning unwritten memory.
-
-### `growingEval(lambdas, n0List, nsList, layerNK, thick, theta_deg)`
-
-The stateful counterpart of `monitorCurve`, batched the other way: one thickness of the growing layer per call, the whole wavelength grid at once. This is the shape a broadband monitor scan needs, where every scan reads a full spectrum of the growing stack and the layers beneath do not change until the layer is cut. The completed stack's products for every wavelength and polarization are folded once at creation and kept in kernel memory, so each sample costs one layer matrix, one 2x2 multiply and the tails per wavelength and polarization.
-
-Arguments as `tmmSpectrum`, with `layerNK` and `thick` the completed stack, outermost first; zero-thickness entries are skipped.
-
-**Returns a handle** owning kernel memory:
+The arguments are those of `depositionSpectra`, with `layerNK` and `thick` the completed stack, the layer facing the incident medium first; layers of zero thickness are skipped. **Returns a handle** that owns kernel memory:
 
 | | |
 |---|---|
-| `setTop(ngList)` | Declares the growing layer's `[re, im]` per wavelength. Call before the first `sample` with `d > 0`, and again to change the growing material. |
-| `sample(d, out?)` | `{ Rs, Ts, Rp, Tp, Rrs, Rrp }`, each a `Float64Array` of grid length, for the growing layer at thickness `d` nm (`d <= 0` is the bare completed stack). Pass the previous result as `out` to reuse its buffers in a scan loop. A `d > 0` sample before `setTop` throws rather than returning unwritten memory. |
-| `free()` | Releases the kernel state. A dropped handle is reclaimed by a finalizer eventually, but deterministic `free()` is what keeps a long run's footprint flat. `sample`/`setTop` after `free` throw. |
+| `setTop(ngList)` | sets the growing layer's `[re, im]` at each wavelength. Call it before the first `sample` with `d > 0`, and again to change the material |
+| `sample(d, out?)` | `{ Rs, Ts, Rp, Tp, Rrs, Rrp }` over the grid for the growing layer at thickness `d` nm; `d <= 0` gives the completed stack. Pass the previous result as `out` to reuse its arrays. Throws if called with `d > 0` before `setTop` |
+| `free()` | releases the kernel memory. A dropped handle is reclaimed by a finalizer in time, but calling `free()` keeps a long run's memory flat. `setTop` and `sample` throw after it |
 
-### `tmmPhaseSpectrum(lambdas, n0Jets, nsJets, layerJets, thick, theta_deg, polCode, options?)`
+## Edge cases
 
-The same amortization for the phase kernel, and the call worth reaching for first: this kernel is roughly an order of magnitude dearer per sample than the plain spectrum, so a per-wavelength boundary crossing hurts correspondingly more.
+### Grazing incidence and critical angles
 
-| Argument | Shape |
-|---|---|
-| `lambdas` | `number[]` |
-| `n0Jets`, `nsJets` | jet per wavelength |
-| `layerJets` | indexed `[layer][wavelength]` |
-| `thick` | `number[]`, length `N` |
+The angle of incidence runs up to and including 90°. $\cos\theta_0$ is taken directly rather than as $\sqrt{1 - \sin^2\theta_0}$, which keeps nothing of it near 90°, and a layer of the incident index keeps that cosine too. At 90° exactly $R$ is one and $T$ zero to rounding.
 
-| `options` | |
-|---|---|
-| `omegas` | `number[]`, one per wavelength. Defaults to $2\pi c/\lambda$ in rad/fs. |
-| `sinJets` | jet per wavelength, as `sinTheta0Jet` above |
+At a medium's critical angle to the last bit, $\cos\theta$ in it is exactly zero and the layer matrix as written is $0/0$. Its limit is finite and tmmcore uses it: the layer's matrix becomes linear in its thickness, and a substrate at its critical angle reflects everything. The derivative calls take the same limit. The phase calls do not; see [`phase`](#phase-gd-gdd-and-tod).
 
-**Returns** `{ r, t }`, each `{ phaseRad, gd, gdd, tod, magnitudeSquared }` of `Float64Array` at grid length. Samples where the coefficient vanishes hold `NaN`.
+### Opaque layers
 
-Unlike `tmmSpectrum` this takes one polarization rather than doing both, because the cost per sample is high enough that a caller at normal incidence, where s and p are identical, should not pay twice for the same numbers. Call it twice and average if you want the unpolarized answer.
+The imaginary part of a layer's phase thickness grows with its thickness, and $\cosh$ of it overflows, which would turn the whole matrix product into `NaN`. So the imaginary phase is held at 50 when the matrix is built. Past that point the held matrix is the true one divided by a real factor, $e^{|\mathrm{Im}\,\delta| - 50}$, to within $e^{-100}$ relative. The factor cancels from $r$ and from every phase, and tmmcore carries it as a log scale for $t$, so $T$ is right however opaque the layer, until it falls below about $10^{-308}$, the range of a double, and reads 0.
 
-### `tmmPhaseJacobianSpectrum(lambdas, n0Jets, nsJets, layerJets, thick, theta_deg, polCode, options?)`
+The hold depends on the phase, not on $k$. A thick absorbing layer reaches it, and so does a lossless one beyond the critical angle, where the wave in it is evanescent: an air gap of 10 µm under a glass prism at 70° is well past it.
 
-`tmmPhaseJacobian` at every wavelength of a grid in one call, for fitting a whole measured spectrum of phase-derived quantities: ellipsometric Ψ and Δ, or group delay. Arguments as `tmmPhaseSpectrum`.
+The derivatives include the factor, so $T$ falls with an opaque layer's thickness at the true rate, and $R$ does not move. In a deep stack the partial products outgrow the range of a double; each carries a power-of-two scale that cancels exactly from every derivative, so no wavelength drops to zero. A needle inside an opaque layer sees the field that is there: near the surface its derivatives are those of an ordinary layer, and deep inside $dR$ is zero while $dT$ keeps its value relative to $T$.
 
-**Returns** `{ r, t }`, each the five arrays of `tmmPhaseSpectrum` plus `dPhaseDeg`, `dGd`, `dGdd`, `dTod` and `dLogMagnitudeSquared` as `Float64Array` of length grid × `N`, the derivative for wavelength `i` and layer `k` at `[i * N + k]`.
+## The names of 0.4
 
-### Loader functions
+0.5.x keeps the names of 0.4 with their arguments and results. Each prints one warning on its first call, and 0.6.0 removes them.
 
-| | |
-|---|---|
-| `instantiateTmmWasm(bytes)` | Instantiate from an `ArrayBuffer`/`Uint8Array`. Async, returns the instance. |
-| `initTmmWasmFromUrl(url)` | Fetch and instantiate. Resolves `true`/`false`; **does not throw** on failure. |
-| `getTmmWasm()` | The current instance, or `null`. |
-| `setTmmWasmEnabled(on)` | Feature flag, default off. |
-| `isTmmWasmReady()`, `isTmmWasmEnabled()`, `tmmWasmActive()` | State queries. |
+| 0.4, module | 0.4, WebAssembly instance | 0.5 |
+|---|---|---|
+| `tmm` | `tmmOne` | `rta` |
+| | `tmmSpectrum` | `rtaSpectrum` |
+| `tmmThicknessJacobian` | `tmmJacobian` | `jacobian` |
+| `tmmThicknessHessian` | `tmmHessian` | `hessian` |
+| `tmmPhaseDispersion` | `tmmPhaseOne` | `phase` |
+| | `tmmPhaseSpectrum` | `phaseSpectrum` |
+| `tmmPhaseThicknessJacobian` | `tmmPhaseJacobian` | `phaseJacobian` |
+| | `tmmPhaseJacobianSpectrum` | `phaseJacobianSpectrum` |
+| `tmmCoefficientJets`, `tmmCoefficientThicknessJets`, `coefficientPhaseDispersion`, `coefficientPhaseThicknessDerivatives` | | none |
 
-Instances are not shared between threads, since there is no shared memory. Each worker instantiates its own from the same bytes.
+The one-wavelength names take `(lambda_nm, theta_deg, pol, n0, ns, layers)`, each index as `[re, im]` and the layers as `{ n, d }[]`, or in the phase names `{ nJet, d }[]` with the media as jets; the instance takes `pol` as `0` or `1`. The [0.4.2 API reference](https://github.com/aai2k/tmmcore/blob/0a432b7/docs/api.md) has them in full.
 
----
+The 0.5 phase calls take neither `omega`, which sets the time unit, nor `sinTheta0Jet`, the incident sine as a jet, for a stack in a dispersive medium at a fixed angle in another one. The 0.4 phase names still do.
 
 ## Low-level primitives
 
-Also exported, for building transfer-matrix variants on the same conventions. These are lower level than the functions above and correspondingly less stable across versions.
-
-Complex numbers are `[re, im]` pairs throughout.
+Exported for building transfer-matrix variants on the same conventions. These are lower level than the calls above and may change between versions. Complex numbers are `[re, im]` pairs.
 
 | | |
 |---|---|
-| `cadd`, `csub`, `cmul`, `cdiv` | Complex arithmetic |
-| `cabs2`, `cconj`, `csqrt`, `ccos`, `csin` | Modulus squared, conjugate, roots, trigonometry |
-| `creal`, `cimag` | Parts |
+| `cadd`, `csub`, `cmul`, `cdiv` | complex arithmetic |
+| `cabs2`, `cconj`, `csqrt`, `ccos`, `csin` | modulus squared, conjugate, square root, cosine and sine |
+| `creal`, `cimag` | the parts |
 | `matmul(A, B)` | 2×2 complex matrix product |
-| `cmatvec(M, v)` | 2×2 matrix times 2-vector |
-| `snellCosTheta(n0, sinTheta0, nj, cosTheta0?)` | Complex $\cos\theta$ in a medium, from the real invariant $\mathrm{Re}(n_0)\sin\theta_0$. Pass `cosTheta0`, `[cos θ0, 0]`, as `tmm()` does, and a medium whose index is close to the incident one keeps its cosine at grazing incidence |
-| `incidentCosTheta(n0, sinTheta0, cosTheta0?)` | $\cos\theta_0$ of the incident medium itself; its own cosine when it is transparent, from the same invariant when it absorbs |
-| `layerMatrix(nj, dj_nm, lambda_nm, cosTheta_j, pol)` | Characteristic matrix of one layer; its limit where `cosTheta_j` is exactly zero. Past the opaque-layer bound, the held matrix |
-| `layerLogScale(nj, dj_nm, lambda_nm, cosTheta_j)` | The log of the factor `layerMatrix` leaves out past the bound, 0 short of it |
-| `rescaleMatrix(M)` | Rescales in place past an overflow threshold; returns the accumulated log scale |
+| `cmatvec(M, v)` | 2×2 matrix times a 2-vector |
+| `snellCosTheta(n0, sinTheta0, nj, cosTheta0?)` | complex $\cos\theta$ in a medium, from the real invariant $\mathrm{Re}(n_0)\sin\theta_0$. Pass `cosTheta0` as `[cos θ0, 0]`, as `rta` does, and a medium with an index close to the incident one keeps its cosine at grazing incidence |
+| `incidentCosTheta(n0, sinTheta0, cosTheta0?)` | $\cos\theta_0$ of the incident medium itself: its own cosine when it is transparent, from the same invariant when it absorbs |
+| `layerMatrix(nj, dj_nm, lambda_nm, cosTheta_j, pol)` | the characteristic matrix of one layer; its limit where `cosTheta_j` is exactly zero, and past the [opaque-layer hold](#opaque-layers) the held matrix |
+| `layerLogScale(nj, dj_nm, lambda_nm, cosTheta_j)` | the log of the factor `layerMatrix` leaves out past the hold, 0 short of it |
+| `rescaleMatrix(M)` | rescales in place past an overflow threshold and returns the log scale it took out |
 
-`layerLogScale` and `rescaleMatrix` are what keep opaque stacks finite and their transmittance right. Both are real factors that cancel from reflectance but not from transmittance, so a caller building its own product adds both to one log scale and applies $e^{-2\,\text{logScale}}$ to T, as `tmm()` does. A field computed from a partial product carries its own log scale the same way.
+`layerLogScale` and `rescaleMatrix` keep opaque stacks finite and their transmittance right. Both are real factors that cancel from reflectance but not from transmittance, so a caller building its own product adds both to one log scale and multiplies T by $e^{-2\,\text{logScale}}$, as `rta` does. A field computed from a partial product carries its own log scale the same way.

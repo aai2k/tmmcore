@@ -1,5 +1,5 @@
 /**
- * Minimal SVG heat map — no dependencies.
+ * Minimal SVG heat map with no dependencies.
  *
  * Companion to _plot.mjs, for quantities that vary over two axes. Cells are
  * quantised to a fixed number of levels and then emitted as one <path> per

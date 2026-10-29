@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 380" width="720" height="380" font-family="system-ui, sans-serif" font-size="12">
+<text x="360" y="24" fill="#8b949e" font-size="14" text-anchor="middle">Mean reflectance rise from random thickness errors</text>
+<line x1="64" y1="328.0" x2="700" y2="328.0" stroke="#8b949e" stroke-opacity="0.18"/>
+<text x="56" y="332.0" fill="#8b949e" text-anchor="end">0</text>
+<line x1="64" y1="271.2" x2="700" y2="271.2" stroke="#8b949e" stroke-opacity="0.18"/>
+<text x="56" y="275.2" fill="#8b949e" text-anchor="end">0.04</text>
+<line x1="64" y1="214.4" x2="700" y2="214.4" stroke="#8b949e" stroke-opacity="0.18"/>
+<text x="56" y="218.4" fill="#8b949e" text-anchor="end">0.08</text>
+<line x1="64" y1="157.6" x2="700" y2="157.6" stroke="#8b949e" stroke-opacity="0.18"/>
+<text x="56" y="161.6" fill="#8b949e" text-anchor="end">0.12</text>
+<line x1="64" y1="100.8" x2="700" y2="100.8" stroke="#8b949e" stroke-opacity="0.18"/>
+<text x="56" y="104.8" fill="#8b949e" text-anchor="end">0.16</text>
+<line x1="64" y1="44.0" x2="700" y2="44.0" stroke="#8b949e" stroke-opacity="0.18"/>
+<text x="56" y="48.0" fill="#8b949e" text-anchor="end">0.2</text>
+<text x="64.0" y="348" fill="#8b949e" text-anchor="middle">0</text>
+<text x="191.2" y="348" fill="#8b949e" text-anchor="middle">1</text>
+<text x="318.4" y="348" fill="#8b949e" text-anchor="middle">2</text>
+<text x="445.6" y="348" fill="#8b949e" text-anchor="middle">3</text>
+<text x="572.8" y="348" fill="#8b949e" text-anchor="middle">4</text>
+<text x="700.0" y="348" fill="#8b949e" text-anchor="middle">5</text>
+<line x1="64" y1="328" x2="700" y2="328" stroke="#8b949e"/>
+<line x1="64" y1="44" x2="64" y2="328" stroke="#8b949e"/>
+<text x="382" y="368" fill="#8b949e" text-anchor="middle">standard deviation of the thickness errors, σ (nm)</text>
+<text x="16" y="186" fill="#8b949e" text-anchor="middle" transform="rotate(-90 16 186)">rise in mean R (%)</text>
+<path d="M64.00,328.00L70.36,327.98L76.72,327.92L83.08,327.81L89.44,327.67L95.80,327.48L102.16,327.25L108.52,326.97L114.88,326.66L121.24,326.30L127.60,325.91L133.96,325.47L140.32,324.99L146.68,324.46L153.04,323.90L159.40,323.29L165.76,322.64L172.12,321.95L178.48,321.22L184.84,320.44L191.20,319.63L197.56,318.77L203.92,317.87L210.28,316.93L216.64,315.95L223.00,314.92L229.36,313.85L235.72,312.74L242.08,311.59L248.44,310.40L254.80,309.16L261.16,307.89L267.52,306.57L273.88,305.21L280.24,303.81L286.60,302.36L292.96,300.88L299.32,299.35L305.68,297.78L312.04,296.17L318.40,294.51L324.76,292.82L331.12,291.08L337.48,289.30L343.84,287.48L350.20,285.62L356.56,283.72L362.92,281.77L369.28,279.78L375.64,277.75L382.00,275.68L388.36,273.57L394.72,271.41L401.08,269.21L407.44,266.97L413.80,264.69L420.16,262.37L426.52,260.00L432.88,257.60L439.24,255.15L445.60,252.66L451.96,250.13L458.32,247.55L464.68,244.94L471.04,242.28L477.40,239.58L483.76,236.84L490.12,234.05L496.48,231.23L502.84,228.36L509.20,225.45L515.56,222.50L521.92,219.51L528.28,216.47L534.64,213.40L541.00,210.28L547.36,207.12L553.72,203.92L560.08,200.67L566.44,197.39L572.80,194.06L579.16,190.69L585.52,187.28L591.88,183.83L598.24,180.33L604.60,176.79L610.96,173.22L617.32,169.59L623.68,165.93L630.04,162.23L636.40,158.48L642.76,154.69L649.12,150.86L655.48,146.99L661.84,143.08L668.20,139.12L674.56,135.13L680.92,131.09L687.28,127.01L693.64,122.88L700.00,118.72" fill="none" stroke="#2f81f7" stroke-width="2" stroke-linejoin="round"/>
+<line x1="550" y1="58" x2="574" y2="58" stroke="#2f81f7" stroke-width="2"/>
+<text x="580" y="62" fill="#8b949e">½σ² tr(H)</text>
+<path d="M64.00,328.00L127.60,325.91L191.20,319.62L318.40,294.52L445.60,252.78L572.80,194.52L700.00,119.96" fill="none" stroke="#d29922" stroke-width="2" stroke-linejoin="round" stroke-dasharray="5 4"/>
+<line x1="550" y1="76" x2="574" y2="76" stroke="#d29922" stroke-width="2" stroke-dasharray="5 4"/>
+<text x="580" y="80" fill="#8b949e">Monte Carlo</text>
+</svg>

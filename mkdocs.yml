@@ -56,7 +56,7 @@ markdown_extensions:
       permalink: true
 
 # Order matters. The hook calls renderMathInElement, which auto-render defines,
-# and document$ emits as soon as it is subscribed to — so the library must load
+# and document$ emits as soon as it is subscribed to, so the library must load
 # first. (Material's MathJax example puts the hook first because MathJax reads a
 # config object at load time; KaTeX is the opposite case.)
 extra_javascript:
@@ -71,6 +71,7 @@ nav:
   - Home: index.md
   - Getting started: getting-started.md
   - API reference: api.md
+  - Python: python.md
   - Examples: examples.md
   - Validation: validation.md
   - Comparison with other packages: comparison.md

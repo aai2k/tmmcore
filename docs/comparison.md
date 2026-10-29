@@ -1,45 +1,34 @@
 # Comparison with other packages
 
-Numbers below were measured on an AMD Ryzen 7 260 (8C/16T), Node 24.18, Python
-3.14.6, Windows 11. The harness lives in `benchmarks/`; the method and its known
-limitations are described there and summarised here.
-
-Two of the [caveats](#caveats) materially change what the figures mean.
+The timings below were measured with tmmcore 0.1.0 on an AMD Ryzen 7 260 (8 cores, 16 threads), Node 24.18, Python 3.14.6 and Windows 11, and have not been rerun since. The harness is in `benchmarks/`, and [its README](https://github.com/aai2k/tmmcore/blob/main/benchmarks/README.md) gives the method and its limits. Read the [caveats](#caveats) with the speed table.
 
 ## The packages
 
 | Package | Language | Notes |
 |---|---|---|
-| [`tmm`](https://github.com/sbyrnes321/tmm) (Byrnes) | Python + NumPy | The de-facto standard. Scalar in wavelength. Cited by most machine-learning-for-thin-films work. |
-| [`tmm_faster`](https://github.com/clembron/tmm_faster) | C++ core | Genuinely fast, float64. Multithreaded by default. |
+| [`tmm`](https://github.com/sbyrnes321/tmm) (Byrnes) | Python and NumPy | One wavelength per call. |
+| [`tmm_faster`](https://github.com/clembron/tmm_faster) | C++ core | float64, multithreaded by default. |
 | [`tmm_fast`](https://github.com/MLResearchAtOSRAM/tmm_fast) | PyTorch | Batched, GPU-capable, autograd. |
 | [`tmmax`](https://github.com/bahremsd/tmmax) | JAX | JIT and vmap. Bundles its own material database. |
-| **tmmcore** | JS / C / WASM | This package. |
+| **tmmcore** | JavaScript, C, WebAssembly | This package. |
 
 ## Method
 
-Every implementation reads the same precomputed file: one wavelength grid, one
-set of complex indices, one set of thicknesses. Dispersion evaluation and
-material lookup therefore sit **outside** the timed region, so what is measured
-is the transfer-matrix core alone and nothing else.
+Every implementation reads the same precomputed file: one wavelength grid, one set of complex indices, one set of thicknesses. Dispersion and material lookup sit **outside** the timed region, so only the transfer-matrix calculation is timed.
 
-One "spectrum" means every wavelength on the grid for **both** polarizations,
-the unit an optimizer evaluates thousands of times per design.
+One spectrum is every wavelength of the grid in both polarizations.
 
-Stacks are 4-, 7-, 21- and 40-layer; the 7-layer contains absorbing silver.
-Grids are 400–1100 nm at 10 nm (71 points) and at 1 nm (701 points).
+The stacks have 4, 7, 21 and 40 layers; the 7-layer stack contains absorbing silver. The grids are 400-1100 nm at 10 nm (71 points) and at 1 nm (701 points).
 
 ## Accuracy
 
-Reproducible with Node alone, since Byrnes' outputs are committed and no Python
-is needed:
+Byrnes' outputs are committed, so this needs only Node:
 
 ```bash
 npm run compare
 ```
 
-Maximum absolute difference in R and T against Byrnes, over the whole grid, both
-polarizations:
+Largest absolute difference in R and T from Byrnes, over the whole grid, both polarizations:
 
 | Case | `tmm_faster` | tmmcore (JS and WASM) |
 |---|--:|--:|
@@ -52,13 +41,13 @@ polarizations:
 | 7-layer with Ag, 701 pts | 3.6e-15 | 3.1e-15 |
 | 40-layer, 701 pts | 1.8e-14 | 8.6e-14 |
 
-Every case is lit from air. An absorbing incident medium has no cross-library reference here: Byrnes' `tmm` asserts that $n_0 \sin\theta_0$ is real and refuses a complex $n_0$ at a real angle. tmmcore evaluates that case from the real invariant $\mathrm{Re}(n_0)\sin\theta_0$ and checks it against an exact energy identity instead; see [Validation](validation.md).
+Every case is lit from air. An absorbing incident medium has no cross-library reference here: Byrnes' `tmm` asserts that $n_0 \sin\theta_0$ is real and refuses a complex $n_0$ at a real angle. tmmcore evaluates that case from the real invariant $\mathrm{Re}(n_0)\sin\theta_0$ and checks it against an exact energy identity instead; see [Validation](validation.md#an-absorbing-incident-medium).
 
-tmmcore and `tmm_faster` both agree with Byrnes at the level of float64 accumulation noise. The other two cannot: **both `tmm_fast` and `tmmax` are single precision**. `tmm_fast` casts internally regardless of the dtype you hand it; `tmmax` runs on JAX with `jax_enable_x64` left at its default of false. Both are fine for generating machine-learning training data. Neither is suitable as an accuracy reference, and neither can be checked against one.
+tmmcore and `tmm_faster` agree with Byrnes to float64 round-off. `tmm_fast` and `tmmax` agree only to about $10^{-7}$ whatever dtype they are given, the size of single-precision round-off; `tmmax` runs on JAX, which computes in single precision unless `jax_enable_x64` is set. So neither can serve as an accuracy reference.
 
 ## Speed
 
-Single-threaded, best-of-N, one full spectrum, in milliseconds. Lower is better.
+Single-threaded, best of N runs, one spectrum, in milliseconds. Lower is better.
 
 | Case | byrnes | tmm_fast | tmmax | tmm_faster | tmmcore JS | **tmmcore WASM** |
 |---|--:|--:|--:|--:|--:|--:|
@@ -71,52 +60,27 @@ Single-threaded, best-of-N, one full spectrum, in milliseconds. Lower is better.
 | 7-layer Ag, 701 pts | 109.5 | 33.06 | 12.85 | 1.466 | 9.591 | **0.619** |
 | 40-layer, 701 pts | 434.3 | 47.27 | 32.62 | 8.366 | 52.05 | **3.182** |
 
-As speedup factors, single-threaded:
-
-| Against | tmmcore WASM is |
-|---|---|
-| `tmm` (Byrnes) | 136–215× faster |
-| `tmm_fast` (PyTorch) | 15–192× faster |
-| `tmmax` (JAX) | 10–300× faster |
-| `tmm_faster` (C++) | 2.0–2.7× faster |
-
 ## Caveats
 
-!!! warning "Threading: tmmcore is not the fastest TMM library"
+!!! warning "Threading"
 
-    `tmm_faster` is **multithreaded by default**, measured at a cpu/wall ratio
-    of 13–15 on a 16-thread machine. In default configuration it *beats*
-    tmmcore on large problems: 1.27 ms against 3.18 ms on the 40-layer,
-    701-point case.
-
-    The 2.0–2.7× advantage above is **per core**, with `OMP_NUM_THREADS=1`. That is the honest comparison of the code itself, and it is the relevant one when you parallelize at a level above the kernel. "Fastest TMM library" is not a claim this data supports, and it is not one made here.
+    `tmm_faster` is multithreaded by default, at a cpu/wall ratio of 13 to 15 on this 16-thread machine, and in that configuration it is faster than tmmcore on large problems: 1.27 ms against 3.18 ms on the 40-layer, 701-point case. The table above pins it to one thread, where tmmcore's WebAssembly is 2.0 to 2.7 times faster.
 
 !!! warning "Batching"
 
-    The vectorized libraries exist to evaluate many stacks at once. tmmcore has no batch entry point and simply loops. It still wins single-threaded on 128 distinct stacks (45.9 ms against 82.9 ms for `tmm_faster` and 209.8 ms for `tmm_fast`, on the 40-layer case). On a GPU with a large enough batch, `tmm_fast` and `tmmax` would pull ahead, and **that case was not measured**.
+    The vectorized libraries exist to evaluate many stacks at once. tmmcore has no batch call and loops. Single-threaded on 128 different 40-layer stacks it takes 45.9 ms, against 82.9 ms for `tmm_faster` and 209.8 ms for `tmm_fast`. On a GPU with a large enough batch, `tmm_fast` and `tmmax` would pull ahead, and **that case was not measured**.
 
-Further points of fairness, carried from the harness notes:
+From the harness notes:
 
-- `coh_tmm` also returns `vw_list`, `kz_list`, `r`, `t` and `power_entering`,
-  strictly more than R and T, with no cheaper entry point available in its API.
-- Byrnes must be fed Python `complex`, not NumPy scalars; `coh_tmm` is markedly
-  slower on `np.complex128` elements, which would have flattered every other
-  contender.
-- `tmmax` reads materials from its own bundled database rather than accepting
-  explicit n,k, so its timing includes an interpolation the others do not
-  perform.
-- A control run confirms the Python driver loop is under 1% of total time, so
-  the Byrnes figures measure the library rather than the harness.
+- `coh_tmm` also returns `vw_list`, `kz_list`, `r`, `t` and `power_entering`, more than R and T, and its API has no cheaper call.
+- Byrnes' `tmm` must be given Python `complex`, not NumPy scalars; `coh_tmm` is much slower on `np.complex128` elements, which would have favoured every other package.
+- `tmmax` reads materials from its own database rather than taking n and k, so its timing includes an interpolation the others do not do.
+- A control run puts the Python driver loop under 1% of the total time, so the Byrnes figures time the library rather than the harness.
 
 ## What the others do that tmmcore does not
 
-- `tmm` (Byrnes) handles incoherent layers, ellipsometric parameters, and
-  absorption per layer. It is a far broader package, and it is the reference the
-  whole field is built on.
-- `tmm_fast` and `tmmax` offer autograd through the whole calculation, not just
-  thickness derivatives, and run on GPUs.
-- `tmmax` ships a 35-material database, so you can compute something without
-  supplying n,k at all.
+- `tmm` (Byrnes) handles incoherent layers, ellipsometric parameters and absorption per layer.
+- `tmm_fast` and `tmmax` differentiate through the whole calculation, not only in the thicknesses, and run on GPUs.
+- `tmmax` ships a 35-material database, so it computes without being given n and k.
 
-tmmcore is deliberately narrow: the kernel, exact thickness derivatives, and
-nothing else.
+The [examples](examples.md) build an incoherent back side and ellipsometric $\Psi$ and $\Delta$ on tmmcore's calls.

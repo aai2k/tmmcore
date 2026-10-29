@@ -25,7 +25,7 @@ import tmmcore
 stack = {"incident": 1.0, "substrate": 1.52,
          "layers": [{"n": 1.38, "d": 550 / (4 * 1.38)}]}   # d in nm
 
-print(tmmcore.rta(stack, 550, pol="s")["R"])   # 0.012600790214630274
+print(tmmcore.rta(stack, 550)["R"])   # 0.012600790214630274
 ```
 
 Layers run from the incident medium toward the substrate. In `rta_spectrum` any n or k can be one value per wavelength. A quarter-half-quarter antireflection coating on BK7-like glass (Macleod, *Thin-Film Optical Filters* 5th ed., ch. 4), with Cauchy indices:
@@ -58,7 +58,7 @@ print(f"{coated['R'].mean():.2%}")   # 0.25%, against 4.25% for bare glass
 | `phase_jacobian`, `phase_jacobian_spectrum` | the same, and their thickness derivatives |
 | `jet_*`, `wavelength_omega_jet`, `omega_from_lambda_nm` | Taylor-jet arithmetic, which builds the dispersive indices the phase calls take |
 
-Each call takes the stack, then one wavelength or, in a `_spectrum` call, an array of them. `angle` and `pol` are keyword arguments. `angle` is the angle of incidence, 0 when left out, and in a `_spectrum` call may be one angle per wavelength. `pol` is `"s"`, `"p"` or `"avg"` (the default, the mean of the two) in the R/T and derivative calls, and `"s"` or `"p"` in the phase calls, where it must be given. Results are dicts. At one wavelength the values are numbers and each derivative an array with one value per layer; over a grid every value is a numpy array. The phase calls return one dict for r and one for t, and at one wavelength None for a coefficient that is exactly zero.
+Each call takes the stack, then one wavelength or, in a `_spectrum` call, an array of them. `angle` and `pol` are keyword arguments. `angle` is the angle of incidence, 0 when left out, and in a `_spectrum` call may be one angle per wavelength. `pol` is `"s"`, `"p"` or `"avg"` (the default, the mean of the two) in the R/T and derivative calls, and `"s"` or `"p"` in the phase calls, where it must be given. Results are dicts. At one wavelength the values are numbers, each first derivative an array with one value per layer and each second derivative an (N, N) array; over a grid each gains a leading wavelength axis. The phase calls return one dict for r and one for t, and at one wavelength None for a coefficient that is exactly zero.
 
 ## Conventions
 
@@ -68,9 +68,9 @@ Each call takes the stack, then one wavelength or, in a `_spectrum` call, an arr
 | Time factor | exp(−iωt), so a wave exp(i(kz − ωt)) decays for k > 0 |
 | p-polarized amplitudes | from the tilted admittance n/cos θ, so r_p = r_s at normal incidence |
 | Wavelength, thickness | nanometres |
-| Angle | degrees from normal |
+| Angle of incidence | degrees from normal |
 | Phase | radians, in Macleod's sign convention; GD, GDD and TOD in fs, fs² and fs³ |
-| Layer order | incident medium → substrate |
+| Layer order | incident medium first, substrate last |
 
 ## Agreement with the npm package
 

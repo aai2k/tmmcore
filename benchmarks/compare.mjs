@@ -10,11 +10,11 @@
  * between the two implementations is the transfer-matrix mathematics itself.
  * The cases run at normal incidence and at 30° and 60°, where s and p part.
  *
- * R and T are compared from tmm(), and the complex reflection coefficients from
- * the phase kernel, which reports r as |r|² and its phase. r_s agrees as it
- * stands. r_p is compared with its sign reversed: Byrnes follows the Fresnel
- * convention, r_p = −r_s at normal incidence, and tmmcore the tilted
- * admittances n/cosθ, r_p = r_s there (Macleod 5th ed., §9.7.1, Eq. 9.36).
+ * R and T are compared from rta(), and the complex reflection coefficients from
+ * phase(), which reports r as |r|² and its phase. r_s agrees as it stands. r_p
+ * is compared with its sign reversed: Byrnes follows the Fresnel convention,
+ * r_p = −r_s at normal incidence, and tmmcore the tilted admittances n/cosθ,
+ * r_p = r_s there (Macleod 5th ed., §9.7.1, Eq. 9.36).
  *
  * Byrnes' outputs are committed in reference_byrnes.json so this runs with no
  * Python installed. If you would rather not trust a committed file, which is
@@ -26,9 +26,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { tmm } from '../src/js/rta.js';
-import { tmmPhaseDispersion } from '../src/js/phase.js';
-import { jetConstant } from '../src/js/jet.js';
+import { rta, phase } from '../src/js/index.js';
 import { instantiateTmmWasm } from '../src/wasm/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -53,6 +51,9 @@ const coefficient = side => {
 };
 const distance = ([a, b], [c, d]) => Math.hypot(a - c, b - d);
 
+// An index as the stack takes it, from the [re, im] pair cases.json stores.
+const nk = ([n, k]) => ({ n, k });
+
 const rows = [];
 let worstAll = 0;
 let worstR = 0;
@@ -66,31 +67,30 @@ for (const c of cases.cases) {
 
     for (let i = 0; i < c.lambdas.length; i++) {
         const lam = c.lambdas[i];
-        const n0 = c.n0[i], ns = c.ns[i];
         // layerNK is [layer][lambda] = [re, im]
-        const layers = Array.from({ length: N }, (_, k) => ({
-            n: c.layerNK[k][i], d: c.thick[k],
-        }));
-        const jetLayers = layers.map(({ n, d }) => ({ nJet: jetConstant(n[0], n[1]), d }));
+        const stack = {
+            incident: nk(c.n0[i]),
+            substrate: nk(c.ns[i]),
+            layers: Array.from({ length: N }, (_, k) => ({ ...nk(c.layerNK[k][i]), d: c.thick[k] })),
+        };
 
-        for (const [pol, code, Rref, Tref, rref, sign] of [
-            ['s', 0, r.Rs[i], r.Ts[i], r.rs[i], 1],
-            ['p', 1, r.Rp[i], r.Tp[i], r.rp[i], -1],
+        for (const [pol, Rref, Tref, rref, sign] of [
+            ['s', r.Rs[i], r.Ts[i], r.rs[i], 1],
+            ['p', r.Rp[i], r.Tp[i], r.rp[i], -1],
         ]) {
-            const js = tmm(lam, c.theta_deg, pol, n0, ns, layers);
-            worstJS = Math.max(worstJS, Math.abs(js.R - Rref), Math.abs(js.T - Tref));
+            const options = { angle: c.theta_deg, pol };
             const expected = [sign * rref[0], sign * rref[1]];
-            const phase = tmmPhaseDispersion(lam, c.theta_deg, pol,
-                jetConstant(n0[0], n0[1]), jetConstant(ns[0], ns[1]), jetLayers);
-            worstCoefficient = Math.max(worstCoefficient, distance(coefficient(phase.r), expected));
+
+            const js = rta(stack, lam, options);
+            worstJS = Math.max(worstJS, Math.abs(js.R - Rref), Math.abs(js.T - Tref));
+            worstCoefficient = Math.max(worstCoefficient,
+                distance(coefficient(phase(stack, lam, options).r), expected));
 
             if (kernel) {
-                const wa = kernel.tmmOne(lam, c.theta_deg, code, n0, ns, layers);
+                const wa = kernel.rta(stack, lam, options);
                 worstWA = Math.max(worstWA, Math.abs(wa.R - Rref), Math.abs(wa.T - Tref));
-                const waPhase = kernel.tmmPhaseOne(lam, c.theta_deg, code,
-                    jetConstant(n0[0], n0[1]), jetConstant(ns[0], ns[1]), jetLayers);
                 worstCoefficient = Math.max(worstCoefficient,
-                    distance(coefficient(waPhase.r), expected));
+                    distance(coefficient(kernel.phase(stack, lam, options).r), expected));
             }
         }
     }

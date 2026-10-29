@@ -6,85 +6,81 @@
 npm install tmmcore
 ```
 
-The WebAssembly binary ships prebuilt. Nothing is compiled at install time and
-no toolchain is required.
+The WebAssembly binary ships prebuilt, so nothing is compiled at install time. For Python, `pip install tmmcore`; see [Python](python.md).
 
 ## Conventions
 
-Mismatched conventions are the single most common reason two transfer-matrix
-codes disagree, and the disagreement looks like a bug in one of them until
-someone checks.
+Check these before comparing results with another code.
 
 | | |
 |---|---|
 | Refractive index | $\tilde n = n + ik$, with $k \ge 0$ for absorbing media |
 | Time factor | $\exp(-i\omega t)$, so a wave $\exp(i(kz - \omega t))$ decays for $k > 0$ |
 | p-polarized amplitudes | from the tilted admittance $n/\cos\theta$, so $r_p = r_s$ at normal incidence |
-| Wavelength | nanometres |
-| Thickness | nanometres |
+| Wavelength, thickness | nanometres |
 | Angle of incidence | degrees from normal |
-| Complex numbers | `[re, im]` pairs |
+| Complex numbers | `[re, im]` pairs, in jets and the primitives |
 | Layer order | incident medium first, substrate last |
-| Absorbing incident medium | every angle follows from the real invariant $n_0 \sin\theta_0$, with $n_0$ the real part of the index (Macleod §10.2); the incident wave decays along the normal only, and $A$ is what the layers absorb, so $R + T + A$ is not one |
+| Absorbing incident medium | every angle follows from the real invariant $n_0 \sin\theta_0$, with $n_0$ the real part of the index; the incident wave decays along the normal only, and $A$ is what the layers absorb, so $R + T + A$ is not one |
 
-This is the complex conjugate of the convention in Macleod's *Thin-Film Optical Filters* ($\tilde n = n - ik$, $\exp(+i\omega t)$). Reflectance, transmittance and absorptance are identical under conjugation. Phase-sensitive quantities are not, so mind the sign if you compute phase from these results.
+This is the complex conjugate of the convention in Macleod's *Thin-Film Optical Filters* ($\tilde n = n - ik$, $\exp(+i\omega t)$). Reflectance, transmittance and absorptance are the same under conjugation. Phase is not: the phase calls report it in Macleod's convention, as [Units and signs](api.md#units-and-signs) explains.
 
 The p amplitudes follow thin-film practice, as Macleod's do, rather than the Fresnel coefficients of Born and Wolf. Byrnes' `tmm` takes the Fresnel sign, and the ellipsometric convention flips the reflected p direction to the same effect: $r_p = -r_s$ at normal incidence. Their $r_p$ is the negative of tmmcore's at every angle, and a $\Delta$ from $r_p/r_s$ differs by 180°. Macleod amends $\Delta$ by $\pm\pi$ in reflection for this reason (§9.7.1, Eq. 9.36). The [cross-library check](validation.md#against-an-independent-implementation) compares both coefficients with Byrnes' at 0°, 30° and 60°.
 
 !!! warning "k is positive for loss"
 
-    Some codes and datasets use $\tilde n = n - ik$. Feeding a negative $k$ to
-    tmmcore describes a **gain** medium, which will produce transmittance above
-    one rather than an error.
+    Some codes and datasets use $\tilde n = n - ik$. A negative $k$ given to tmmcore describes a **gain** medium, which gives transmittance above one rather than an error.
 
 ## Describing a stack
 
-A layer is `{ n: [re, im], d }`. A stack is an array of them, ordered from the
-incident medium toward the substrate.
+A stack is the incident medium, the substrate and the layers between them, ordered from the incident medium toward the substrate. A layer is `{ n, k, d }`, with `k` left out when it is 0.
 
 ```js
-const layers = [
-    { n: [1.38, 0],      d: 92.4 },    // outermost, facing the incident medium
-    { n: [2.20, 0],      d: 115.9 },
-    { n: [1.70, 0],      d: 75.0 },    // innermost, against the substrate
-];
+import { rta } from 'tmmcore';
+
+const stack = {
+    incident: 1,
+    substrate: 1.52,
+    layers: [
+        { n: 1.38, d: 92.4 },    // outermost, facing the incident medium
+        { n: 2.20, d: 115.9 },
+        { n: 1.70, d: 75.0 },    // innermost, against the substrate
+    ],
+};
+
+const { R, T, A } = rta(stack, 550);
 ```
 
-The incident medium and substrate are passed separately, as bare `[re, im]`
-pairs, since they are semi-infinite and have no thickness.
+The incident medium and the substrate are semi-infinite and have no thickness: each is a number, or `{ n, k }` when it absorbs.
 
-Dispersion is your responsibility: tmmcore takes the index **at the wavelength you are evaluating**. Evaluating a spectrum means recomputing each layer's index per wavelength.
+tmmcore has no material data: give it the index at the wavelengths you evaluate. Over a grid, any `n` or `k` can be a list with one value per wavelength.
 
 ```js
-const nSiO2 = lam => [1.46 + 3000 / (lam * lam), 0];
+import { rtaSpectrum } from 'tmmcore';
 
-for (const lam of wavelengths) {
-    const layers = design.map(({ mat, d }) => ({ n: mat(lam), d }));
-    const { R } = tmm(lam, 0, 's', [1, 0], substrate(lam), layers);
-}
+const wavelengths = [450, 500, 550, 600, 650];
+const nSiO2 = lam => 1.46 + 3000 / (lam * lam);   // a Cauchy formula, lam in nm
+
+const layers = [{ n: wavelengths.map(nSiO2), d: 94.2 }];
+const { R } = rtaSpectrum({ incident: 1, substrate: 1.52, layers }, wavelengths);
 ```
 
-Keeping material data out of the kernel is what makes the comparison against
-other packages meaningful. The same numbers go into every implementation, so
-only the mathematics differs.
+## Polarization
 
-## Unpolarized light
-
-There is no `'unpolarized'` option. Compute both and average:
+`pol` is `'s'`, `'p'`, or `'avg'`, the mean of the two, which is natural light. The R/T and derivative calls take `'avg'` when it is left out:
 
 ```js
-const s = tmm(lam, theta, 's', n0, ns, layers);
-const p = tmm(lam, theta, 'p', n0, ns, layers);
-const R = (s.R + p.R) / 2;
+rta(stack, 550, { angle: 45 }).R;              // natural light
+rta(stack, 550, { angle: 45, pol: 's' }).R;
 ```
 
-At normal incidence the two are identical, so this costs nothing to write and
-stays correct when you change the angle.
+`rtaSpectrum` returns `Rs` and `Rp` beside `R`, so one call gives all three.
+
+The phase calls take `'s'` or `'p'`, and `pol` must be given.
 
 ## Turning on WebAssembly
 
-The JavaScript path works immediately. WebAssembly is opt-in: load the bytes,
-instantiate, and call methods on the instance.
+The JavaScript works on import. WebAssembly is opt-in: load the bytes, instantiate, and call the same names on the instance.
 
 === "Node"
 
@@ -98,34 +94,29 @@ instantiate, and call methods on the instance.
         readFileSync(require.resolve('tmmcore/tmm_kernel.wasm'))
     );
 
-    // polarization is 0 for s, 1 for p
-    const { R, T, A } = kernel.tmmOne(550, 0, 0, [1, 0], [1.52, 0], layers);
+    const { R, T, A } = kernel.rta(stack, 550);
     ```
 
 === "Browser"
 
     ```js
-    import { initTmmWasmFromUrl, getTmmWasm, tmm } from 'tmmcore';
+    import { initTmmWasmFromUrl, getTmmWasm, rta } from 'tmmcore';
 
-    // Resolves false if the asset is missing or instantiation fails; it does
-    // not throw, so that a deployment problem degrades to the JS path instead
-    // of breaking the page.
+    // Resolves false, without throwing, if the file is missing or fails to load.
     const ok = await initTmmWasmFromUrl('/tmm_kernel.wasm');
 
-    const { R } = ok
-        ? getTmmWasm().tmmOne(550, 0, 0, [1, 0], [1.52, 0], layers)
-        : tmm(550, 0, 's', [1, 0], [1.52, 0], layers);
+    const { R } = ok ? getTmmWasm().rta(stack, 550) : rta(stack, 550);
     ```
 
     Your bundler must serve `tmm_kernel.wasm` as a static asset.
 
-Instances are not shared between threads, since there is no shared memory. Each
-worker instantiates its own from the same bytes.
+Instances are not shared between threads, since there is no shared memory. Each worker instantiates its own from the same bytes.
 
-For a whole spectrum, `tmmSpectrum` evaluates every wavelength and both polarizations in one call. That is where the speed advantage comes from: it amortizes the JavaScript-to-WebAssembly boundary crossing.
+On the instance, a `Spectrum` call crosses from JavaScript into WebAssembly per grid rather than per wavelength. That is where the speed is.
 
 ## Next
 
-- [API reference](api.md), every function and what it returns
-- [Examples](examples.md), runnable scripts including optimization with the analytic Jacobian
-- [Validation](validation.md), how to reproduce the accuracy claims
+- [API reference](api.md), every call and what it returns
+- [Examples](examples.md), runnable scripts from a single layer to a needle scan
+- [Python](python.md), the same calls from Python
+- [Validation](validation.md), how to rerun the accuracy checks
