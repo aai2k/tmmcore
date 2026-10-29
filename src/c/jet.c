@@ -6,7 +6,7 @@
 #include "tmm_internal.h"
 
 /* ── Exported: Taylor-jet arithmetic over a grid ─────────────────────────────
- * The arithmetic of taylorJet.js, one operation applied to `count` jets per
+ * The arithmetic of src/js/jet.js, one operation applied to `count` jets per
  * call, so a caller in another language builds the index jet of a dispersion
  * formula over a whole wavelength grid in a handful of calls. A jet is 8
  * doubles, [re, im] for each of [f, f', f''/2!, f'''/3!]; a grid of jets is
@@ -128,7 +128,7 @@ void tmm_jet_divide(const double *numerator, const double *denominator, int coun
         jwrite(&out[8L * i], jdiv(jread(&numerator[8L * i]), jread(&denominator[8L * i])));
 }
 
-/* The order-0 root is csqrt_, tmm.js's csqrt; taylorJet.js forms the modulus
+/* The order-0 root is csqrt_, csqrt of primitives.js; jet.js forms the modulus
  * with Math.hypot, so the two agree to round-off rather than bit for bit while
  * |f| lies between about 1e-154 and 1e154. Outside that range the re² + im² of
  * csqrt_ underflows or overflows where hypot does not. A refractive index or a

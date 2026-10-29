@@ -24,7 +24,7 @@
 import {
     C_NM_PER_FS, omegaFromLambdaNm, tmmPhaseDispersion, tmmPhaseThicknessJacobian,
     jetAdd, jetConstant, jetMultiply, jetReciprocal, jetScale, wavelengthOmegaJet,
-} from '../src/index.js';
+} from '../src/js/index.js';
 
 // ── Building an index jet ────────────────────────────────────────────────────
 // n(λ) = A + B/λ², composed through the jet arithmetic. Nothing here is

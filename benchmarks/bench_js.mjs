@@ -16,12 +16,12 @@
 import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { tmm } from '../src/tmm.js';
-import { instantiateTmmWasm } from '../src/tmmWasm.js';
+import { tmm } from '../src/js/rta.js';
+import { instantiateTmmWasm } from '../src/wasm/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-const wasmPath = join(HERE, '..', 'src', 'tmm_kernel.wasm');
+const wasmPath = join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm');
 if (!existsSync(wasmPath)) {
     console.error('tmm_kernel.wasm not found — build it with `npm run build:wasm`.');
     process.exit(1);

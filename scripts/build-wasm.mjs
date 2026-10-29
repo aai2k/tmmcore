@@ -1,13 +1,13 @@
 /**
- * Build src/tmm_kernel.wasm with Emscripten, then check that the module uses
- * no WebAssembly feature Chromium 108 lacks.
+ * Build src/wasm/tmm_kernel.wasm with Emscripten, then check that the module
+ * uses no WebAssembly feature Chromium 108 lacks.
  *
  * Chromium 108 is the engine of Electron 22, the last Electron that runs on
  * Windows 7. A newer Emscripten can start emitting newer instructions without
  * any change to the C, so the build validates the output with wasm-opt under
  * the features listed below, all of which Chromium 108 shipped, and fails if it
  * does not validate. The module is built under build/ and replaces
- * src/tmm_kernel.wasm only once it passes.
+ * src/wasm/tmm_kernel.wasm only once it passes.
  *
  * The exported functions are the `export_name` attributes in the sources under
  * src/c; only the allocator is listed here. The sources are compiled together
@@ -25,7 +25,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BUILT = 'build/tmm_kernel.wasm';
-const OUTPUT = 'src/tmm_kernel.wasm';
+const OUTPUT = 'src/wasm/tmm_kernel.wasm';
 const WINDOWS = process.platform === 'win32';
 
 const SOURCES = ['rta.c', 'growing.c', 'derivatives.c', 'phase.c', 'jet.c'].map(file => `src/c/${file}`);

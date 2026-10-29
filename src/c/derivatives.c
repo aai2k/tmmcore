@@ -7,7 +7,7 @@
 #include "tmm_internal.h"
 
 /* ── Shared pieces of the derivative kernels ─────────────────────────────────
- * Port of the section of the same name in tmm.js. Every prefix
+ * Port of the section of the same name in src/js/derivatives.js. Every prefix
  * Pre[j] = M_0·…·M_{j−1} and suffix Post[j] = M_j·…·M_{N−1}·[1, ηs] is stored
  * as a mantissa times 2^e with the integer e kept alongside; a power of two
  * scales a double exactly, and every derivative, one prefix times one suffix
@@ -40,7 +40,7 @@ static int rescaleVec(vec2 *v) {
 }
 
 /* The pair (P, S) = (Q/η, Qη) of a medium, at its critical-angle limit where
- * cosθ = 0. Mirrors generator in tmm.js. */
+ * cosθ = 0. Mirrors generator in derivatives.js. */
 static inline generator_t generatorOf(cx nj, cx cosTheta, cx Q, double k0, int pol) {
     if (atCriticalAngle(cosTheta)) return criticalGenerator(nj, k0, pol);
     cx eta = layerAdmittance(nj, cosTheta, pol);
@@ -57,7 +57,7 @@ static inline generator_t generatorOf(cx nj, cx cosTheta, cx Q, double k0, int p
  * dδ/dd in full: past the bound the held matrix times e^{excess} moves with d
  * as the true one does, and Q with the held δ is its derivative. `logScale`
  * sums the excesses, which t carries. Mirrors derivativeLayer and
- * derivativeStack in tmm.js. */
+ * derivativeStack in derivatives.js. */
 typedef struct {
     int N;
     double k0;
@@ -233,7 +233,7 @@ static inline mat2 layerMatrixDerivative(cx delta, cx Q, generator_t G) {
 }
 
 /* ── Exported: analytic thickness Jacobian for one (λ, θ, pol) ────────────────
- * Port of the thickness Jacobian in tmm.js. Returns the exact analytic
+ * Port of the thickness Jacobian in derivatives.js. Returns the exact analytic
  * dR/dd_k, dT/dd_k, dA/dd_k for every layer at one sample.
  *
  * `layers` is N triples [n_re, n_im, d] used as given (see deriv_stack).
@@ -309,7 +309,7 @@ void tmm_jacobian_spectrum(const double *lambdas, int nLam,
 }
 
 /* ── Analytic needle P-function scan ─────────────────────────────────────────
- * Port of the needle scan in tmm.js : the d→0 limit of
+ * Port of the needle scan in derivatives.js : the d→0 limit of
  * Sullivan's pre/post method (Tikhonravov's analytic P-function). Returns the
  * merit-gradient ingredients {dR,dT,dA} of inserting an infinitesimal needle of
  * each candidate index at every gap position (0..N) and, optionally, at intra-
@@ -474,7 +474,7 @@ static inline mat2 layerMatrixSecondDerivative(cx delta, cx Q, generator_t G) {
 /* d²R, d²T and d²A from (uᵢ,wᵢ), (uⱼ,wⱼ) and the mixed partial (U,W), each a
  * derivative of [B,C] divided by den. With gₖ = η0 uₖ + wₖ and G = η0 U + W:
  *   d²r = 2η0 (wᵢuⱼ + cU − uᵢwⱼ − bW) − 2 drⱼ gᵢ,   d²t = −t G + 2t gᵢgⱼ
- * Port of responseSecondDerivative in tmm.js. */
+ * Port of responseSecondDerivative in derivatives.js. */
 typedef struct { double R, T, A; } second_derivative;
 
 static second_derivative response_second_derivative(const stack_response *s,
@@ -500,7 +500,7 @@ static second_derivative response_second_derivative(const stack_response *s,
 }
 
 /* ── Analytic thickness-Hessian kernel ───────────
- * Port of the thickness Hessian in tmm.js : the EXACT analytic second
+ * Port of the thickness Hessian in derivatives.js : the EXACT analytic second
  * derivatives ∂²{R,T,A}/∂dᵢ∂dⱼ (full N×N symmetric) plus the first
  * derivatives, at one (λ,θ,pol). The middle product M_{i+1}···M_{j-1} carries
  * its own binary exponent, like the prefixes and suffixes.

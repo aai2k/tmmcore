@@ -22,16 +22,17 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { tmm, tmmThicknessJacobian, tmmThicknessHessian, tmmNeedleScan } from '../src/tmm.js';
+import { tmm } from '../src/js/rta.js';
+import { tmmThicknessJacobian, tmmThicknessHessian, tmmNeedleScan } from '../src/js/derivatives.js';
 import {
     tmmPhaseDispersion, tmmPhaseThicknessJacobian,
     tmmCoefficientJets, tmmCoefficientThicknessJets, omegaFromLambdaNm,
-} from '../src/phase.js';
-import { jetConstant, wavelengthOmegaJet } from '../src/taylorJet.js';
-import { instantiateTmmWasm } from '../src/tmmWasm.js';
+} from '../src/js/phase.js';
+import { jetConstant, wavelengthOmegaJet } from '../src/js/jet.js';
+import { instantiateTmmWasm } from '../src/wasm/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const WASM = join(HERE, '..', 'src', 'tmm_kernel.wasm');
+const WASM = join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm');
 
 // (HL)^2 quarter waves at 550 nm on glass.
 const LAMBDA = 550;
@@ -87,7 +88,7 @@ if (kernel) {
     if (kernel.hasGrowingKernels()) CALLS.push({ name: 'wasm monitorCurve', keys: ['n', 'd'], layers: complexLayers,
         run: layers => kernel.monitorCurve(LAMBDA, 0, N0, NS, layers, [1.46, 0], [0, 50, 100]) });
 } else {
-    console.log('SKIP : WebAssembly methods, src/tmm_kernel.wasm not built (npm run build:wasm)');
+    console.log('SKIP : WebAssembly methods, src/wasm/tmm_kernel.wasm not built (npm run build:wasm)');
 }
 
 // Layer 1 with one key renamed, the way a caller passing another call's shape

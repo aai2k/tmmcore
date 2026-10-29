@@ -25,23 +25,22 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import {
-    tmm, tmmThicknessJacobian, tmmThicknessHessian, tmmNeedleScan,
-} from '../src/tmm.js';
+import { tmm } from '../src/js/rta.js';
+import { tmmThicknessJacobian, tmmThicknessHessian, tmmNeedleScan } from '../src/js/derivatives.js';
 import {
     omegaFromLambdaNm, tmmPhaseDispersion, tmmPhaseThicknessJacobian,
-} from '../src/phase.js';
+} from '../src/js/phase.js';
 import {
     jetAdd, jetConstant, jetDivide, jetMultiply, jetReciprocal, jetScale,
     wavelengthOmegaJet,
-} from '../src/taylorJet.js';
-import { instantiateTmmWasm } from '../src/tmmWasm.js';
+} from '../src/js/jet.js';
+import { instantiateTmmWasm } from '../src/wasm/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const WASM = join(HERE, '..', 'src', 'tmm_kernel.wasm');
+const WASM = join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm');
 
 if (!existsSync(WASM)) {
-    console.log('SKIP : src/tmm_kernel.wasm not built. Build it with: npm run build:wasm');
+    console.log('SKIP : src/wasm/tmm_kernel.wasm not built. Build it with: npm run build:wasm');
     process.exit(0);
 }
 
@@ -440,4 +439,7 @@ if (phaseChecks) {
 }
 console.log(failures === 0 ? '\nPASS : JavaScript and WebAssembly agree.'
                            : `\nFAIL : ${failures} comparisons outside tolerance.`);
-process.exit(failures === 0 ? 0 : 1);
+// The process ends on its own rather than through process.exit: on Windows,
+// process.exit shortly after the WebAssembly kernel has run can crash Node's
+// shutdown.
+process.exitCode = failures === 0 ? 0 : 1;

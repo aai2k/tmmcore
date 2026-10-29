@@ -19,7 +19,7 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { tmm, tmmThicknessJacobian } from '../src/index.js';
+import { tmm, tmmThicknessJacobian } from '../src/js/index.js';
 import { linePlot } from './_plot.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));

@@ -91,7 +91,7 @@ node summarize.mjs                                       #          -> tables.md
 
 On PowerShell set the thread pin with `$env:TMMBENCH_THREADS="1"` beforehand.
 
-`bench_js*.mjs` need `src/tmm_kernel.wasm`, which ships prebuilt.
+`bench_js*.mjs` need `src/wasm/tmm_kernel.wasm`, which ships prebuilt.
 
 Timing is best-of-N with both a repetition floor and a wall-time floor per case.
 One "spectrum" is every wavelength on the grid for **both** polarizations — the

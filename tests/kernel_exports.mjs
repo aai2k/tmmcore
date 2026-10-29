@@ -6,10 +6,15 @@
  *   • every grid call, given one angle for the whole grid or one per
  *     wavelength, gives exactly what one call per wavelength at that angle
  *     gives
- *   • every jet export, applied to a grid of jets, agrees with taylorJet.js
+ *   • every jet export, applied to a grid of jets, agrees with src/js/jet.js
  *     jet by jet: bit for bit where the arithmetic is plain, to round-off
  *     where it goes through exp, log, sin, cos or a square root, whose last
  *     digits differ between the C library and JavaScript's Math
+ *   • every jet call of an instance takes the arguments its namesake in
+ *     src/js/jet.js takes, defaults and real numbers for complex values
+ *     included, and agrees with it in the same way
+ *   • a jet whose terms are typed arrays gives what the same jet as plain
+ *     lists gives, and anything but 4 terms of two in place of a jet throws
  *
  * Skips cleanly if tmm_kernel.wasm has not been built.
  *
@@ -19,14 +24,14 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { omegaFromLambdaNm } from '../src/phase.js';
-import * as J from '../src/taylorJet.js';
-import { instantiateTmmWasm } from '../src/tmmWasm.js';
+import { omegaFromLambdaNm } from '../src/js/phase.js';
+import * as J from '../src/js/jet.js';
+import { instantiateTmmWasm } from '../src/wasm/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const WASM = join(HERE, '..', 'src', 'tmm_kernel.wasm');
+const WASM = join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm');
 if (!existsSync(WASM)) {
-    console.log('SKIP : src/tmm_kernel.wasm not built. Build it with: npm run build:wasm');
+    console.log('SKIP : src/wasm/tmm_kernel.wasm not built. Build it with: npm run build:wasm');
     process.exit(0);
 }
 const kernel = await instantiateTmmWasm(readFileSync(WASM));
@@ -347,6 +352,52 @@ withArena(a => {
     kernel._tmm_omega_from_lambda_nm(a.put(LAMBDAS), nLam, out);
     same(a.read(out, nLam), OMEGAS, 'tmm_omega_from_lambda_nm');
 });
+
+// ── The jet calls of an instance ─────────────────────────────────────────────
+// Each call with the arguments of its namesake in jet.js, short argument lists
+// and real numbers in place of complex ones included.
+const A = [[1.7, 0.02], [-0.03, 0.001], [0.004, -0.0002], [-0.0005, 0.00001]];
+const B = [[2.3, -0.1], [0.01, 0.02], [0.003, 0.0001], [0.0002, -0.00003]];
+const NAN_JET = [[NaN, 0], [0, 0], [0, 0], [0, 0]];
+const INSTANCE_CASES = [
+    ['jetConstant', [1.5, 0.2]], ['jetConstant', [1.5]],
+    ['jetFromDerivatives', [[1.5, 0.1], 0.2, [0.3, -0.1], 4]], ['jetFromDerivatives', [1.5]],
+    ['jetDerivatives', [A]], ['jetAdd', [A, B]], ['jetSubtract', [A, B]], ['jetScale', [A, 2.5]],
+    ['jetMultiply', [A, B]], ['jetReciprocal', [A]], ['jetDivide', [A, B]],
+    ['jetSqrt', [A]], ['jetExp', [A]], ['jetLog', [A]], ['jetPower', [A, -1.7]],
+    ['jetSinCos', [A]], ['jetSin', [A]], ['jetCos', [A]],
+    ['jetCompose', [2.1, [0.5, -0.2, 0.05], A]], ['jetCompose', [2.1, [0.5], A]],
+    ['wavelengthOmegaJet', [550, 3.42]],
+    ['jetWithImaginaryPart', [A, B]], ['jetRealPart', [A]],
+    ['jetClampRealMinimum', [A, 2]], ['jetClampRealMinimum', [A, 1]], ['jetClampImaginary', [A, 0.01]],
+    ['jetIsFinite', [A]], ['jetIsFinite', [NAN_JET]],
+    ['omegaFromLambdaNm', [550]],
+];
+const THROUGH_LIBM = new Set(['jetSqrt', 'jetExp', 'jetLog', 'jetPower', 'jetSinCos', 'jetSin', 'jetCos']);
+const REFERENCE = { ...J, omegaFromLambdaNm };
+
+// A jet, a sine and cosine pair, a flag or a number, as a list of values.
+const valuesOf = result => (typeof result === 'object' ? Object.values(result).flat(2) : [result]);
+for (const [name, args] of INSTANCE_CASES) {
+    compareJet(valuesOf(kernel[name](...args)), valuesOf(REFERENCE[name](...args)),
+        `${name}(${JSON.stringify(args)}) on an instance`, !THROUGH_LIBM.has(name));
+}
+const checked = new Set(INSTANCE_CASES.map(([name]) => name));
+for (const name of Object.keys(REFERENCE)) {
+    if (typeof kernel[name] === 'function') assert.ok(checked.has(name), `${name} on an instance is checked`);
+}
+
+const JETS = [A, B, NAN_JET];
+const typedTerms = arg => (JETS.includes(arg) ? arg.map(term => Float64Array.from(term)) : arg);
+for (const [name, args] of INSTANCE_CASES) {
+    if (!args.some(arg => JETS.includes(arg))) continue;
+    same(valuesOf(kernel[name](...args.map(typedTerms))), valuesOf(kernel[name](...args)),
+        `${name} with typed terms on an instance`);
+}
+for (const notAJet of [A.slice(0, 3), [1.7, 0.02], A.map(term => term[0]), null]) {
+    assert.throws(() => kernel.jetSqrt(notAJet), TypeError, `jetSqrt(${JSON.stringify(notAJet)})`);
+    assert.throws(() => kernel.jetAdd(A, notAJet), TypeError, `jetAdd(A, ${JSON.stringify(notAJet)})`);
+}
 
 console.log(`${checks} values checked; worst jet difference through the math library ${worstLibm.toExponential(2)}`);
 console.log('PASS : kernel exports');

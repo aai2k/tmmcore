@@ -1,339 +1,22 @@
 /**
- * Transfer-matrix method for multilayer thin films: JavaScript reference
- * implementation.
- *
- * System model:
- *   incident medium (n0, θ0) → layer1 → … → layerN → substrate
- *
- * Conventions:
- *   ñ = n + ik              k ≥ 0 for absorbing media
- *   time factor exp(−iωt)   a wave exp(i(kz − ωt)) decays for k > 0
- *   off-diagonals of the characteristic matrix carry −i
- *   p admittance n/cosθ     so r_p = r_s at normal incidence (Macleod §9.7.1)
- *   wavelengths and thicknesses in nm, angles in degrees from normal
- *
- * This is the complex conjugate of Macleod's convention (ñ = n − ik, exp(+iωt),
- * +i on the off-diagonals). R, T and A are identical under conjugation; phase-
- * sensitive quantities negate the raw TMM phase to recover Macleod's sign.
- *
- * Complex numbers are [re, im] pairs. All arithmetic is double precision. The C
- * kernel shipped alongside is a line-by-line port of this file and agrees with
- * it to float64 round-off (see tests/).
+ * derivatives.js : exact analytic derivatives of R, T and A with respect to
+ * the layer thicknesses, at one wavelength and over a wavelength grid: the
+ * thickness Jacobian, the thickness Hessian, and the needle scan, the
+ * derivative of inserting a thin layer at any depth. Conventions are in
+ * primitives.js.
  *
  * References:
- *   • Macleod, Thin-Film Optical Filters 5th ed., §2.4, Eqs. 2.111, 2.123–2.125;
- *     Eq. 2.83 (transmittance out of an absorbing incident medium);
- *     §10.2, Eqs. 10.11–10.13 (tilted admittances from the real invariant n0 sinθ0)
  *   • Sullivan & Dobrowolski, Appl. Opt. 35, 5484 (1996), Eqs. (3)–(6)
  *   • Tikhonravov, Trubetskov & DeBell, Appl. Opt. 35, 5493 (1996)
  */
 
-import { checkLayerKeys } from './layerKeys.js';
-
-// ── Complex number arithmetic ─────────────────────────────────────────────────
-// All complex numbers are [re, im] arrays.
-
-function cadd([ar, ai], [br, bi]) { return [ar + br, ai + bi]; }
-function csub([ar, ai], [br, bi]) { return [ar - br, ai - bi]; }
-function cmul([ar, ai], [br, bi]) { return [ar * br - ai * bi, ar * bi + ai * br]; }
-function cdiv([ar, ai], [br, bi]) {
-    const d = br * br + bi * bi;
-    return [(ar * br + ai * bi) / d, (ai * br - ar * bi) / d];
-}
-function cabs2([ar, ai]) { return ar * ar + ai * ai; }
-function cconj([ar, ai]) { return [ar, -ai]; }
-function csqrt([ar, ai]) {
-    const r = Math.sqrt(Math.sqrt(ar * ar + ai * ai));
-    const theta = Math.atan2(ai, ar) / 2;
-    return [r * Math.cos(theta), r * Math.sin(theta)];
-}
-function ccos([ar, ai]) {
-    return [Math.cos(ar) * Math.cosh(ai), -Math.sin(ar) * Math.sinh(ai)];
-}
-function csin([ar, ai]) {
-    return [Math.sin(ar) * Math.cosh(ai), Math.cos(ar) * Math.sinh(ai)];
-}
-function creal([ar]) { return ar; }
-function cimag([, ai]) { return ai; }
-
-// ── 2×2 complex matrix multiply ───────────────────────────────────────────────
-
-function matmul(A, B) {
-    return [
-        [
-            cadd(cmul(A[0][0], B[0][0]), cmul(A[0][1], B[1][0])),
-            cadd(cmul(A[0][0], B[0][1]), cmul(A[0][1], B[1][1]))
-        ],
-        [
-            cadd(cmul(A[1][0], B[0][0]), cmul(A[1][1], B[1][0])),
-            cadd(cmul(A[1][0], B[0][1]), cmul(A[1][1], B[1][1]))
-        ]
-    ];
-}
-
-const MATRIX_RESCALE_THRESHOLD = 1e100;
-
-// A common real scale factor cancels from reflectance (Macleod 5th ed.,
-// Eq. 2.123, p. 45). Callers retain it for transmittance (Eq. 2.125) while the
-// bounded characteristic-matrix product prevents opaque-stack overflow.
-function rescaleMatrix(M) {
-    let scale = 0;
-    for (const row of M) {
-        for (const [re, im] of row) {
-            scale = Math.max(scale, Math.abs(re), Math.abs(im));
-        }
-    }
-    if (scale <= MATRIX_RESCALE_THRESHOLD) return 0;
-    const inverse = 1 / scale;
-    for (const row of M) {
-        for (const value of row) {
-            value[0] *= inverse;
-            value[1] *= inverse;
-        }
-    }
-    return Math.log(scale);
-}
-
-// ── Snell's law ───────────────────────────────────────────────────────────────
-//
-// Every wave in the stack shares one transverse wavevector, n0 sinθ0 with n0
-// the REAL part of the incident index (Macleod 5th ed., §10.2, Eqs. 10.11 to
-// 10.13). An absorbing incident medium then carries an inhomogeneous wave whose
-// amplitude falls along the normal only, and each medium's cosθ follows from
-// that one real invariant. Putting the complex index into the invariant would
-// make the amplitude vary along the interface, so energy would flow sideways
-// inside lossless layers and R + T would be wrong by a term linear in the
-// incident k at oblique incidence.
-
-// sinθ0 and cosθ0 of the angle of incidence, each as [value, 0]. The cosine is
-// taken directly: near grazing incidence sqrt(1 − sin²θ0) keeps three correct
-// digits of it at 89.99999° and none past 89.9999999°.
-function incidence(theta_deg) {
-    const rad = theta_deg * Math.PI / 180;
-    return { sinTheta0: [Math.sin(rad), 0], cosTheta0: [Math.cos(rad), 0] };
-}
-
-// cosθ in medium nj. With a = n0 sinθ0 the real invariant,
-//     cos²θ = 1 − (a/nj)²,
-// and since n0² = a² + (n0 cosθ0)² for a real angle, the same number is
-//     ((nj − n0)(nj + n0) + (n0 cosθ0)²) / nj².
-// The first form cancels where (a/nj)² is near 1, and at grazing incidence
-// into a medium of the incident index nothing of cos²θ survives it. The
-// second cancels where nj² − n0² and (n0 cosθ0)² nearly offset. Their
-// rounding errors scale as a² and as |nj² − n0²| + (n0 cosθ0)², so the second
-// is taken where |nj² − n0²| + 2 (n0 cosθ0)² < n0². That never holds at
-// normal incidence, where cosθ = 1 stays exact. `cosTheta0`, the cosine of the
-// real angle of incidence as [cosθ0, 0], is optional; without it the first
-// form is used.
-function snellCosTheta(n0, sinTheta0, nj, cosTheta0) {
-    if (cosTheta0) {
-        const nr = n0[0];
-        const nc = nr * cosTheta0[0];
-        const q = nc * nc;
-        // n0² − 2 (n0 cosθ0)², positive only past 45°. Since
-        // |nj² − n0²| ≥ ||nj|² − n0²|, a medium far from the incident index
-        // fails the test before (nj − n0)(nj + n0) is formed.
-        const room = nr * nr - 2 * q;
-        const near = room > 0 && Math.abs(cabs2(nj) - nr * nr) < room;
-        const m = near ? cmul(csub(nj, [nr, 0]), cadd(nj, [nr, 0])) : null;
-        if (m && cabs2(m) < room * room) return csqrt(cdiv(cadd(m, [q, 0]), cmul(nj, nj)));
-    }
-    // sinThetaJ = Re(n0) * sinTheta0 / nj   (complex)
-    const sinThetaJ = cdiv(cmul([n0[0], 0], sinTheta0), nj);
-    // cosTheta = sqrt(1 - sin²θ)
-    return csqrt(csub([1, 0], cmul(sinThetaJ, sinThetaJ)));
-}
-
-// cosθ0 of the incident medium. A transparent medium keeps its own cosine,
-// cosTheta0 when given, else sqrt(1 − sin²θ0). An absorbing one takes its
-// cosine from the same real invariant as the layers, so its tilted admittance
-// is sqrt(N0² − n0² sin²θ0) and the incident wave belongs to the same boundary
-// problem as the rest of the stack. R + T then departs from 1 for lossless
-// layers only by the interference of the incident and reflected waves in the
-// absorbing medium, the term Macleod's Eq. 2.83 carries, which is second order
-// in k0 for a bare interface.
-function incidentCosTheta(n0, sinTheta0, cosTheta0) {
-    if (n0[1] !== 0) return snellCosTheta(n0, sinTheta0, n0, cosTheta0);
-    return cosTheta0
-        ? [cosTheta0[0], cosTheta0[1]]
-        : csqrt(csub([1, 0], cmul(sinTheta0, sinTheta0)));
-}
-
-// ── Layer characteristic matrix ───────────────────────────────────────────────
-
-// Overflow guard on the phase thickness. ccos/csin use cosh/sinh(Im δ), and
-// cosh(710) = Inf would turn the whole product into NaN. So |Im δ| is held at
-// MAX_IM_DELTA, where cosh(50) ≈ 2.6e21 stays finite under products. Past the
-// bound cosδ and sinδ are each one growing exponential to within e^{−100}
-// relative, so the held matrix is the true one divided by e^{|Im δ| − 50}: the
-// same shape, only smaller. That factor cancels from r and from every
-// admittance, and is carried alongside as a log scale (layerLogScale) for t,
-// T and fields, which it does not cancel from. The bound tests Im δ whatever
-// k is: a lossless layer past the critical angle carries an evanescent wave
-// with imaginary δ, and a thick enough one reaches the bound too.
-const MAX_IM_DELTA = 50;
-
-// Phase thickness δ = (2π/λ) n d cosθ (Macleod 5th ed., Eq. 9.2), complex,
-// with Im δ held to ±MAX_IM_DELTA. `excess` is |Im δ| − MAX_IM_DELTA where
-// the bound held it and 0 elsewhere: the natural log of the factor the held
-// matrix falls short of the true one by.
-function layerPhase(nj, dj_nm, lambda_nm, cosTheta_j) {
-    const k0 = (2 * Math.PI) / lambda_nm;
-    const delta = cmul(cmul(nj, [k0 * dj_nm, 0]), cosTheta_j);
-    const excess = Math.abs(delta[1]) > MAX_IM_DELTA ? Math.abs(delta[1]) - MAX_IM_DELTA : 0;
-    if (delta[1] > MAX_IM_DELTA) delta[1] = MAX_IM_DELTA;
-    else if (delta[1] < -MAX_IM_DELTA) delta[1] = -MAX_IM_DELTA;
-    return { delta, excess };
-}
-
-// The log scale layerMatrix leaves out for the same arguments: its matrix
-// times e^{layerLogScale} is the layer's true matrix. A caller building a
-// product adds it to the log scale it carries for t, exactly as it adds the
-// return of rescaleMatrix; T then takes e^{−2·logScale}. Zero for every layer
-// short of the bound, so an ordinary stack is unaffected bit for bit.
-function layerLogScale(nj, dj_nm, lambda_nm, cosTheta_j) {
-    return layerPhase(nj, dj_nm, lambda_nm, cosTheta_j).excess;
-}
-
-// Tilted admittance in units of the free-space admittance: n cosθ for s,
-// n / cosθ for p (Macleod 5th ed., §9.2).
-function layerAdmittance(nj, cosTheta_j, pol) {
-    return pol === 's' ? cmul(nj, cosTheta_j) : cdiv(nj, cosTheta_j);
-}
-
-// M = [[cosδ, −i sinδ/η], [−i η sinδ, cosδ]]. Two adjacent layers of one
-// material act as one layer of their summed thickness, so matrices of one
-// admittance compose by adding phases: M(a)·M(b) = M(a + b).
-function phaseMatrix(delta, eta) {
-    const cosD = ccos(delta);
-    const sinD = csin(delta);
-    const iSinD_div_eta = cmul([0, -1], cdiv(sinD, eta));
-    const iEta_sinD     = cmul([0, -1], cmul(eta, sinD));
-    return [
-        [cosD,        iSinD_div_eta],
-        [iEta_sinD,   cosD         ]
-    ];
-}
-
-function layerMatrix(nj, dj_nm, lambda_nm, cosTheta_j, pol) {
-    if (atCriticalAngle(cosTheta_j)) {
-        return criticalMatrix(criticalGenerator(nj, (2 * Math.PI) / lambda_nm, pol), dj_nm);
-    }
-    return phaseMatrix(layerPhase(nj, dj_nm, lambda_nm, cosTheta_j).delta,
-                       layerAdmittance(nj, cosTheta_j, pol));
-}
-
-// ── The critical angle ───────────────────────────────────────────────────────
-//
-// Where cosθ in a medium is exactly zero the wave in it runs along the
-// interfaces. δ and the s admittance n cosθ vanish together and the p
-// admittance n/cosθ diverges, so phaseMatrix is 0/0 there while its limit is
-// finite and linear in the thickness:
-//     M = I + d·G,   G = [[0, −iP], [−iS, 0]],   P = Q/η,  S = Qη,
-// with Q = dδ/dd = (2π/λ) n cosθ. Q/η_s = 2π/λ and Q·η_p = (2π/λ) n² hold at
-// every angle, and the other two products carry cos²θ, so the pair (P, S) is
-// (2π/λ, 0) for s and (0, (2π/λ) n²) for p. G is also the thickness
-// derivative of any layer matrix at δ = 0, the needle's matrix derivative.
-
-const atCriticalAngle = cosTheta => cosTheta[0] === 0 && cosTheta[1] === 0;
-
-function criticalGenerator(nj, k0, pol) {
-    return pol === 's'
-        ? { P: [k0, 0], S: [0, 0] }
-        : { P: [0, 0], S: cscale(cmul(nj, nj), k0) };
-}
-
-// [[0, −iP], [−iS, 0]]
-function generatorMatrix({ P, S }) {
-    return [[[0, 0], cmul([0, -1], P)], [cmul([0, -1], S), [0, 0]]];
-}
-
-// I + d·G
-function criticalMatrix({ P, S }, dj_nm) {
-    return [[[1, 0], cmul([0, -dj_nm], P)], [cmul([0, -dj_nm], S), [1, 0]]];
-}
-
-// ── Boundaries ───────────────────────────────────────────────────────────────
-
-// The substrate closes the product as [B, C] = M·[1, ηs] (Macleod 5th ed.,
-// Eq. 2.113). At its critical angle ηs diverges in p. r depends only on the
-// direction of [B, C], so the vector becomes [0, 1]; t = 2η0 bs/(η0B + C) and
-// the transmitted flux Re(cs·conj(bs)) both vanish with bs, and no energy
-// crosses into the substrate.
-function substrateVector(ns, cosThetaS, pol) {
-    return pol === 'p' && atCriticalAngle(cosThetaS)
-        ? [[0, 0], [1, 0]]
-        : [[1, 0], layerAdmittance(ns, cosThetaS, pol)];
-}
-
-// Re(cs·conj(bs)): Re(ηs) for [1, ηs] and 0 for [0, 1].
-const transmittedFlux = ([bs, cs]) => creal(cmul(cs, cconj(bs)));
-
-// Absorptance of the layers: the net irradiance entering the front surface,
-// ½Re(E H*) there (Macleod 5th ed., Eq. 2.120), less the transmitted, per unit
-// incident irradiance ½Re(η0)|E⁺|². With E = E⁺(1 + r) and H = η0 E⁺(1 − r),
-//     A = 1 − R − T + 2 (Im η0 / Re η0) Im r.
-// The last term is zero for a transparent incident medium. In an absorbing
-// one the incident and reflected waves interfere in the irradiance (the mixed
-// Poynting vector, Macleod 5th ed., §2.13, Eq. 2.163), R + T + A differs from 1
-// by exactly that term, and 1 − R − T is not the absorptance.
-function layerAbsorptance(R, T, eta0, r) {
-    return 1 - R - T + 2 * (eta0[1] / eta0[0]) * r[1];
-}
-
-// ── Core TMM for one wavelength ───────────────────────────────────────────────
-
-/**
- * @param {number}   lambda_nm  wavelength in nm
- * @param {number}   theta_deg  angle of incidence in degrees
- * @param {string}   pol        's' or 'p'
- * @param {[number,number]} n0  complex n of incident medium
- * @param {[number,number]} ns  complex n of substrate (exit medium)
- * @param {{ n:[number,number], d:number }[]} layers  each layer { n: [re,im], d: thickness_nm }
- * @returns {{ R:number, T:number, A:number }}
- */
-export function tmm(lambda_nm, theta_deg, pol, n0, ns, layers) {
-    checkLayerKeys(layers, 'n', 'd');
-    const { sinTheta0, cosTheta0 } = incidence(theta_deg);
-
-    // Admittance of incident medium
-    const eta0 = layerAdmittance(n0, incidentCosTheta(n0, sinTheta0, cosTheta0), pol);
-
-    // [1, ηs], or [0, 1] at the substrate's critical angle in p
-    const substrate = substrateVector(ns, snellCosTheta(n0, sinTheta0, ns, cosTheta0), pol);
-
-    // Build total transfer matrix M = M1 × M2 × ... × MN
-    let M = [[  [1, 0], [0, 0]  ], [  [0, 0], [1, 0]  ]]; // identity
-    let logScale = 0;
-
-    for (const { n, d } of layers) {
-        // Not positive, NaN included: the layer is absent.
-        if (!(d > 0)) continue;
-        const cosThetaJ = snellCosTheta(n0, sinTheta0, n, cosTheta0);
-        const Mj = layerMatrix(n, d, lambda_nm, cosThetaJ, pol);
-        M = matmul(M, Mj);
-        logScale += layerLogScale(n, d, lambda_nm, cosThetaJ) + rescaleMatrix(M);
-    }
-
-    // [B, C]^T = M × substrate
-    const [B, C] = cmatvec(M, substrate);
-
-    // r = (η0 B - C) / (η0 B + C)
-    const eta0B = cmul(eta0, B);
-    const r = cdiv(csub(eta0B, C), cadd(eta0B, C));
-
-    // t = 2 η0 bs / (η0 B + C)
-    const t = cmul(cdiv(cmul([2, 0], eta0), cadd(eta0B, C)), substrate[0]);
-
-    const R = cabs2(r);
-
-    // T = Re(etaS) / Re(eta0) * |t|²
-    const T = Math.max(0, transmittedFlux(substrate) / creal(eta0) * cabs2(t) * Math.exp(-2 * logScale));
-
-    const A = Math.max(0, layerAbsorptance(R, T, eta0, r));
-
-    return { R, T, A };
-}
+import {
+    cadd, csub, cmul, cdiv, cabs2, cconj, ccos, csin, creal, cscale, matmul, cmatvec, incidence,
+    snellCosTheta, incidentCosTheta, layerPhase, layerAdmittance, phaseMatrix, atCriticalAngle,
+    criticalGenerator, generatorMatrix, criticalMatrix, substrateVector, transmittedFlux,
+    layerAbsorptance,
+} from './primitives.js';
+import { checkLayerKeys, pointArgs } from './stack.js';
 
 // ── Shared pieces of the derivative kernels ──────────────────────────────────
 //
@@ -352,8 +35,6 @@ export function tmm(lambda_nm, theta_deg, pol, n0, ns, layers) {
 // leave no trace in the result.
 
 const BINARY_RESCALE_LIMIT = 2 ** 64;
-
-function cscale([re, im], s) { return [re * s, im * s]; }
 
 // Divides the complex values in place by a power of two when the largest part
 // exceeds BINARY_RESCALE_LIMIT, and returns that power's exponent.
@@ -504,7 +185,7 @@ function responseDerivative(response, [u, w]) {
 // Derivation (citations):
 //   • Characteristic matrix & [B,C], r, t:  Macleod, Thin-Film Optical
 //     Filters 5th ed., §2.4 Eqs. 2.111, 2.123–2.125 (JS sign convention:
-//     off-diagonals carry −i, see layerMatrix above).
+//     off-diagonals carry −i, see layerMatrix in primitives.js).
 //   • Pre/post decomposition  M = M_pre · M_k · M_post  and needle
 //     insertion:  Sullivan & Dobrowolski, Appl. Opt. 35, 5484 (1996),
 //     Eqs. (3)–(6).
@@ -529,13 +210,6 @@ function responseDerivative(response, [u, w]) {
 // Returns { R, T, A, gaps, intra } where
 //   gaps[pos]            = [{dR,dT,dA} per candidate]   pos = 0..N
 //   intra[k][fi]         = { frac, perCand:[{dR,dT,dA}] }   (host-split)
-function cmatvec(M, v) {
-    return [
-        cadd(cmul(M[0][0], v[0]), cmul(M[0][1], v[1])),
-        cadd(cmul(M[1][0], v[0]), cmul(M[1][1], v[1])),
-    ];
-}
-
 export function tmmNeedleScan(lambda_nm, theta_deg, pol, n0, ns, layers,
                               candidateNs, intraFracs = []) {
     // Layers are used as given, so gap and intra indices match the caller's
@@ -573,7 +247,7 @@ export function tmmNeedleScan(lambda_nm, theta_deg, pol, n0, ns, layers,
         for (let k = 0; k < N; k++) {
             const host = data[k];
             const { n, thickness, cosTheta, delta } = host;
-            intra.push(intraFracs.map(frac => {
+            intra.push(Array.from(intraFracs, frac => {
                 const exponent = preExp[k] + postExp[k + 1];
                 const front = layerPhase(n, frac * thickness, lambda_nm, cosTheta);
                 const preIn = matmul(Pre[k], partMatrix(host, front.delta, frac * thickness));
@@ -603,15 +277,15 @@ export function tmmNeedleScan(lambda_nm, theta_deg, pol, n0, ns, layers,
 // ── Analytic thickness-Jacobian kernel ────────────────────────────────────────
 //
 // Returns the EXACT analytic derivatives dR/dd_k, dT/dd_k, dA/dd_k of every
-// existing layer's thickness, at one (λ, θ, pol).  Replaces the central-
-// difference Jacobian in the DLS refiner (2·N fewer TMM evals per step).
+// existing layer's thickness, at one (λ, θ, pol), from one set of prefix and
+// suffix products rather than the 2·N stack evaluations of central differences.
 //
 // Derivation (citations):
 //   • Characteristic matrix Eq. 2.111 and product form Eq. 2.113 with
 //       δ_r = 2π N_r d_r cosθ_r / λ
 //     Macleod, Thin-Film Optical Filters 5th ed., §2.4 (verified verbatim).
-//     This module's documented sign convention puts −i on the off-diagonals
-//     (see file header & layerMatrix); the derivative below is taken of THAT
+//     This package's documented sign convention puts −i on the off-diagonals
+//     (see layerMatrix in primitives.js); the derivative below is taken of THAT
 //     matrix, not Macleod's +i form, so it stays byte-consistent with tmm().
 //   • Pre/post decomposition  [B,C] = Pre·M_k·Post  and the parametric
 //     derivative  ∂[B,C]/∂p = Pre·(∂M_k/∂p)·Post:
@@ -773,12 +447,73 @@ export function tmmThicknessHessian(lambda_nm, theta_deg, pol, n0, ns, layers) {
     };
 }
 
-// ── Low-level primitives ─────────────────────────────────────────────────────
-// Exported for callers building transfer-matrix variants on the same
-// conventions. Lower level than the four functions above, and correspondingly
-// less stable across versions.
+// ── Over a wavelength grid ───────────────────────────────────────────────────
 
-export {
-    cadd, csub, cmul, cdiv, cabs2, cconj, csqrt, ccos, csin, creal, cimag,
-    matmul, rescaleMatrix, snellCosTheta, incidentCosTheta, layerMatrix, layerLogScale, cmatvec
-};
+const FIRST = ['dRdd', 'dTdd', 'dAdd'];
+const SECOND = ['d2Rdd', 'd2Tdd', 'd2Add'];
+
+// R, T, A per wavelength and the first derivatives, nLam × N, from one kernel
+// call per wavelength; with `second` also the second derivatives, nLam × N × N.
+function derivativeGrid(kernel, second, grid, pol) {
+    const nLam = grid.lambdas.length;
+    const N = grid.thick.length;
+    const out = { R: new Float64Array(nLam), T: new Float64Array(nLam), A: new Float64Array(nLam), N };
+    for (const key of FIRST) out[key] = new Float64Array(nLam * N);
+    if (second) for (const key of SECOND) out[key] = new Float64Array(nLam * N * N);
+    for (let i = 0; i < nLam; i++) {
+        const one = kernel(...pointArgs(grid, pol, i));
+        out.R[i] = one.R; out.T[i] = one.T; out.A[i] = one.A;
+        for (const key of FIRST) out[key].set(one[key], i * N);
+        if (!second) continue;
+        for (const key of SECOND) one[key].forEach((row, j) => out[key].set(row, (i * N + j) * N));
+    }
+    return out;
+}
+
+/**
+ * The thickness Jacobian at every wavelength, for one polarization:
+ * { R, T, A } per wavelength and dRdd, dTdd, dAdd, nLam × N.
+ */
+export function jacobianSpectrumKernel(grid, pol) {
+    return derivativeGrid(tmmThicknessJacobian, false, grid, pol);
+}
+
+/**
+ * The thickness Hessian at every wavelength, for one polarization: the
+ * Jacobian's fields and d2Rdd, d2Tdd, d2Add, nLam × N × N, the value for
+ * wavelength i and layers j, k at [(i·N + j)·N + k].
+ */
+export function hessianSpectrumKernel(grid, pol) {
+    return derivativeGrid(tmmThicknessHessian, true, grid, pol);
+}
+
+/**
+ * The needle scan at every wavelength, for one polarization, laid out as
+ * tmm_needle_scan_spectrum writes it: base nLam × 3 [R, T, A], gaps
+ * nLam × (N + 1) × nCand × 3 and intra nLam × N × nFrac × nCand × 3, the
+ * innermost triple [dR, dT, dA]. candNK is [candidate][λ] ñ; fracs the split
+ * fractions, the same at every wavelength.
+ */
+export function needleScanSpectrumKernel(grid, pol, { candNK, fracs }) {
+    const nLam = grid.lambdas.length;
+    const N = grid.thick.length;
+    const nCand = candNK.length;
+    const nFrac = fracs.length;
+    const gapBlock = (N + 1) * nCand * 3;
+    const intraBlock = N * nFrac * nCand * 3;
+    const out = {
+        base: new Float64Array(nLam * 3),
+        gaps: new Float64Array(nLam * gapBlock),
+        intra: new Float64Array(nLam * intraBlock),
+    };
+    const put = (array, at, { dR, dT, dA }) => { array[at] = dR; array[at + 1] = dT; array[at + 2] = dA; };
+    for (let i = 0; i < nLam; i++) {
+        const scan = tmmNeedleScan(...pointArgs(grid, pol, i), candNK.map(row => row[i]), fracs);
+        out.base.set([scan.R, scan.T, scan.A], 3 * i);
+        scan.gaps.forEach((row, pos) => row.forEach((entry, c) =>
+            put(out.gaps, i * gapBlock + (pos * nCand + c) * 3, entry)));
+        scan.intra.forEach((row, k) => row.forEach(({ perCand }, fi) => perCand.forEach((entry, c) =>
+            put(out.intra, i * intraBlock + ((k * nFrac + fi) * nCand + c) * 3, entry))));
+    }
+    return out;
+}

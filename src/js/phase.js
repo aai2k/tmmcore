@@ -15,10 +15,10 @@
  * a value at one wavelength is independent of every neighbouring sample. Sample
  * wherever you like; the numbers do not move.
  *
- * Conventions are those of tmm.js: ñ = n + ik, exp(−iωt), off-diagonals carrying
- * −i. This is the complex conjugate of Macleod's convention, under which each
- * reported order is minus the derivative of physical phase, so all three equal
- * derivatives of the raw transfer-matrix phase computed here.
+ * Conventions are those of primitives.js: ñ = n + ik, exp(−iωt), off-diagonals
+ * carrying −i. This is the complex conjugate of Macleod's convention, under
+ * which each reported order is minus the derivative of physical phase, so all
+ * three equal derivatives of the raw transfer-matrix phase computed here.
  *
  * Units. The differentiation variable is angular frequency, and the caller
  * chooses its unit by choosing `omega`. GD comes back in that unit's reciprocal,
@@ -27,10 +27,10 @@
  *
  * Refractive indices arrive as jets, `[ñ, dñ/dω, (d²ñ/dω²)/2, (d³ñ/dω³)/6]`.
  * The package deliberately owns no material models; build the jets with the
- * arithmetic in taylorJet.js, from whatever dispersion formula or interpolant
+ * arithmetic in jet.js, from whatever dispersion formula or interpolant
  * you use. See the docs for a worked Sellmeier example.
  *
- * The C kernel shipped alongside is a port of this file and agrees with it to
+ * The C kernel in src/c is a port of this file and agrees with it to
  * float64 round-off (see tests/).
  *
  * Reference:
@@ -52,8 +52,8 @@ import {
     jetSqrt,
     jetSubtract,
     wavelengthOmegaJet,
-} from './taylorJet.js';
-import { checkLayerKeys } from './layerKeys.js';
+} from './jet.js';
+import { checkLayerKeys, thetaAt } from './stack.js';
 
 /** Speed of light in vacuum, nm/fs. Sets the default time unit to fs. */
 export const C_NM_PER_FS = 299.792458;
@@ -111,7 +111,7 @@ function matrixMagnitude(matrix) {
 // Divides every order of a jet matrix by a power of two, which is exact, when
 // its largest part at any order exceeds BINARY_RESCALE_LIMIT, and returns that
 // power's exponent. The prefix and suffix products of the thickness Jacobian
-// carry these exponents, as the derivative kernels in tmm.js do.
+// carry these exponents, as the derivative kernels in derivatives.js do.
 function rescaleMatrixBinary(matrix) {
     const magnitude = matrixMagnitude(matrix);
     if (!(magnitude > BINARY_RESCALE_LIMIT) || magnitude === Infinity) return 0;
@@ -142,12 +142,12 @@ function rescaleMatrix(matrix, threshold) {
     return Math.log(scale);
 }
 
-// The transverse invariant is Re(n0) sinθ0, as in tmm.js: an absorbing incident
-// medium carries a wave whose amplitude falls along the normal only. cos²θ is
-// 1 − (a/n)² or ((n − n0)(n + n0) + (n0 cosθ0)²)/n², chosen on the values by
-// the rule in snellCosTheta there, so that a layer of the incident index keeps
-// its cosine at grazing incidence. `incidentCosineJet` is null when the
-// incident sine arrives as a jet, and then the first form is used.
+// The transverse invariant is Re(n0) sinθ0, as in primitives.js: an absorbing
+// incident medium carries a wave whose amplitude falls along the normal only.
+// cos²θ is 1 − (a/n)² or ((n − n0)(n + n0) + (n0 cosθ0)²)/n², chosen on the
+// values by the rule in snellCosTheta there, so that a layer of the incident
+// index keeps its cosine at grazing incidence. `incidentCosineJet` is null
+// when the incident sine arrives as a jet, and then the first form is used.
 function snellCosine(incidentIndex, incidentSine, layerIndex, incidentCosineJet) {
     const realIndex = jetRealPart(incidentIndex);
     if (incidentCosineJet) {
@@ -183,7 +183,7 @@ function incidentAngle(thetaDeg, incidentSineJet) {
 
 // cosθ0 of the incident medium: its own cosine while the index is real at
 // every order, otherwise from the same real invariant as the layers, so the
-// incident admittance is sqrt(N0² − n0² sin²θ0) and matches tmm.js.
+// incident admittance is sqrt(N0² − n0² sin²θ0) and matches primitives.js.
 function incidentCosine(incidentIndex, { sine, cosine }) {
     if (incidentIndex.some(coefficient => coefficient[1] !== 0)) {
         return snellCosine(incidentIndex, sine, incidentIndex, cosine);
@@ -200,7 +200,7 @@ function admittance(index, cosine, polarization) {
 // |Im δ| − MAX_IMAGINARY_PHASE where the bound held the phase, else 0: the log
 // of the real factor the held matrix falls short of the true one by, at the
 // wavelength itself. It cancels from r and from the phase of t, and only |t|
-// needs it; see layerLogScale in tmm.js.
+// needs it; see layerLogScale in primitives.js.
 function heldExcess(rawPhase, phase) {
     return rawPhase[0][1] === phase[0][1] ? 0 : Math.abs(rawPhase[0][1]) - MAX_IMAGINARY_PHASE;
 }
@@ -233,8 +233,8 @@ function layerMatrixWithThicknessDerivative(index, thickness, wavelength, cosine
     // Past the bound the layer is the held matrix times a real factor, and
     // the full phase derivative, taken with the held sines and cosines, is
     // their derivative to within e^{−100} relative, as derivativeLayer in
-    // tmm.js has it. Its imaginary part is what |t| falls by; it cancels from
-    // r and from every phase.
+    // derivatives.js has it. Its imaginary part is what |t| falls by; it
+    // cancels from r and from every phase.
     const phaseDerivative = phasePerUnit;
     const { sine, cosine: cosinePhase } = jetSinCos(phase);
     const sineDerivative = jetMultiply(cosinePhase, phaseDerivative);
@@ -307,11 +307,11 @@ function coefficientThicknessJets(matrixDerivative, coefficientData, incidentEta
  * jets themselves rather than the phase quantities read off them.
  *
  * A layer past the opaque-layer bound enters the product short by a real
- * factor (see layerLogScale in tmm.js), which makes `transmission` too large
- * by it. The factor is returned as `transmissionLogScale` rather than applied,
- * so that t keeps its phase and every derivative of it however far below the
- * double range |t| falls: the true |t| at this wavelength is |transmission|
- * times e^{−transmissionLogScale}.
+ * factor (see layerLogScale in primitives.js), which makes `transmission` too
+ * large by it. The factor is returned as `transmissionLogScale` rather than
+ * applied, so that t keeps its phase and every derivative of it however far
+ * below the double range |t| falls: the true |t| at this wavelength is
+ * |transmission| times e^{−transmissionLogScale}.
  *
  * @param {object} options
  * @param {number[][]} options.wavelengthJet   jet of λ(ω), from `wavelengthOmegaJet`
@@ -623,4 +623,59 @@ export function tmmPhaseThicknessJacobian(lambda_nm, theta_deg, pol, n0Jet, nsJe
         t: side(coefficients.transmission, coefficients.transmissionThickness,
             coefficients.transmissionLogScale),
     };
+}
+
+// ── Over a wavelength grid ───────────────────────────────────────────────────
+
+const PHASE_KEYS = ['phaseRad', 'gd', 'gdd', 'tod', 'magnitudeSquared'];
+const PHASE_DERIVATIVES = ['dPhaseDeg', 'dGd', 'dGdd', 'dTod', 'dLogMagnitudeSquared'];
+
+// One coefficient's phase quantities over the grid, and the thickness
+// derivatives named in `derivatives`, nLam × N each. Every entry starts as NaN,
+// which is what a coefficient that is exactly zero keeps: it has no phase, as
+// the kernel writes it.
+function phaseSide(nLam, N, derivatives) {
+    const side = {};
+    for (const key of PHASE_KEYS) side[key] = new Float64Array(nLam).fill(NaN);
+    for (const key of derivatives) side[key] = new Float64Array(nLam * N).fill(NaN);
+    return side;
+}
+
+// Wavelength i of one side, when the coefficient has a phase there.
+function putPhase(side, i, quantities, N, derivatives) {
+    if (!quantities) return;
+    for (const key of PHASE_KEYS) side[key][i] = quantities[key];
+    for (const key of derivatives) side[key].set(quantities[key], i * N);
+}
+
+function phaseGridOf(kernel, derivatives, grid, pol) {
+    const nLam = grid.lambdas.length;
+    const N = grid.thick.length;
+    const r = phaseSide(nLam, N, derivatives);
+    const t = phaseSide(nLam, N, derivatives);
+    for (let i = 0; i < nLam; i++) {
+        const layers = Array.from(grid.thick, (d, k) => ({ nJet: grid.layerJets[k][i], d }));
+        const one = kernel(grid.lambdas[i], thetaAt(grid.theta_deg, i), pol,
+            grid.n0Jets[i], grid.nsJets[i], layers,
+            { omega: grid.omegas?.[i], sinTheta0Jet: grid.sinJets?.[i] });
+        putPhase(r, i, one.r, N, derivatives);
+        putPhase(t, i, one.t, N, derivatives);
+    }
+    return { r, t };
+}
+
+/**
+ * Phase, GD, GDD and TOD at every wavelength, for one polarization:
+ * { r, t }, each { phaseRad, gd, gdd, tod, magnitudeSquared } over the grid.
+ */
+export function phaseSpectrumKernel(grid, pol) {
+    return phaseGridOf(tmmPhaseDispersion, [], grid, pol);
+}
+
+/**
+ * phaseSpectrumKernel with the thickness derivatives of every quantity on each
+ * side: dPhaseDeg, dGd, dGdd, dTod and dLogMagnitudeSquared, nLam × N.
+ */
+export function phaseJacobianSpectrumKernel(grid, pol) {
+    return phaseGridOf(tmmPhaseThicknessJacobian, PHASE_DERIVATIVES, grid, pol);
 }

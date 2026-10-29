@@ -38,14 +38,15 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { tmm } from '../src/js/rta.js';
+import { tmmThicknessJacobian, tmmNeedleScan } from '../src/js/derivatives.js';
 import {
-    tmm, tmmThicknessJacobian, tmmNeedleScan,
-    cadd, csub, cmul, cdiv, csqrt, cabs2, matmul, layerMatrix, rescaleMatrix,
-    snellCosTheta, incidentCosTheta,
-} from '../src/tmm.js';
-import { tmmPhaseDispersion, tmmPhaseThicknessJacobian } from '../src/phase.js';
-import { jetConstant, jetDivide, jetScale } from '../src/taylorJet.js';
-import { instantiateTmmWasm } from '../src/tmmWasm.js';
+    cadd, csub, cmul, cdiv, csqrt, cabs2, matmul, layerMatrix, rescaleMatrix, snellCosTheta,
+    incidentCosTheta,
+} from '../src/js/primitives.js';
+import { tmmPhaseDispersion, tmmPhaseThicknessJacobian } from '../src/js/phase.js';
+import { jetConstant, jetDivide, jetScale } from '../src/js/jet.js';
+import { instantiateTmmWasm } from '../src/wasm/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -186,7 +187,7 @@ assert.ok(worstField <= 1e-14, `A is the net irradiance the layers keep: off by 
 
 // ── 5. The WebAssembly kernel ───────────────────────────────────────────────
 
-const WASM = join(HERE, '..', 'src', 'tmm_kernel.wasm');
+const WASM = join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm');
 let wasmChecks = 0;
 if (existsSync(WASM)) {
     const k = await instantiateTmmWasm(readFileSync(WASM));
@@ -244,7 +245,7 @@ if (existsSync(WASM)) {
         }
     }
 } else {
-    console.log('NOTE : src/tmm_kernel.wasm not built; the WebAssembly checks were skipped.');
+    console.log('NOTE : src/wasm/tmm_kernel.wasm not built; the WebAssembly checks were skipped.');
 }
 
 console.log(`worst gap in the energy identity: ${worstGap.toExponential(2)}`);

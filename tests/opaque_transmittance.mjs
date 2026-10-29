@@ -25,12 +25,12 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import {
-    tmm, tmmThicknessJacobian, tmmThicknessHessian, tmmNeedleScan, layerLogScale,
-} from '../src/tmm.js';
-import { tmmPhaseDispersion, tmmPhaseThicknessJacobian } from '../src/phase.js';
-import { jetConstant } from '../src/taylorJet.js';
-import { instantiateTmmWasm } from '../src/tmmWasm.js';
+import { tmm } from '../src/js/rta.js';
+import { tmmThicknessJacobian, tmmThicknessHessian, tmmNeedleScan } from '../src/js/derivatives.js';
+import { layerLogScale } from '../src/js/primitives.js';
+import { tmmPhaseDispersion, tmmPhaseThicknessJacobian } from '../src/js/phase.js';
+import { jetConstant } from '../src/js/jet.js';
+import { instantiateTmmWasm } from '../src/wasm/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -193,7 +193,7 @@ for (const c of CASES.filter(c => c.held)) {
 
 // ── The WebAssembly kernel ───────────────────────────────────────────────────
 
-const WASM = join(HERE, '..', 'src', 'tmm_kernel.wasm');
+const WASM = join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm');
 const kernel = existsSync(WASM) ? await instantiateTmmWasm(readFileSync(WASM)) : null;
 if (kernel) {
     for (const run of RUNS) {
@@ -257,7 +257,7 @@ if (kernel) {
         }
     }
 } else {
-    console.log('NOTE : src/tmm_kernel.wasm not built; the WebAssembly checks were skipped.');
+    console.log('NOTE : src/wasm/tmm_kernel.wasm not built; the WebAssembly checks were skipped.');
 }
 
 console.log(`${checks} checks against the Airy recursion${kernel ? ', WebAssembly included' : ''}.`);

@@ -13,7 +13,7 @@
  *   node examples/01-single-layer.mjs
  */
 
-import { tmm } from '../src/index.js';
+import { tmm } from '../src/js/index.js';
 
 const n0 = 1.0;      // air
 const ns = 1.52;     // glass

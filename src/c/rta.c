@@ -6,7 +6,7 @@
 #include "tmm_internal.h"
 
 /* ── Core TMM for one wavelength / polarization ──────────────────────────────
- * Faithful port of the R, T, A kernel in tmm.js. `layers` is N triples [n_re, n_im, d_nm].
+ * Faithful port of the R, T, A kernel in src/js/rta.js. `layers` is N triples [n_re, n_im, d_nm].
  * Writes R,T,A to out[0..2]. A layer whose thickness is not positive, NaN
  * included, is absent, exactly like the JS reference. */
 

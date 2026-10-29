@@ -18,14 +18,14 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { tmm } from '../src/tmm.js';
-import { omegaFromLambdaNm } from '../src/phase.js';
-import { instantiateTmmWasm } from '../src/tmmWasm.js';
+import { tmm } from '../src/js/rta.js';
+import { omegaFromLambdaNm } from '../src/js/phase.js';
+import { instantiateTmmWasm } from '../src/wasm/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const WASM = join(HERE, '..', 'src', 'tmm_kernel.wasm');
+const WASM = join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm');
 if (!existsSync(WASM)) {
-    console.log('SKIP : src/tmm_kernel.wasm not built. Build it with: npm run build:wasm');
+    console.log('SKIP : src/wasm/tmm_kernel.wasm not built. Build it with: npm run build:wasm');
     process.exit(0);
 }
 

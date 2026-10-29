@@ -29,12 +29,12 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import {
-    tmm, tmmThicknessJacobian, tmmThicknessHessian, tmmNeedleScan, snellCosTheta,
-} from '../src/tmm.js';
-import { tmmPhaseDispersion, tmmPhaseThicknessJacobian } from '../src/phase.js';
-import { jetConstant } from '../src/taylorJet.js';
-import { instantiateTmmWasm } from '../src/tmmWasm.js';
+import { tmm } from '../src/js/rta.js';
+import { tmmThicknessJacobian, tmmThicknessHessian, tmmNeedleScan } from '../src/js/derivatives.js';
+import { snellCosTheta } from '../src/js/primitives.js';
+import { tmmPhaseDispersion, tmmPhaseThicknessJacobian } from '../src/js/phase.js';
+import { jetConstant } from '../src/js/jet.js';
+import { instantiateTmmWasm } from '../src/wasm/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -331,15 +331,18 @@ function portPairs(kernel, run) {
 
 // Derivatives of T are held relative to T here too, or the port of every
 // derivative through a clamped layer, where T is below 1e-43, goes unchecked.
-const WASM = join(HERE, '..', 'src', 'tmm_kernel.wasm');
+const WASM = join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm');
 const kernel = existsSync(WASM) ? await instantiateTmmWasm(readFileSync(WASM)) : null;
 const pairs = kernel ? RUNS.flatMap(run => portPairs(kernel, run).map(([label, ...rest]) =>
     [`${run.at} ${label}`, ...rest])) : [];
 for (const [label, js, wa, q, T] of pairs) agreeWithT(q, wa, js, T, PORT, `wasm ${label}`);
-if (!kernel) console.log('NOTE : src/tmm_kernel.wasm not built; the WebAssembly checks were skipped.');
+if (!kernel) console.log('NOTE : src/wasm/tmm_kernel.wasm not built; the WebAssembly checks were skipped.');
 
 console.log(`${checks} comparisons against finite differences and the port, ${pairs.length} of them WebAssembly.`);
 console.log(`worst difference as a fraction of its tolerance: ${worstFraction.toExponential(2)}, ${worstLabel}`);
 console.log(failures === 0 ? 'PASS : analytic derivatives match finite differences.'
                            : `FAIL : ${failures} comparisons outside tolerance.`);
-process.exit(failures === 0 ? 0 : 1);
+// The process ends on its own rather than through process.exit: on Windows,
+// process.exit shortly after the WebAssembly kernel has run can crash Node's
+// shutdown.
+process.exitCode = failures === 0 ? 0 : 1;

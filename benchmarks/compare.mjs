@@ -26,10 +26,10 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { tmm } from '../src/tmm.js';
-import { tmmPhaseDispersion } from '../src/phase.js';
-import { jetConstant } from '../src/taylorJet.js';
-import { instantiateTmmWasm } from '../src/tmmWasm.js';
+import { tmm } from '../src/js/rta.js';
+import { tmmPhaseDispersion } from '../src/js/phase.js';
+import { jetConstant } from '../src/js/jet.js';
+import { instantiateTmmWasm } from '../src/wasm/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const read = f => JSON.parse(readFileSync(join(HERE, f), 'utf8'));
@@ -37,7 +37,7 @@ const read = f => JSON.parse(readFileSync(join(HERE, f), 'utf8'));
 const cases = read('cases.json');
 const ref = read('reference_byrnes.json');
 
-const WASM_PATH = join(HERE, '..', 'src', 'tmm_kernel.wasm');
+const WASM_PATH = join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm');
 const kernel = existsSync(WASM_PATH)
     ? await instantiateTmmWasm(readFileSync(WASM_PATH))
     : null;

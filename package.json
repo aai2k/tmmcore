@@ -3,14 +3,15 @@
   "version": "0.4.3",
   "description": "Transfer-matrix method for multilayer thin-film optics, with exact analytic derivatives and phase dispersion. JavaScript, C and WebAssembly.",
   "type": "module",
-  "main": "./src/index.js",
+  "main": "./src/js/index.js",
   "exports": {
-    ".": "./src/index.js",
-    "./tmm.js": "./src/tmm.js",
-    "./phase.js": "./src/phase.js",
-    "./taylorJet.js": "./src/taylorJet.js",
-    "./tmmWasm.js": "./src/tmmWasm.js",
-    "./tmm_kernel.wasm": "./src/tmm_kernel.wasm",
+    ".": "./src/js/index.js",
+    "./wasm": "./src/wasm/index.js",
+    "./tmm.js": "./src/js/index.js",
+    "./phase.js": "./src/js/index.js",
+    "./taylorJet.js": "./src/js/jet.js",
+    "./tmmWasm.js": "./src/wasm/index.js",
+    "./tmm_kernel.wasm": "./src/wasm/tmm_kernel.wasm",
     "./tmm_kernel.c": "./src/c/tmm_kernel.c",
     "./package.json": "./package.json"
   },
@@ -20,7 +21,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node tests/equivalence.mjs && node tests/growing_equivalence.mjs && node tests/growing_eval_equivalence.mjs && node tests/absorbing_incident.mjs && node tests/derivatives_fd.mjs && node tests/edge_cases.mjs && node tests/opaque_transmittance.mjs && node tests/wasm_allocation.mjs && node tests/layer_keys.mjs && node tests/kernel_exports.mjs",
+    "test": "node tests/equivalence.mjs && node tests/growing_equivalence.mjs && node tests/growing_eval_equivalence.mjs && node tests/absorbing_incident.mjs && node tests/derivatives_fd.mjs && node tests/edge_cases.mjs && node tests/opaque_transmittance.mjs && node tests/wasm_allocation.mjs && node tests/layer_keys.mjs && node tests/kernel_exports.mjs && node tests/calls.mjs && node tests/old_names.mjs && node tests/js_grid_kernels.mjs && node tests/parity.mjs",
     "compare": "node benchmarks/compare.mjs",
     "examples": "node examples/01-single-layer.mjs && node examples/02-ar-coating.mjs && node examples/03-metal-mirror.mjs && node examples/04-refine.mjs && node examples/05-angle-map.mjs && node examples/06-needle.mjs && node examples/07-jacobian-map.mjs && node examples/08-group-delay.mjs",
     "build:wasm": "node scripts/build-wasm.mjs",

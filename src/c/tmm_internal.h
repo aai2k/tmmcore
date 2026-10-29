@@ -38,9 +38,9 @@
  * `theta_deg` with `nTheta` values: 1 for one angle across the grid, or one
  * per wavelength.
  *
- * All arithmetic is double precision. The JavaScript implementation shipped
- * in this package is the behavioural reference; the two agree to float64
- * round-off (see tests/).
+ * All arithmetic is double precision. The JavaScript implementation in src/js
+ * is the behavioural reference, and the comments here name the file of it
+ * that each piece mirrors; the two agree to float64 round-off (see tests/).
  *
  * Builds with any C99 compiler; no dependencies beyond libm.
  *
@@ -75,7 +75,7 @@
 #define BINARY_RESCALE_LIMIT 18446744073709551616.0   /* 2^64 */
 
 /* ── Complex number arithmetic (cx = {re, im}) ───────────────────────────────
- * Mirrors cadd/csub/cmul/cdiv/cabs2/cconj/csqrt/ccos/csin in tmm.js. */
+ * Mirrors cadd/csub/cmul/cdiv/cabs2/cconj/csqrt/ccos/csin in primitives.js. */
 
 typedef struct { double re, im; } cx;
 
@@ -184,7 +184,7 @@ static inline void layers_at(const grid_layout *g, int li, double *layers) {
  * 10.11–10.13): an absorbing incident medium carries a wave whose amplitude
  * falls along the normal only, and every medium's cosθ follows from that one
  * real invariant. Mirrors incidence / snellCosTheta / incidentCosTheta in
- * tmm.js. */
+ * primitives.js. */
 
 /* sinθ0 and cosθ0 of the angle of incidence. The cosine is taken directly:
  * sqrt(1 − sin²θ0) keeps none of it near grazing incidence. */
@@ -232,7 +232,7 @@ static inline cx incidentCosTheta(cx n0, incidence_t a) {
  * carried as a log scale for t, T and fields. The bound tests Im δ whatever k
  * is, so a thick lossless layer past the critical angle reaches it too.
  * Mirrors layerPhase / layerLogScale / layerAdmittance / phaseMatrix /
- * layerMatrix in tmm.js. */
+ * layerMatrix in primitives.js. */
 
 /* Phase thickness δ = (2π/λ) n d cosθ (Macleod 5th ed., Eq. 9.2) with Im δ
  * held to ±MAX_IM_DELTA. *excess, when given, is |Im δ| − MAX_IM_DELTA where
@@ -279,7 +279,7 @@ static inline mat2 phaseMatrix(cx delta, cx eta) {
  * admittance diverges; phaseMatrix is 0/0 while its limit is I + d·G with
  * G = [[0, −iP], [−iS, 0]], P = Q/η, S = Qη, Q = dδ/dd, and (P, S) =
  * (2π/λ, 0) for s and (0, (2π/λ) n²) for p. Mirrors the section of the same
- * name in tmm.js. */
+ * name in primitives.js. */
 
 typedef struct { cx P, S; } generator_t;
 
@@ -323,7 +323,7 @@ static inline mat2 layerMatrix(cx nj, double dj_nm, double lambda_nm, cx cosThet
  * The substrate closes the product as [B, C] = M·[1, ηs] (Macleod Eq. 2.113);
  * at its critical angle in p the vector is [0, 1], r keeps only the direction
  * of [B, C], and t = 2η0 bs/(η0B + C) and the transmitted flux Re(cs·conj(bs))
- * vanish. Mirrors substrateVector / transmittedFlux in tmm.js. */
+ * vanish. Mirrors substrateVector / transmittedFlux in primitives.js. */
 
 static inline vec2 substrateVector(cx ns, cx cosThetaS, int pol) {
     vec2 v;
@@ -342,7 +342,7 @@ static inline double transmittedFlux(vec2 s) { return cmul(s.y, cconj(s.x)).re; 
  *   A = 1 − R − T + 2 (Im η0 / Re η0) Im r,
  * whose last term, the mixed Poynting vector of an absorbing incident medium
  * (Macleod §2.13, Eq. 2.163), is zero for a transparent one. Mirrors
- * layerAbsorptance in tmm.js. */
+ * layerAbsorptance in primitives.js. */
 static inline double layerAbsorptance(double R, double T, cx eta0, cx r) {
     return 1.0 - R - T + 2.0 * (eta0.im / eta0.re) * r.im;
 }
@@ -350,7 +350,7 @@ static inline double layerAbsorptance(double R, double T, cx eta0, cx r) {
 /* ── Third-order Taylor jets ─────────────────────────────────────────────────
  * A jet holds [f, f', f''/2!, f'''/3!], each entry complex. Ordinary power-
  * series algebra on these differentiates a function exactly, with no finite
- * differences. Port of taylorJet.js; where the JS multiplies by a reciprocal
+ * differences. Port of src/js/jet.js; where the JS multiplies by a reciprocal
  * rather than dividing, so does this, since the two are not bit-identical. */
 
 #define JET_N 4

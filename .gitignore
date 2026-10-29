@@ -17,5 +17,5 @@ site/
 # Generated benchmark tables; published numbers live in docs/comparison.md
 benchmarks/tables.md
 
-# WebAssembly build output, checked before it replaces src/tmm_kernel.wasm
+# WebAssembly build output, checked before it replaces src/wasm/tmm_kernel.wasm
 build/

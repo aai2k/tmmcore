@@ -20,12 +20,12 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import {
-    tmm, tmmThicknessJacobian, tmmThicknessHessian, tmmNeedleScan, snellCosTheta,
-} from '../src/tmm.js';
-import { tmmPhaseDispersion, tmmPhaseThicknessJacobian } from '../src/phase.js';
-import { jetConstant } from '../src/taylorJet.js';
-import { instantiateTmmWasm } from '../src/tmmWasm.js';
+import { tmm } from '../src/js/rta.js';
+import { tmmThicknessJacobian, tmmThicknessHessian, tmmNeedleScan } from '../src/js/derivatives.js';
+import { snellCosTheta } from '../src/js/primitives.js';
+import { tmmPhaseDispersion, tmmPhaseThicknessJacobian } from '../src/js/phase.js';
+import { jetConstant } from '../src/js/jet.js';
+import { instantiateTmmWasm } from '../src/wasm/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -230,7 +230,7 @@ function phasePairs(kernel, theta, pol) {
     return ['magnitudeSquared', 'phaseRad'].map(q => [`phase ${theta}° ${pol} ${q}`, a[q], b[q]]);
 }
 
-const WASM = join(HERE, '..', 'src', 'tmm_kernel.wasm');
+const WASM = join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm');
 const kernel = existsSync(WASM) ? await instantiateTmmWasm(readFileSync(WASM)) : null;
 const pairs = kernel ? [
     ...grid(CASES, POLS).flatMap(([c, pol]) => portPairs(kernel, c, pol)),
@@ -240,7 +240,7 @@ for (const [label, js, wa] of pairs) {
     const diff = Math.abs(js - wa);
     assert.ok(diff <= 1e-12 || diff <= 1e-7 * Math.abs(js), `wasm ${label}: js=${js} wasm=${wa}`);
 }
-if (!kernel) console.log('NOTE : src/tmm_kernel.wasm not built; the WebAssembly checks were skipped.');
+if (!kernel) console.log('NOTE : src/wasm/tmm_kernel.wasm not built; the WebAssembly checks were skipped.');
 
 console.log(`exact critical angle found at θ0 = ${critical}°`);
 console.log(`WebAssembly comparisons: ${pairs.length}`);

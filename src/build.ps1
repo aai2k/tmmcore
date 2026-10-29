@@ -84,7 +84,7 @@ if (-not (Get-Command emcc -ErrorAction SilentlyContinue)) {
         Write-Error @"
 emcc (Emscripten) not found. The WASM TMM kernel needs it to (re)build.
 
-A prebuilt src/tmm_kernel.wasm is committed to the repo, so the desktop
+A prebuilt src/wasm/tmm_kernel.wasm is committed to the repo, so the desktop
 build (npm run dist) will STILL succeed without emcc -- it just reuses that
 artifact. Only run this when you actually changed the C in src/c.
 

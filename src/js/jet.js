@@ -1,5 +1,5 @@
 /**
- * taylorJet.js : third-order truncated Taylor arithmetic for complex functions.
+ * jet.js : third-order truncated Taylor arithmetic for complex functions.
  *
  * A jet stores the coefficients of a truncated power series:
  *
@@ -115,7 +115,7 @@ export function jetDivide(numerator, denominator) {
     return jetMultiply(numerator, jetReciprocal(denominator));
 }
 
-/** Principal square root, branch matching `csqrt` in tmm.js. */
+/** Principal square root, branch matching `csqrt` in primitives.js. */
 export function jetSqrt(jet) {
     const result = Array.from({ length: JET_ORDER + 1 }, zero);
     result[0] = sqrtComplex(jet[0]);
@@ -215,16 +215,16 @@ export function jetCompose(value, derivatives, xJet) {
  *
  * Needs no value for c: with λ and ω both given, every derivative follows from
  * λ' = -λ/ω. Units are therefore the caller's own, and the wavelength unit of
- * the result is whatever `lambda` was given in.
+ * the result is whatever `wavelength` was given in.
  */
-export function wavelengthOmegaJet(lambda, omega) {
+export function wavelengthOmegaJet(wavelength, omega) {
     // Written as repeated multiplication rather than `omega ** 3` so the C
     // kernel can produce the identical double.
     return [
-        [lambda, 0],
-        [-lambda / omega, 0],
-        [lambda / (omega * omega), 0],
-        [-lambda / (omega * omega * omega), 0],
+        [wavelength, 0],
+        [-wavelength / omega, 0],
+        [wavelength / (omega * omega), 0],
+        [-wavelength / (omega * omega * omega), 0],
     ];
 }
 
@@ -247,11 +247,12 @@ export function jetClampRealMinimum(jet, minimum) {
  * Bound the imaginary part, holding it at the limit at every order when it
  * bites; the real part, which carries the phase, is kept.
  *
- * Guards the same overflow `layerMatrix` guards in tmm.js: the phase thickness
- * of a strongly absorbing layer grows without bound and cosh of it overflows.
- * Past the limit the layer matrix built from the held phase is the true one
- * divided by a real factor, which cancels from r and from every phase; callers
- * that need |t| carry it as a log scale, as tmm.js does with layerLogScale.
+ * Guards the same overflow `layerMatrix` guards in primitives.js: the phase
+ * thickness of a strongly absorbing layer grows without bound and cosh of it
+ * overflows. Past the limit the layer matrix built from the held phase is the
+ * true one divided by a real factor, which cancels from r and from every
+ * phase; callers that need |t| carry it as a log scale, as rta.js does with
+ * layerLogScale.
  */
 export function jetClampImaginary(jet, limit) {
     if (jet[0][1] > limit) {
