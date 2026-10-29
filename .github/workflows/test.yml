@@ -39,12 +39,12 @@ jobs:
       - uses: actions/checkout@v7
 
       # The kernel claims to be portable C99 needing nothing but libm. Compile
-      # it warning-free with whatever the platform provides — gcc on Linux,
-      # clang on macOS, MSVC on Windows — so the claim is tested rather than
-      # asserted.
+      # each source, and tmm_kernel.c that includes them all, warning-free with
+      # whatever the platform provides (gcc on Linux, clang on macOS, MSVC on
+      # Windows), so the claim is tested rather than asserted.
       - name: Compile (gcc / clang)
         if: runner.os != 'Windows'
-        run: cc -std=c99 -pedantic -Wall -Wextra -Werror -O2 -c src/tmm_kernel.c -o tmm_kernel.o
+        run: cc -std=c99 -pedantic -Wall -Wextra -Werror -O2 -c src/c/*.c
 
       - name: Compile (MSVC)
         if: runner.os == 'Windows'
@@ -60,5 +60,5 @@ jobs:
           Enter-VsDevShell -VsInstallPath $installPath -SkipAutomaticLocation `
             -DevCmdArguments '-arch=x64 -host_arch=x64'
 
-          cl /c /W3 /WX /O2 src\tmm_kernel.c
+          cl /c /W3 /WX /O2 src\c\*.c
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

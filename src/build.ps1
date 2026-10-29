@@ -86,7 +86,7 @@ emcc (Emscripten) not found. The WASM TMM kernel needs it to (re)build.
 
 A prebuilt src/tmm_kernel.wasm is committed to the repo, so the desktop
 build (npm run dist) will STILL succeed without emcc -- it just reuses that
-artifact. Only run this when you actually changed tmm_kernel.c.
+artifact. Only run this when you actually changed the C in src/c.
 
 To build the kernel here, do ONE of:
   * install emsdk and re-run with auto-detect:

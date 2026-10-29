@@ -11,7 +11,7 @@
     "./taylorJet.js": "./src/taylorJet.js",
     "./tmmWasm.js": "./src/tmmWasm.js",
     "./tmm_kernel.wasm": "./src/tmm_kernel.wasm",
-    "./tmm_kernel.c": "./src/tmm_kernel.c",
+    "./tmm_kernel.c": "./src/c/tmm_kernel.c",
     "./package.json": "./package.json"
   },
   "files": [
@@ -24,7 +24,7 @@
     "compare": "node benchmarks/compare.mjs",
     "examples": "node examples/01-single-layer.mjs && node examples/02-ar-coating.mjs && node examples/03-metal-mirror.mjs && node examples/04-refine.mjs && node examples/05-angle-map.mjs && node examples/06-needle.mjs && node examples/07-jacobian-map.mjs && node examples/08-group-delay.mjs",
     "build:wasm": "node scripts/build-wasm.mjs",
-    "build:native": "cc -std=c99 -pedantic -Wall -Wextra -O2 -c src/tmm_kernel.c -o tmm_kernel.o"
+    "build:native": "cc -std=c99 -pedantic -Wall -Wextra -O2 -c src/c/tmm_kernel.c -o tmm_kernel.o"
   },
   "keywords": [
     "thin-film",

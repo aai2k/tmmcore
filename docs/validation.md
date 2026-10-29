@@ -237,7 +237,7 @@ Up to 0.4.0 the derivative and phase kernels did not check their allocations, an
 The kernel is C99 with no dependencies beyond libm, so it can be checked outside WebAssembly entirely:
 
 ```bash
-cc -std=c99 -pedantic -Wall -Wextra -O2 -c src/tmm_kernel.c
+cc -std=c99 -pedantic -Wall -Wextra -O2 -c src/c/tmm_kernel.c
 ```
 
 Verified warning-free under **GCC 16.1.0**, with the native build reproducing the closed-form quarter-wave result to $1.4\times10^{-17}$, and s and p identical at normal incidence.

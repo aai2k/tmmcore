@@ -9,8 +9,9 @@
  * does not validate. The module is built under build/ and replaces
  * src/tmm_kernel.wasm only once it passes.
  *
- * The exported functions are the `export_name` attributes in tmm_kernel.c; only
- * the allocator is listed here.
+ * The exported functions are the `export_name` attributes in the sources under
+ * src/c; only the allocator is listed here. The sources are compiled together
+ * with link-time optimization, so a helper inlines across files.
  *
  *   npm run build:wasm
  *
@@ -27,8 +28,10 @@ const BUILT = 'build/tmm_kernel.wasm';
 const OUTPUT = 'src/tmm_kernel.wasm';
 const WINDOWS = process.platform === 'win32';
 
+const SOURCES = ['rta.c', 'growing.c', 'derivatives.c', 'phase.c', 'jet.c'].map(file => `src/c/${file}`);
+
 const EMCC_ARGS = [
-    'src/tmm_kernel.c', '-O3', '--no-entry',
+    ...SOURCES, '-O3', '-flto', '--no-entry',
     '-sSTANDALONE_WASM=1', '-sALLOW_MEMORY_GROWTH=1',
     '-sMIN_CHROME_VERSION=108',
     '-sEXPORTED_FUNCTIONS=_malloc,_free',
@@ -69,7 +72,7 @@ mkdirSync(join(ROOT, dirname(BUILT)), { recursive: true });
 const built = runTool('emcc', EMCC_ARGS, { stdio: 'inherit' });
 if (built.error || built.status !== 0) {
     fail(`emcc failed (exit ${built.status}). Is emsdk activated? A prebuilt ${OUTPUT} is ` +
-        'committed, so emcc is needed only after a change to tmm_kernel.c.');
+        'committed, so emcc is needed only after a change to the C under src/c.');
 }
 
 const config = runTool('em-config', ['BINARYEN_ROOT']);

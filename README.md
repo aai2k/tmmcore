@@ -96,10 +96,10 @@ The [comparison with four other TMM packages](https://aai2k.github.io/tmmcore/co
 
 ## Using the C directly
 
-`src/tmm_kernel.c` is C99 with no dependencies beyond libm. Drop it into a project and compile:
+The C in `src/c` is C99 with no dependencies beyond libm. Copy the folder into a project and compile `tmm_kernel.c`, which includes the other sources:
 
 ```bash
-cc -std=c99 -O2 -c src/tmm_kernel.c
+cc -std=c99 -O2 -c src/c/tmm_kernel.c
 ```
 
 ## Licence
