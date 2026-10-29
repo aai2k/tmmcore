@@ -30,11 +30,12 @@ import { tmmThicknessJacobian, tmmThicknessHessian, tmmNeedleScan } from '../src
 import {
     omegaFromLambdaNm, tmmPhaseDispersion, tmmPhaseThicknessJacobian,
 } from '../src/js/phase.js';
-import {
-    jetAdd, jetConstant, jetDivide, jetMultiply, jetReciprocal, jetScale,
-    wavelengthOmegaJet,
-} from '../src/js/jet.js';
+import { jetConstant, jetDivide, jetScale } from '../src/js/jet.js';
 import { instantiateTmmWasm } from '../src/wasm/index.js';
+import {
+    n0, ns, STACKS, LAMBDAS, ANGLES, POLS, CANDIDATES, INTRA_FRACS,
+    cauchyJet, DISPERSIVE, PHASE_STACKS, OVERFLOW_STACK, PHASE_SUBSTRATE, PHASE_GRID,
+} from './cases.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WASM = join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm');
@@ -47,27 +48,6 @@ if (!existsSync(WASM)) {
 const ABS_RTA = 1e-9;      // R, T, A live in [0,1]
 const REL_DERIV = 1e-7;    // analytic derivatives span many orders of magnitude
 const ABS_DERIV = 1e-12;
-
-// ── Cases ────────────────────────────────────────────────────────────────────
-// Indices are ñ = n + ik with k ≥ 0. Ag-like values give a genuinely absorbing,
-// numerically demanding stack; metals are where implementations diverge.
-
-const n0 = [1, 0], ns = [1.52, 0];
-const H = [2.35, 0.0005], L = [1.46, 0], AG = [0.15, 3.2];
-
-const STACKS = {
-    'AR 4-layer': [[H, 110], [L, 95], [H, 60], [L, 130]],
-    'Ag 7-layer': [[H, 88], [AG, 22], [L, 140], [H, 70], [AG, 15], [L, 210], [H, 55]],
-    'QW 21-layer': Array.from({ length: 21 }, (_, i) => (i % 2 ? [L, 94.2] : [H, 58.5])),
-    'opaque Ag': [[L, 120], [AG, 400], [H, 80]],
-};
-const LAMBDAS = [400, 550, 632.8, 1064];
-const ANGLES = [0, 15, 45, 60];
-const POLS = [['s', 0], ['p', 1]];
-const CANDIDATES = [H, L, AG];
-// Needle positions inside each layer, as fractions of its thickness from the
-// incident side; 0 and 1 coincide with the gaps either side of it.
-const INTRA_FRACS = [0, 0.37, 1];
 
 const mk = rows => rows.map(([n, d]) => ({ n, d }));
 
@@ -159,45 +139,7 @@ for (const [stackName, rows] of Object.entries(STACKS)) {
 }
 
 // ── Phase dispersion ─────────────────────────────────────────────────────────
-// The phase kernel takes refractive indices as Taylor jets in angular frequency.
-// tmmcore owns no material models, so the test builds its own: a Cauchy
-// dispersion composed through the jet arithmetic, which is exactly how a caller
-// is expected to feed any formula they can write.
-
-function cauchyJet(lambda, omega, A, B, C, k) {
-    const lambdaJet = wavelengthOmegaJet(lambda, omega);
-    const inverseSquare = jetReciprocal(jetMultiply(lambdaJet, lambdaJet));
-    return jetAdd(
-        jetConstant(A, k),
-        jetAdd(jetScale(inverseSquare, B),
-               jetScale(jetMultiply(inverseSquare, inverseSquare), C)),
-    );
-}
-
-// A, B (nm²), C (nm⁴), k : high index, low index, and a lossy layer.
-const DISPERSIVE = {
-    H: [2.25, 2.4e4, 1.1e9, 0.0005],
-    L: [1.44, 3.6e3, 2.0e8, 0],
-    M: [1.85, 1.2e4, 0, 0.02],
-    // Opaque: 20 µm of it saturates the imaginary-phase clamp, so each layer
-    // multiplies the matrix magnitude by about cosh(50) and a stack of six
-    // pushes the product past the rescale threshold.
-    K: [2.0, 0, 0, 0.6],
-};
-const PHASE_STACKS = {
-    'chirped 12-layer': Array.from({ length: 12 }, (_, i) =>
-        [i % 2 ? 'L' : 'H', 70 + 7.5 * i]),
-    'lossy 5-layer': [['H', 120], ['M', 45], ['L', 180], ['M', 30], ['H', 95]],
-    'QW 21-layer': Array.from({ length: 21 }, (_, i) => (i % 2 ? ['L', 94.2] : ['H', 58.5])),
-    'with a zero layer': [['H', 110], ['L', 0], ['H', 88]],
-    'with a negative layer': [['H', 110], ['L', -25], ['H', 88]],
-};
-
-// Kept out of the loop above: this one exists to take the matrix product past
-// the rescale threshold, and its saturated phases make TOD a difference of
-// nearly equal terms far noisier than the tolerances tuned for physically
-// ordinary stacks.
-const OVERFLOW_STACK = [['H', 110], ...Array.from({ length: 6 }, () => ['K', 20000]), ['L', 90]];
+// The indices are Cauchy jets built through the jet arithmetic (cases.mjs).
 
 let phaseChecks = 0;
 const worstPhase = { abs: 0, rel: 0 };
@@ -234,10 +176,10 @@ if (!k.hasPhase()) {
     for (const [stackName, rows] of Object.entries(PHASE_STACKS)) {
         for (const lam of LAMBDAS) {
             const omega = omegaFromLambdaNm(lam);
-            const jetFor = name => cauchyJet(lam, omega, ...DISPERSIVE[name]);
+            const jetFor = name => cauchyJet(lam, omega, DISPERSIVE[name]);
             const layers = rows.map(([name, d]) => ({ nJet: jetFor(name), d }));
             const n0Jet = jetConstant(1);
-            const nsJet = cauchyJet(lam, omega, 1.5, 4.2e3, 0, 0);
+            const nsJet = cauchyJet(lam, omega, PHASE_SUBSTRATE);
             for (const th of ANGLES) {
                 for (const [pol, code] of POLS) {
                     const at = `${stackName} λ=${lam} θ=${th} ${pol}`;
@@ -277,13 +219,13 @@ if (!k.hasPhase()) {
 
     // Batched grid against the point evaluator, which is where a layout mistake
     // in the [layer][λ] packing would show up.
-    const gridLambdas = Array.from({ length: 40 }, (_, i) => 500 + i * 7.5);
+    const gridLambdas = PHASE_GRID;
     const gridRows = PHASE_STACKS['chirped 12-layer'];
     const thick = gridRows.map(([, d]) => d);
     const omegas = gridLambdas.map(omegaFromLambdaNm);
-    const jetAt = (name, i) => cauchyJet(gridLambdas[i], omegas[i], ...DISPERSIVE[name]);
+    const jetAt = (name, i) => cauchyJet(gridLambdas[i], omegas[i], DISPERSIVE[name]);
     const n0Jets = gridLambdas.map(() => jetConstant(1));
-    const nsJets = gridLambdas.map((lam, i) => cauchyJet(lam, omegas[i], 1.5, 4.2e3, 0, 0));
+    const nsJets = gridLambdas.map((lam, i) => cauchyJet(lam, omegas[i], PHASE_SUBSTRATE));
     const layerJets = gridRows.map(([name]) => gridLambdas.map((_, i) => jetAt(name, i)));
     for (const [pol, code] of POLS) {
         const batch = k.tmmPhaseSpectrum(gridLambdas, n0Jets, nsJets, layerJets, thick, 22.5, code);
@@ -352,11 +294,11 @@ if (!k.hasPhase()) {
         const lam = 550;
         const omega = omegaFromLambdaNm(lam);
         const n0Jet = jetConstant(1);
-        const nsJet = cauchyJet(lam, omega, 1.5, 4.2e3, 0, 0);
+        const nsJet = cauchyJet(lam, omega, PHASE_SUBSTRATE);
         const rows = OVERFLOW_STACK;
         const stackThick = rows.map(([, d]) => d);
         const layers = rows.map(([name, d]) => ({
-            nJet: cauchyJet(lam, omega, ...DISPERSIVE[name]), d,
+            nJet: cauchyJet(lam, omega, DISPERSIVE[name]), d,
         }));
         const point = tmmPhaseDispersion(lam, 0, 's', n0Jet, nsJet, layers);
         const jacobian = tmmPhaseThicknessJacobian(lam, 0, 's', n0Jet, nsJet, layers);
@@ -389,7 +331,7 @@ if (!k.hasPhase()) {
         if (k.hasPhaseJacobianSpectrum()) {
             const batch = k.tmmPhaseJacobianSpectrum(
                 [lam], [n0Jet], [nsJet],
-                rows.map(([name]) => [cauchyJet(lam, omega, ...DISPERSIVE[name])]),
+                rows.map(([name]) => [cauchyJet(lam, omega, DISPERSIVE[name])]),
                 stackThick, 0, 0);
             for (const side of ['r', 't']) {
                 nearPhase(kernel[side].magnitudeSquared, batch[side].magnitudeSquared[0],
@@ -408,9 +350,9 @@ if (!k.hasPhase()) {
         const lam = 550;
         const omega = omegaFromLambdaNm(lam);
         const n0Jet = jetConstant(1);
-        const nsJet = cauchyJet(lam, omega, 1.5, 4.2e3, 0, 0);
+        const nsJet = cauchyJet(lam, omega, PHASE_SUBSTRATE);
         const layers = PHASE_STACKS['with a negative layer']
-            .map(([name, d]) => ({ nJet: cauchyJet(lam, omega, ...DISPERSIVE[name]), d }));
+            .map(([name, d]) => ({ nJet: cauchyJet(lam, omega, DISPERSIVE[name]), d }));
         const point = tmmPhaseDispersion(lam, 0, 's', n0Jet, nsJet, layers);
         const jacobian = tmmPhaseThicknessJacobian(lam, 0, 's', n0Jet, nsJet, layers);
         for (const side of ['r', 't']) {

@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tmmcore"
+dynamic = ["version"]
+description = "Transfer-matrix method for multilayer thin-film optics, with exact analytic derivatives and phase dispersion."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.9"
+dependencies = ["numpy>=1.20"]
+authors = [{ name = "Andrey Achapovsky" }]
+keywords = [
+    "thin-film", "optics", "transfer-matrix", "tmm", "multilayer", "optical-coating",
+    "reflectance", "transmittance", "group-delay", "dispersion",
+]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Physics",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+]
+
+[project.urls]
+Homepage = "https://aai2k.github.io/tmmcore/"
+Repository = "https://github.com/aai2k/tmmcore"
+Issues = "https://github.com/aai2k/tmmcore/issues"
+
+[tool.setuptools]
+packages = ["tmmcore"]
+
+# One wheel per platform, built on the oldest Python and tested on the oldest
+# and the newest: the library uses no Python API, so the same wheel serves
+# every Python 3 in between.
+[tool.cibuildwheel]
+build = ["cp39-*", "cp315-*"]
+skip = ["*-musllinux_*"]
+archs = ["auto64"]
+test-command = "python -m unittest discover -s {package}/tests -v"

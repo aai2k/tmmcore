@@ -1,0 +1,57 @@
+name: python
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wheels:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # One runner per platform, each building for its own architecture.
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-15-intel, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # The wheel's tests compare it with the WebAssembly kernel on the
+      # equivalence cases, from values node writes here.
+      - name: Reference values from the WebAssembly
+        run: node python/tests/reference.mjs
+
+      - uses: pypa/cibuildwheel@v4.3.5
+        with:
+          package-dir: python
+          output-dir: wheelhouse
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheels-${{ matrix.os }}
+          path: wheelhouse/*.whl
+
+  # A version tag publishes the tested wheels to PyPI through a trusted
+  # publisher, with no token stored in the repository.
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: wheels
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1

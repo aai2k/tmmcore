@@ -19,3 +19,15 @@ benchmarks/tables.md
 
 # WebAssembly build output, checked before it replaces src/wasm/tmm_kernel.wasm
 build/
+
+# Python package build output: the kernel library (.so on macOS too), the
+# license copy setup.py makes, the reference values python/tests/reference.mjs
+# writes, and the wheel folders of a local build and of cibuildwheel. The
+# compiler's own build folder is matched by build/ above.
+python/tmmcore/_tmmcore.dll
+python/tmmcore/_tmmcore.so
+python/LICENSE
+python/tests/reference.json
+*.egg-info/
+dist/
+wheelhouse/
