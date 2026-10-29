@@ -60,14 +60,35 @@ function wasmImports() {
     };
 }
 
-// Backstop for growing-evaluator handles that are dropped without free():
+// Backstop for growing-stack handles that are dropped without free():
 // reclaims their kernel memory when the JS handle is collected. Deterministic
 // free() remains the contract; this only keeps a leak from being permanent.
-const growingEvalFinalizer = typeof FinalizationRegistry !== 'undefined'
+const growingStackFinalizer = typeof FinalizationRegistry !== 'undefined'
     ? new FinalizationRegistry(({ wasm, ptr }) => {
-        try { wasm._growing_eval_free(ptr); } catch (_) { /* instance gone */ }
+        try { wasm._tmm_growing_stack_free(ptr); } catch (_) { /* instance gone */ }
     })
     : null;
+
+// Every kernel export of tmm_kernel.c. Each is bound as `_<name>` on the
+// instance; a module missing any of them is refused.
+const KERNEL_EXPORTS = [
+    'tmm_rta', 'tmm_rta_spectrum',
+    'tmm_jacobian', 'tmm_jacobian_spectrum',
+    'tmm_hessian', 'tmm_hessian_spectrum',
+    'tmm_needle_scan', 'tmm_needle_scan_spectrum',
+    'tmm_phase', 'tmm_phase_spectrum',
+    'tmm_phase_jacobian', 'tmm_phase_jacobian_spectrum',
+    'tmm_monitor_curve', 'tmm_deposition_spectra',
+    'tmm_growing_stack_create', 'tmm_growing_stack_set_top',
+    'tmm_growing_stack_sample', 'tmm_growing_stack_free',
+    'tmm_jet_constant', 'tmm_jet_from_derivatives', 'tmm_jet_derivatives',
+    'tmm_jet_add', 'tmm_jet_subtract', 'tmm_jet_scale', 'tmm_jet_multiply',
+    'tmm_jet_reciprocal', 'tmm_jet_divide', 'tmm_jet_sqrt', 'tmm_jet_exp',
+    'tmm_jet_log', 'tmm_jet_power', 'tmm_jet_sin_cos', 'tmm_jet_sin', 'tmm_jet_cos',
+    'tmm_jet_compose', 'tmm_wavelength_omega_jet', 'tmm_jet_with_imaginary_part',
+    'tmm_jet_real_part', 'tmm_jet_clamp_real_minimum', 'tmm_jet_clamp_imaginary',
+    'tmm_jet_is_finite', 'tmm_omega_from_lambda_nm',
+];
 
 export class TmmWasmInstance {
     constructor(instance) {
@@ -80,39 +101,21 @@ export class TmmWasmInstance {
         this.memory = ex.memory;
         this.malloc = ex.malloc || ex._malloc;
         this.free = ex.free || ex._free;
-        this._tmm_one = ex.tmm_one || ex._tmm_one;
-        this._tmm_spectrum = ex.tmm_spectrum || ex._tmm_spectrum;
-        this._tmm_jacobian = ex.tmm_jacobian || ex._tmm_jacobian;
-        this._tmm_needle_scan = ex.tmm_needle_scan || ex._tmm_needle_scan;
-        // Optional (added later for SQP/Newton accel): a .wasm built before the
-        // Hessian kernel existed simply lacks it → callers fall back to JS.
-        this._tmm_hessian = ex.tmm_hessian || ex._tmm_hessian || null;
-        // Optional, same reason: the phase-dispersion kernel arrived after the
-        // spectral one, so an older artifact lacks these three.
-        this._tmm_phase_one = ex.tmm_phase_one || ex._tmm_phase_one || null;
-        this._tmm_phase_spectrum = ex.tmm_phase_spectrum || ex._tmm_phase_spectrum || null;
-        this._tmm_phase_jacobian = ex.tmm_phase_jacobian || ex._tmm_phase_jacobian || null;
-        // Optional, same reason: the batched phase Jacobian arrived after the
-        // three above, for fitting a whole measured Ψ/Δ or group-delay spectrum.
-        this._tmm_phase_jacobian_spectrum = ex.tmm_phase_jacobian_spectrum
-            || ex._tmm_phase_jacobian_spectrum || null;
-        // Optional, same reason: the growing-stack kernels (monitor curve and
-        // per-step deposition spectra) arrived after all of the above.
-        this._tmm_monitor_curve = ex.tmm_monitor_curve || ex._tmm_monitor_curve || null;
-        this._tmm_deposition_spectra = ex.tmm_deposition_spectra || ex._tmm_deposition_spectra || null;
-        // Optional, same reason: the persistent growing-layer evaluator
-        // (wavelength-grid-per-call) arrived after the two kernels above.
-        this._growing_eval_create = ex.tmm_growing_eval_create || ex._tmm_growing_eval_create || null;
-        this._growing_eval_set_top = ex.tmm_growing_eval_set_top || ex._tmm_growing_eval_set_top || null;
-        this._growing_eval_sample = ex.tmm_growing_eval_sample || ex._tmm_growing_eval_sample || null;
-        this._growing_eval_free = ex.tmm_growing_eval_free || ex._tmm_growing_eval_free || null;
-        const missingExports = !this.malloc || !this.free || !this._tmm_one ||
-            !this._tmm_spectrum || !this._tmm_jacobian || !this._tmm_needle_scan;
-        if (missingExports) {
-            throw new Error('tmmWasm: required exports missing from module');
+        const missing = KERNEL_EXPORTS.filter(name => typeof ex[name] !== 'function');
+        if (!this.malloc || !this.free) missing.push('malloc/free');
+        if (missing.length) {
+            throw new Error(`tmmWasm: exports missing from module: ${missing.join(', ')}`);
         }
+        for (const name of KERNEL_EXPORTS) this[`_${name}`] = ex[name];
         this._scratchPtr = 0;   // persistent per-call scratch arena (lazy)
         this._scratchN = 0;
+    }
+
+    // A grid call's angle, written to kernel memory as an array of one.
+    _thetaArray(theta_deg) {
+        const ptr = this._alloc(1);
+        this._view(ptr, 1)[0] = theta_deg;
+        return ptr;
     }
 
     _alloc(nDoubles) {
@@ -156,7 +159,7 @@ export class TmmWasmInstance {
             buf[3 * i + 2] = layers[i].d;
         }
         const outPtr = ptr + 3 * N * 8;
-        this._tmm_one(lambda_nm, theta_deg, polCode | 0,
+        this._tmm_rta(lambda_nm, theta_deg, polCode | 0,
             n0[0], n0[1], ns[0], ns[1], ptr, N, outPtr);
         return { R: buf[3 * N], T: buf[3 * N + 1], A: buf[3 * N + 2] };
     }
@@ -177,6 +180,7 @@ export class TmmWasmInstance {
         const N = thick.length;
 
         const lamPtr = this._alloc(nLam);
+        const thetaPtr = this._thetaArray(theta_deg);
         const n0Ptr  = this._alloc(2 * nLam);
         const nsPtr  = this._alloc(2 * nLam);
         const mPtr   = this._alloc(Math.max(1, 2 * N * nLam));
@@ -205,28 +209,23 @@ export class TmmWasmInstance {
             }
         }
 
-        this._tmm_spectrum(lamPtr, nLam, n0Ptr, nsPtr, mPtr, thPtr, N, theta_deg,
+        this._tmm_rta_spectrum(lamPtr, nLam, thetaPtr, 1, n0Ptr, nsPtr, mPtr, thPtr, N,
             rsPtr, tsPtr, asPtr, rpPtr, tpPtr, apPtr);
 
         // Copy outputs out of wasm memory before freeing.
         const cp = (p) => Float64Array.from(this._view(p, nLam));
         const res = { Rs: cp(rsPtr), Ts: cp(tsPtr), As: cp(asPtr),
                       Rp: cp(rpPtr), Tp: cp(tpPtr), Ap: cp(apPtr) };
-        for (const p of [lamPtr, n0Ptr, nsPtr, mPtr, thPtr,
+        for (const p of [lamPtr, thetaPtr, n0Ptr, nsPtr, mPtr, thPtr,
                          rsPtr, tsPtr, asPtr, rpPtr, tpPtr, apPtr]) this.free(p);
         return res;
     }
 
-    /** True if the loaded module carries the growing-stack kernels. */
-    hasGrowingKernels() {
-        return !!(this._tmm_monitor_curve && this._tmm_deposition_spectra);
-    }
+    /** True: every build since 0.5.0 carries the growing-stack kernels. */
+    hasGrowingKernels() { return true; }
 
-    /** True if the loaded module carries the persistent growing-layer evaluator. */
-    hasGrowingEval() {
-        return !!(this._growing_eval_create && this._growing_eval_set_top
-            && this._growing_eval_sample && this._growing_eval_free);
-    }
+    /** True: every build since 0.5.0 carries the persistent growing-layer evaluator. */
+    hasGrowingEval() { return true; }
 
     /**
      * Monitor curve of one growing layer at one wavelength: the completed
@@ -292,14 +291,15 @@ export class TmmWasmInstance {
     depositionSpectra(lambdas, n0List, nsList, layerNK, thick, theta_deg) {
         const nLam = lambdas.length;
         const N = thick.length;
-        const nOut = Math.max(1, N * nLam);
+        const nOut = N * nLam;
 
         const lamPtr = this._alloc(nLam);
+        const thetaPtr = this._thetaArray(theta_deg);
         const n0Ptr  = this._alloc(2 * nLam);
         const nsPtr  = this._alloc(2 * nLam);
         const mPtr   = this._alloc(Math.max(1, 2 * N * nLam));
         const thPtr  = this._alloc(Math.max(1, N));
-        const outPtrs = Array.from({ length: 6 }, () => this._alloc(nOut));
+        const outPtrs = Array.from({ length: 6 }, () => this._alloc(Math.max(1, nOut)));
 
         const lam = this._view(lamPtr, nLam);
         const n0v = this._view(n0Ptr, 2 * nLam);
@@ -321,10 +321,10 @@ export class TmmWasmInstance {
             }
         }
 
-        const ok = this._tmm_deposition_spectra(lamPtr, nLam, n0Ptr, nsPtr, mPtr, thPtr, N,
-            theta_deg, ...outPtrs);
+        const ok = this._tmm_deposition_spectra(lamPtr, nLam, thetaPtr, 1, n0Ptr, nsPtr, mPtr, thPtr, N,
+            ...outPtrs);
         if (!ok) {
-            for (const p of [lamPtr, n0Ptr, nsPtr, mPtr, thPtr, ...outPtrs]) this.free(p);
+            for (const p of [lamPtr, thetaPtr, n0Ptr, nsPtr, mPtr, thPtr, ...outPtrs]) this.free(p);
             // The outputs were never written; returning them would hand the
             // caller uninitialized memory as spectra.
             throw new Error('tmmWasm: deposition-spectra state allocation failed');
@@ -332,7 +332,7 @@ export class TmmWasmInstance {
 
         const cp = (p) => Float64Array.from(this._view(p, nOut));
         const [Rs, Ts, Rp, Tp, Rrs, Rrp] = outPtrs.map(cp);
-        for (const p of [lamPtr, n0Ptr, nsPtr, mPtr, thPtr, ...outPtrs]) this.free(p);
+        for (const p of [lamPtr, thetaPtr, n0Ptr, nsPtr, mPtr, thPtr, ...outPtrs]) this.free(p);
         return { Rs, Ts, Rp, Tp, Rrs, Rrp };
     }
 
@@ -363,11 +363,11 @@ export class TmmWasmInstance {
      *          scan loop can reuse one set of buffers).
      */
     growingEval(lambdas, n0List, nsList, layerNK, thick, theta_deg) {
-        if (!this.hasGrowingEval()) throw new Error('tmmWasm: growing evaluator kernel not in this build');
         const nLam = lambdas.length;
         const NB = thick.length;
 
         const lamPtr = this._alloc(nLam);
+        const thetaPtr = this._thetaArray(theta_deg);
         const n0Ptr  = this._alloc(2 * nLam);
         const nsPtr  = this._alloc(2 * nLam);
         const mPtr   = this._alloc(Math.max(1, 2 * NB * nLam));
@@ -391,9 +391,9 @@ export class TmmWasmInstance {
                 mv[base + 2 * i + 1] = row[i][1];
             }
         }
-        const handlePtr = this._growing_eval_create(lamPtr, nLam, theta_deg,
+        const handlePtr = this._tmm_growing_stack_create(lamPtr, nLam, thetaPtr, 1,
             n0Ptr, nsPtr, mPtr, thPtr, NB);
-        for (const p of [lamPtr, n0Ptr, nsPtr, mPtr, thPtr]) this.free(p);
+        for (const p of [lamPtr, thetaPtr, n0Ptr, nsPtr, mPtr, thPtr]) this.free(p);
         if (!handlePtr) throw new Error('tmmWasm: growing evaluator allocation failed');
 
         const self = this;
@@ -406,13 +406,13 @@ export class TmmWasmInstance {
                 for (let i = 0; i < nLam; i++) {
                     buf[2 * i] = ngList[i][0]; buf[2 * i + 1] = ngList[i][1];
                 }
-                self._growing_eval_set_top(this.ptr, p);
+                self._tmm_growing_stack_set_top(this.ptr, p);
             },
             sample(d, out = null) {
                 if (!this.ptr) throw new Error('tmmWasm: growing evaluator already freed');
                 const p = self._scratch(6 * nLam);
                 const P = (block) => p + block * nLam * 8;
-                const ok = self._growing_eval_sample(this.ptr, d,
+                const ok = self._tmm_growing_stack_sample(this.ptr, d,
                     P(0), P(1), P(2), P(3), P(4), P(5));
                 // The kernel writes nothing without a declared growing layer;
                 // copying the arena anyway would hand back stale memory.
@@ -436,12 +436,12 @@ export class TmmWasmInstance {
             },
             free() {
                 if (!this.ptr) return;
-                growingEvalFinalizer?.unregister(this);
-                self._growing_eval_free(this.ptr);
+                growingStackFinalizer?.unregister(this);
+                self._tmm_growing_stack_free(this.ptr);
                 this.ptr = 0;
             },
         };
-        growingEvalFinalizer?.register(handle,
+        growingStackFinalizer?.register(handle,
             { wasm: this, ptr: handlePtr }, handle);
         return handle;
     }
@@ -481,8 +481,8 @@ export class TmmWasmInstance {
         };
     }
 
-    /** True if the loaded module carries the Hessian kernel (newer build). */
-    hasHessian() { return !!this._tmm_hessian; }
+    /** True: every build since 0.5.0 carries the Hessian kernel. */
+    hasHessian() { return true; }
 
     /**
      * Analytic thickness Hessian for one (λ, θ, pol) : mirrors
@@ -527,8 +527,8 @@ export class TmmWasmInstance {
         };
     }
 
-    /** True if the loaded module carries the phase-dispersion kernel. */
-    hasPhase() { return !!this._tmm_phase_one; }
+    /** True: every build since 0.5.0 carries the phase-dispersion kernel. */
+    hasPhase() { return true; }
 
     /**
      * Phase, group delay, GDD and TOD at one wavelength : mirrors
@@ -559,8 +559,8 @@ export class TmmWasmInstance {
         writeJet(buf, oNs, nsJet);
         if (sinJet) writeJet(buf, oSin, sinJet);
         const P = (off) => ptr + off * 8;
-        this._tmm_phase_one(lambda_nm, omega, theta_deg, polCode | 0,
-            P(oN0), P(oNs), P(oLay), P(oThick), N, sinJet ? P(oSin) : 0, P(oOut));
+        this._tmm_phase(lambda_nm, theta_deg, polCode | 0,
+            P(oN0), P(oNs), P(oLay), P(oThick), N, omega, sinJet ? P(oSin) : 0, P(oOut));
         const out = this._view(ptr, need);
         return { r: readPhase(out, oOut), t: readPhase(out, oOut + 5) };
     }
@@ -589,6 +589,7 @@ export class TmmWasmInstance {
         const sinJets = options.sinJets || null;
 
         const lamPtr = this._alloc(nLam);
+        const thetaPtr = this._thetaArray(theta_deg);
         const omPtr = this._alloc(nLam);
         const n0Ptr = this._alloc(8 * nLam);
         const nsPtr = this._alloc(8 * nLam);
@@ -619,8 +620,8 @@ export class TmmWasmInstance {
             for (let i = 0; i < nLam; i++) writeJet(matv, base + 8 * i, row[i]);
         }
 
-        this._tmm_phase_spectrum(lamPtr, omPtr, nLam, n0Ptr, nsPtr, matPtr, thPtr, N,
-            theta_deg, polCode | 0, sinPtr, outPtr);
+        this._tmm_phase_spectrum(lamPtr, nLam, thetaPtr, 1, polCode | 0,
+            n0Ptr, nsPtr, matPtr, thPtr, N, omPtr, sinPtr, outPtr);
 
         // De-interleave into one array per quantity before freeing.
         const out = this._view(outPtr, 10 * nLam);
@@ -637,7 +638,7 @@ export class TmmWasmInstance {
             return q;
         };
         const result = { r: side(0), t: side(5) };
-        for (const p of [lamPtr, omPtr, n0Ptr, nsPtr, matPtr, thPtr, outPtr]) this.free(p);
+        for (const p of [lamPtr, thetaPtr, omPtr, n0Ptr, nsPtr, matPtr, thPtr, outPtr]) this.free(p);
         if (sinPtr) this.free(sinPtr);
         return result;
     }
@@ -669,8 +670,8 @@ export class TmmWasmInstance {
         writeJet(buf, oNs, nsJet);
         if (sinJet) writeJet(buf, oSin, sinJet);
         const P = (off) => ptr + off * 8;
-        this._tmm_phase_jacobian(lambda_nm, omega, theta_deg, polCode | 0,
-            P(oN0), P(oNs), P(oLay), P(oThick), N, sinJet ? P(oSin) : 0,
+        this._tmm_phase_jacobian(lambda_nm, theta_deg, polCode | 0,
+            P(oN0), P(oNs), P(oLay), P(oThick), N, omega, sinJet ? P(oSin) : 0,
             P(oOut), P(oDeriv));
         const out = this._view(ptr, need);
         const side = (phaseBase, derivBase) => {
@@ -686,8 +687,8 @@ export class TmmWasmInstance {
         return { r: side(oOut, 0), t: side(oOut + 5, 5) };
     }
 
-    /** True if the loaded module carries the batched phase Jacobian. */
-    hasPhaseJacobianSpectrum() { return !!this._tmm_phase_jacobian_spectrum; }
+    /** True: every build since 0.5.0 carries the batched phase Jacobian. */
+    hasPhaseJacobianSpectrum() { return true; }
 
     /**
      * Batched phase Jacobian over a λ grid : tmmPhaseJacobian at every
@@ -708,6 +709,7 @@ export class TmmWasmInstance {
         const nDeriv = Math.max(1, 10 * N * nLam);
 
         const lamPtr = this._alloc(nLam);
+        const thetaPtr = this._thetaArray(theta_deg);
         const omPtr = this._alloc(nLam);
         const n0Ptr = this._alloc(8 * nLam);
         const nsPtr = this._alloc(8 * nLam);
@@ -738,8 +740,8 @@ export class TmmWasmInstance {
             for (let i = 0; i < nLam; i++) writeJet(matv, base + 8 * i, row[i]);
         }
 
-        this._tmm_phase_jacobian_spectrum(lamPtr, omPtr, nLam, n0Ptr, nsPtr, matPtr, thPtr, N,
-            theta_deg, polCode | 0, sinPtr, outPtr, derivPtr);
+        this._tmm_phase_jacobian_spectrum(lamPtr, nLam, thetaPtr, 1, polCode | 0,
+            n0Ptr, nsPtr, matPtr, thPtr, N, omPtr, sinPtr, outPtr, derivPtr);
 
         // De-interleave: per λ the kernel writes 10 phase values and then a
         // [side][quantity][layer] block of 10 × N derivatives.
@@ -766,7 +768,7 @@ export class TmmWasmInstance {
             return q;
         };
         const result = { r: side(0, 0), t: side(5, 5) };
-        for (const p of [lamPtr, omPtr, n0Ptr, nsPtr, matPtr, thPtr, outPtr, derivPtr]) this.free(p);
+        for (const p of [lamPtr, thetaPtr, omPtr, n0Ptr, nsPtr, matPtr, thPtr, outPtr, derivPtr]) this.free(p);
         if (sinPtr) this.free(sinPtr);
         return result;
     }

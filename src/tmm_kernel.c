@@ -8,7 +8,8 @@
  *
  * Also computes phase, group delay, group delay dispersion and third-order
  * dispersion, by carrying the same characteristic matrix in third-order Taylor
- * arithmetic with angular frequency as the differentiation variable.
+ * arithmetic with angular frequency as the differentiation variable, and
+ * exports that Taylor arithmetic so a caller can build dispersive index jets.
  *
  * Conventions:
  *   ñ = n + ik              k > 0 for absorbing media
@@ -16,6 +17,13 @@
  *   off-diagonals of the characteristic matrix carry −i
  *   p admittance n/cosθ     so r_p = r_s at normal incidence (Macleod §9.7.1)
  *   wavelengths and thicknesses in nm, angles in degrees from normal
+ *   pol 0 = s, 1 = p
+ *
+ * Every exported call takes its arguments in one order: wavelength or
+ * wavelength grid, angle, polarization, incident medium, substrate, layers,
+ * then any further inputs, then the outputs. A grid call takes the angle as
+ * `theta_deg` with `nTheta` values: 1 for one angle across the grid, or one
+ * per wavelength.
  *
  * All arithmetic is double precision. The JavaScript implementation shipped
  * alongside this file is the behavioural reference; the two agree to float64
@@ -34,9 +42,13 @@
 #include <math.h>
 #include <stdlib.h>
 
-/* WebAssembly builds export by name; native builds need no annotation. */
+/* WebAssembly builds export by name; a Windows DLL exports what is marked
+ * dllexport; elsewhere every external function of a shared library is
+ * visible already. */
 #if defined(__wasm__) || defined(__EMSCRIPTEN__)
 #define TMM_EXPORT(name) __attribute__((export_name(name)))
+#elif defined(_WIN32)
+#define TMM_EXPORT(name) __declspec(dllexport)
 #else
 #define TMM_EXPORT(name)
 #endif
@@ -46,7 +58,7 @@
 #define MATRIX_RESCALE_THRESHOLD 1e100
 
 /* ── Complex number arithmetic (cx = {re, im}) ───────────────────────────────
- * Mirrors thinFilmMath.js cadd/csub/cmul/cdiv/cabs2/cconj/csqrt/ccos/csin. */
+ * Mirrors cadd/csub/cmul/cdiv/cabs2/cconj/csqrt/ccos/csin in tmm.js. */
 
 typedef struct { double re, im; } cx;
 
@@ -122,6 +134,32 @@ static void fill_nan(double *out, long count) {
 static int all_allocated(void *const *blocks, int count) {
     for (int i = 0; i < count; i++) if (!blocks[i]) return 0;
     return 1;
+}
+
+/* The angle of incidence at wavelength index `li` of a grid: one angle for the
+ * whole grid when nTheta is 1, else one per wavelength. */
+static inline double theta_at(const double *theta_deg, int nTheta, int li) {
+    return theta_deg[nTheta > 1 ? li : 0];
+}
+
+/* The inputs of a grid call, laid out as tmm_rta_spectrum documents. */
+typedef struct {
+    const double *lambdas; int nLam;
+    const double *theta_deg; int nTheta;
+    const double *n0arr, *nsarr;
+    const double *matNK, *thick; int N;
+} grid_layout;
+
+/* The layers of a grid call at wavelength index `li`, as the N triples
+ * [n_re, n_im, d] a one-wavelength call takes: matNK is N × nLam × 2, layout
+ * [layer][λ][re, im]. */
+static void layers_at(const grid_layout *g, int li, double *layers) {
+    for (int k = 0; k < g->N; k++) {
+        long base = ((long)k * g->nLam + li) * 2;
+        layers[3 * k + 0] = g->matNK[base + 0];
+        layers[3 * k + 1] = g->matNK[base + 1];
+        layers[3 * k + 2] = g->thick[k];
+    }
 }
 
 /* ── Snell's law: cosθ_j from incident (n0, θ0) into medium nj ──────────────
@@ -293,7 +331,7 @@ static inline double layerAbsorptance(double R, double T, cx eta0, cx r) {
 }
 
 /* ── Core TMM for one wavelength / polarization ──────────────────────────────
- * Faithful port of tmm() in tmm.js. `layers` is N triples [n_re, n_im, d_nm].
+ * Faithful port of the R, T, A kernel in tmm.js. `layers` is N triples [n_re, n_im, d_nm].
  * Writes R,T,A to out[0..2]. A layer whose thickness is not positive, NaN
  * included, is absent, exactly like the JS reference. */
 
@@ -335,11 +373,12 @@ static void tmm_core(double lambda_nm, double theta_deg, int pol,
     *outR = R; *outT = T; *outA = A;
 }
 
-/* ── Exported: single (λ, θ, pol) evaluation ─────────────────────────────────
- * out[0..2] = R, T, A. pol: 0 = s, 1 = p. Drop-in for tmm() in thinFilmMath.js. */
+/* ── Exported: R, T, A at one wavelength ─────────────────────────────────────
+ * `layers` is N triples [n_re, n_im, d_nm], incident side first.
+ * out[0..2] = R, T, A. */
 
-TMM_EXPORT("tmm_one")
-void tmm_one(double lambda_nm, double theta_deg, int pol,
+TMM_EXPORT("tmm_rta")
+void tmm_rta(double lambda_nm, double theta_deg, int pol,
              double n0_re, double n0_im, double ns_re, double ns_im,
              const double *layers, int N, double *out) {
     tmm_core(lambda_nm, theta_deg, pol,
@@ -347,29 +386,28 @@ void tmm_one(double lambda_nm, double theta_deg, int pol,
              &out[0], &out[1], &out[2]);
 }
 
-/* ── Exported: batched spectrum over a wavelength grid ───────────────────────
- * One WASM call evaluates the full stack across all `nLam` wavelengths for BOTH
- * polarizations, amortizing the JS↔WASM boundary (the actual speed win). This
- * is the batched analogue of looping tmmAvg() in evaluateSpectrum().
+/* ── Exported: R, T, A over a wavelength grid, s and p ───────────────────────
+ * The whole grid in one call, both polarizations, so a caller crossing a
+ * language boundary pays for it once per spectrum.
  *
- * Memory layout (all f64, caller-owned, written from JS):
- *   lambdas : nLam                    wavelengths (nm)
- *   n0arr   : nLam × 2  [re, im]      incident-medium ñ per λ
- *   nsarr   : nLam × 2  [re, im]      substrate ñ per λ
- *   matNK   : N × nLam × 2            per-layer ñ per λ, layout [layer][λ][re,im]
- *   thick   : N                       layer thicknesses (nm)
+ * Memory layout (all f64, caller-owned):
+ *   lambdas   : nLam                    wavelengths (nm)
+ *   theta_deg : nTheta, 1 or nLam       angle of incidence (degrees)
+ *   n0arr     : nLam × 2  [re, im]      incident-medium ñ per λ
+ *   nsarr     : nLam × 2  [re, im]      substrate ñ per λ
+ *   matNK     : N × nLam × 2            per-layer ñ per λ, layout [layer][λ][re,im]
+ *   thick     : N                       layer thicknesses (nm)
  * Outputs (each nLam):
- *   outRs,outTs,outAs  (s-pol)   outRp,outTp,outAp  (p-pol)
- * Caller forms avg = (s+p)/2 and selects the requested polarization in JS,
- * exactly as tmmAvg() does, so the JS-side semantics are unchanged. */
+ *   outRs,outTs,outAs  (s-pol)   outRp,outTp,outAp  (p-pol) */
 
-TMM_EXPORT("tmm_spectrum")
-void tmm_spectrum(const double *lambdas, int nLam,
-                  const double *n0arr, const double *nsarr,
-                  const double *matNK, const double *thick, int N,
-                  double theta_deg,
-                  double *outRs, double *outTs, double *outAs,
-                  double *outRp, double *outTp, double *outAp) {
+TMM_EXPORT("tmm_rta_spectrum")
+void tmm_rta_spectrum(const double *lambdas, int nLam,
+                      const double *theta_deg, int nTheta,
+                      const double *n0arr, const double *nsarr,
+                      const double *matNK, const double *thick, int N,
+                      double *outRs, double *outTs, double *outAs,
+                      double *outRp, double *outTp, double *outAp) {
+    const grid_layout g = { lambdas, nLam, theta_deg, nTheta, n0arr, nsarr, matNK, thick, N };
     /* Reusable per-λ layer scratch [n_re, n_im, d] × N. */
     double *layers = (N > 0) ? (double *)malloc(sizeof(double) * 3 * N) : NULL;
     if (N > 0 && !layers) {
@@ -380,19 +418,12 @@ void tmm_spectrum(const double *lambdas, int nLam,
 
     for (int li = 0; li < nLam; li++) {
         double lam = lambdas[li];
+        double theta = theta_at(theta_deg, nTheta, li);
         cx n0 = cmk(n0arr[2 * li + 0], n0arr[2 * li + 1]);
         cx ns = cmk(nsarr[2 * li + 0], nsarr[2 * li + 1]);
-
-        for (int k = 0; k < N; k++) {
-            /* matNK[k][li][.] */
-            long base = ((long)k * nLam + li) * 2;
-            layers[3 * k + 0] = matNK[base + 0];
-            layers[3 * k + 1] = matNK[base + 1];
-            layers[3 * k + 2] = thick[k];
-        }
-
-        tmm_core(lam, theta_deg, 0, n0, ns, layers, N, &outRs[li], &outTs[li], &outAs[li]);
-        tmm_core(lam, theta_deg, 1, n0, ns, layers, N, &outRp[li], &outTp[li], &outAp[li]);
+        layers_at(&g, li, layers);
+        tmm_core(lam, theta, 0, n0, ns, layers, N, &outRs[li], &outTs[li], &outAs[li]);
+        tmm_core(lam, theta, 1, n0, ns, layers, N, &outRp[li], &outTp[li], &outAp[li]);
     }
 
     if (layers) free(layers);
@@ -444,8 +475,7 @@ static inline double growingTailRev(mat2 M, cx eta0, vec2 substrate) {
  * samples × stack depth.
  *
  * The growing layer faces the incident medium, so its matrix multiplies the
- * completed product from the LEFT, exactly as createMonitorTmmEvaluator in the
- * JS reference.
+ * completed product from the LEFT.
  *
  *   base  : NB triples [n_re, n_im, d_nm], the completed stack outermost first
  *           (zero-thickness entries skipped, as everywhere)
@@ -517,7 +547,7 @@ void tmm_monitor_curve(double lambda_nm, double theta_deg,
  * same incremental structure as tmm_monitor_curve over a wavelength grid, so
  * all N step spectra together cost what the final one costs alone.
  *
- * Memory layout mirrors tmm_spectrum:
+ * Memory layout mirrors tmm_rta_spectrum:
  *   matNK : N × nLam × 2, [layer][λ][re, im], deposition order
  *   thick : N thicknesses (nm); a step of zero thickness repeats the previous
  *           spectrum, matching the d ≤ 0 skip of the reference loop
@@ -530,9 +560,9 @@ void tmm_monitor_curve(double lambda_nm, double theta_deg,
  * state could not be allocated. */
 TMM_EXPORT("tmm_deposition_spectra")
 int tmm_deposition_spectra(const double *lambdas, int nLam,
+                           const double *theta_deg, int nTheta,
                            const double *n0arr, const double *nsarr,
                            const double *matNK, const double *thick, int N,
-                           double theta_deg,
                            double *outRs, double *outTs,
                            double *outRp, double *outTp,
                            double *outRrs, double *outRrp) {
@@ -542,16 +572,18 @@ int tmm_deposition_spectra(const double *lambdas, int nLam,
     double *logScale = (double *)malloc(sizeof(double) * cells);
     cx *eta0v = (cx *)malloc(sizeof(cx) * cells);
     vec2 *substrateV = (vec2 *)malloc(sizeof(vec2) * cells);
-    if (!M || !logScale || !eta0v || !substrateV) {
-        free(M); free(logScale); free(eta0v); free(substrateV);
+    incidence_t *angle = (incidence_t *)malloc(sizeof(incidence_t) * (nLam > 0 ? nLam : 1));
+    void *const blocks[] = { M, logScale, eta0v, substrateV, angle };
+    if (!all_allocated(blocks, (int)(sizeof blocks / sizeof blocks[0]))) {
+        free(M); free(logScale); free(eta0v); free(substrateV); free(angle);
         return 0;
     }
-
-    incidence_t a = incidence(theta_deg);
 
     for (int li = 0; li < nLam; li++) {
         cx n0 = cmk(n0arr[2 * li + 0], n0arr[2 * li + 1]);
         cx ns = cmk(nsarr[2 * li + 0], nsarr[2 * li + 1]);
+        incidence_t a = incidence(theta_at(theta_deg, nTheta, li));
+        angle[li] = a;
         cx cosTheta0 = incidentCosTheta(n0, a);
         for (int pol = 0; pol < 2; pol++) {
             size_t at = (size_t)pol * nLam + li;
@@ -573,7 +605,7 @@ int tmm_deposition_spectra(const double *lambdas, int nLam,
             for (int pol = 0; pol < 2; pol++) {
                 size_t at = (size_t)pol * nLam + li;
                 if (d > 0.0) {
-                    cx cosThetaJ = snellCosTheta(n0, a, n);
+                    cx cosThetaJ = snellCosTheta(n0, angle[li], n);
                     M[at] = matmul(layerMatrix(n, d, lam, cosThetaJ, pol), M[at]);
                     logScale[at] += layerLogScale(n, d, lam, cosThetaJ) + rescaleMatrix(&M[at]);
                 }
@@ -588,11 +620,11 @@ int tmm_deposition_spectra(const double *lambdas, int nLam,
         }
     }
 
-    free(M); free(logScale); free(eta0v); free(substrateV);
+    free(M); free(logScale); free(eta0v); free(substrateV); free(angle);
     return 1;
 }
 
-/* ── Exported: persistent growing-layer evaluator over a wavelength grid ─────
+/* ── Exported: growing top layer over a wavelength grid ──────────────────────
  * The stateful counterpart of tmm_monitor_curve, batched the other way: one
  * thickness of the growing layer per call, the WHOLE wavelength grid at once.
  * This is the shape a broadband monitor scan needs, where every scan reads a
@@ -606,15 +638,15 @@ int tmm_deposition_spectra(const double *lambdas, int nLam,
  * state. Handles are opaque pointers; the caller owns their lifetime.
  *
  * Layout matches tmm_deposition_spectra: matNK is NB × nLam × 2 layer-major
- * with the completed stack OUTERMOST FIRST (the fold is M = M · M_k, exactly
- * the JS reference createMonitorTmmEvaluator); zero-thickness entries are
- * skipped. Outputs of sample(), each nLam: forward R and T plus the
- * substrate-side reflectance, for the incoherent slab combination. */
+ * with the completed stack OUTERMOST FIRST (the fold is M = M · M_k);
+ * zero-thickness entries are skipped. Outputs of sample(), each nLam: forward
+ * R and T plus the substrate-side reflectance, for the incoherent slab
+ * combination. */
 
 typedef struct {
     int nLam;
-    incidence_t angle;
     int topSet;
+    incidence_t *angle; /* nLam */
     double *lam;        /* nLam */
     cx *n0;             /* nLam */
     cx *ng;             /* nLam, set_top */
@@ -623,53 +655,54 @@ typedef struct {
     vec2 *substrate;    /* 2·nLam */
     mat2 *Mb;           /* 2·nLam completed-stack product */
     double *logScaleB;  /* 2·nLam */
-} growing_eval;
+} growing_stack;
 
-TMM_EXPORT("tmm_growing_eval_free")
-void tmm_growing_eval_free(growing_eval *h) {
+TMM_EXPORT("tmm_growing_stack_free")
+void tmm_growing_stack_free(growing_stack *h) {
     if (!h) return;
-    free(h->lam); free(h->n0); free(h->ng); free(h->cosThetaG);
+    free(h->angle); free(h->lam); free(h->n0); free(h->ng); free(h->cosThetaG);
     free(h->eta0); free(h->substrate); free(h->Mb); free(h->logScaleB);
     free(h);
 }
 
-TMM_EXPORT("tmm_growing_eval_create")
-growing_eval *tmm_growing_eval_create(const double *lambdas, int nLam,
-                                      double theta_deg,
-                                      const double *n0arr, const double *nsarr,
-                                      const double *matNK, const double *thick,
-                                      int NB) {
-    growing_eval *h = (growing_eval *)malloc(sizeof(growing_eval));
+TMM_EXPORT("tmm_growing_stack_create")
+growing_stack *tmm_growing_stack_create(const double *lambdas, int nLam,
+                                        const double *theta_deg, int nTheta,
+                                        const double *n0arr, const double *nsarr,
+                                        const double *matNK, const double *thick,
+                                        int NB) {
+    growing_stack *h = (growing_stack *)malloc(sizeof(growing_stack));
     if (!h) return 0;
+    size_t count = (size_t)(nLam > 0 ? nLam : 1);
     h->nLam = nLam;
     h->topSet = 0;
-    h->lam = (double *)malloc(sizeof(double) * nLam);
-    h->n0 = (cx *)malloc(sizeof(cx) * nLam);
-    h->ng = (cx *)malloc(sizeof(cx) * nLam);
-    h->cosThetaG = (cx *)malloc(sizeof(cx) * nLam);
-    h->eta0 = (cx *)malloc(sizeof(cx) * 2 * nLam);
-    h->substrate = (vec2 *)malloc(sizeof(vec2) * 2 * nLam);
-    h->Mb = (mat2 *)malloc(sizeof(mat2) * 2 * nLam);
-    h->logScaleB = (double *)malloc(sizeof(double) * 2 * nLam);
-    void *const blocks[] = { h->lam, h->n0, h->ng, h->cosThetaG,
+    h->angle = (incidence_t *)malloc(sizeof(incidence_t) * count);
+    h->lam = (double *)malloc(sizeof(double) * count);
+    h->n0 = (cx *)malloc(sizeof(cx) * count);
+    h->ng = (cx *)malloc(sizeof(cx) * count);
+    h->cosThetaG = (cx *)malloc(sizeof(cx) * count);
+    h->eta0 = (cx *)malloc(sizeof(cx) * 2 * count);
+    h->substrate = (vec2 *)malloc(sizeof(vec2) * 2 * count);
+    h->Mb = (mat2 *)malloc(sizeof(mat2) * 2 * count);
+    h->logScaleB = (double *)malloc(sizeof(double) * 2 * count);
+    void *const blocks[] = { h->angle, h->lam, h->n0, h->ng, h->cosThetaG,
                              h->eta0, h->substrate, h->Mb, h->logScaleB };
     if (!all_allocated(blocks, (int)(sizeof blocks / sizeof blocks[0]))) {
-        tmm_growing_eval_free(h);
+        tmm_growing_stack_free(h);
         return 0;
     }
 
-    h->angle = incidence(theta_deg);
-
     for (int li = 0; li < nLam; li++) {
         h->lam[li] = lambdas[li];
+        h->angle[li] = incidence(theta_at(theta_deg, nTheta, li));
         cx n0 = cmk(n0arr[2 * li + 0], n0arr[2 * li + 1]);
         cx ns = cmk(nsarr[2 * li + 0], nsarr[2 * li + 1]);
         h->n0[li] = n0;
-        cx cosTheta0 = incidentCosTheta(n0, h->angle);
+        cx cosTheta0 = incidentCosTheta(n0, h->angle[li]);
         for (int pol = 0; pol < 2; pol++) {
             size_t at = (size_t)pol * nLam + li;
             h->eta0[at] = layerAdmittance(n0, cosTheta0, pol);
-            h->substrate[at] = substrateVector(ns, snellCosTheta(n0, h->angle, ns), pol);
+            h->substrate[at] = substrateVector(ns, snellCosTheta(n0, h->angle[li], ns), pol);
             mat2 M;
             M.a = cmk(1.0, 0.0); M.b = cmk(0.0, 0.0);
             M.c = cmk(0.0, 0.0); M.d = cmk(1.0, 0.0);
@@ -679,7 +712,7 @@ growing_eval *tmm_growing_eval_create(const double *lambdas, int nLam,
                 if (!(d > 0.0)) continue;
                 cx n = cmk(matNK[((size_t)k * nLam + li) * 2 + 0],
                            matNK[((size_t)k * nLam + li) * 2 + 1]);
-                cx cosThetaJ = snellCosTheta(n0, h->angle, n);
+                cx cosThetaJ = snellCosTheta(n0, h->angle[li], n);
                 M = matmul(M, layerMatrix(n, d, lambdas[li], cosThetaJ, pol));
                 logScale += layerLogScale(n, d, lambdas[li], cosThetaJ) + rescaleMatrix(&M);
             }
@@ -690,13 +723,13 @@ growing_eval *tmm_growing_eval_create(const double *lambdas, int nLam,
     return h;
 }
 
-TMM_EXPORT("tmm_growing_eval_set_top")
-void tmm_growing_eval_set_top(growing_eval *h, const double *ngNK) {
+TMM_EXPORT("tmm_growing_stack_set_top")
+void tmm_growing_stack_set_top(growing_stack *h, const double *ngNK) {
     if (!h) return;
     for (int li = 0; li < h->nLam; li++) {
         cx ng = cmk(ngNK[2 * li + 0], ngNK[2 * li + 1]);
         h->ng[li] = ng;
-        h->cosThetaG[li] = snellCosTheta(h->n0[li], h->angle, ng);
+        h->cosThetaG[li] = snellCosTheta(h->n0[li], h->angle[li], ng);
     }
     h->topSet = 1;
 }
@@ -704,11 +737,11 @@ void tmm_growing_eval_set_top(growing_eval *h, const double *ngNK) {
 /* Returns 1 on success; 0, with the outputs untouched, for a null handle or
  * a d > 0 sample before set_top declared the growing layer. The status is
  * what keeps an unwritten buffer from being read back as data. */
-TMM_EXPORT("tmm_growing_eval_sample")
-int tmm_growing_eval_sample(growing_eval *h, double d,
-                            double *outRs, double *outTs,
-                            double *outRp, double *outTp,
-                            double *outRrs, double *outRrp) {
+TMM_EXPORT("tmm_growing_stack_sample")
+int tmm_growing_stack_sample(growing_stack *h, double d,
+                             double *outRs, double *outTs,
+                             double *outRp, double *outTp,
+                             double *outRrs, double *outRrp) {
     if (!h || (d > 0.0 && !h->topSet)) return 0;
     for (int li = 0; li < h->nLam; li++) {
         for (int pol = 0; pol < 2; pol++) {
@@ -960,20 +993,17 @@ static inline mat2 layerMatrixDerivative(cx delta, cx Q, generator_t G) {
 }
 
 /* ── Exported: analytic thickness Jacobian for one (λ, θ, pol) ────────────────
- * Port of tmmThicknessJacobian() in tmm.js. Returns the exact analytic
+ * Port of the thickness Jacobian in tmm.js. Returns the exact analytic
  * dR/dd_k, dT/dd_k, dA/dd_k for every layer at one sample.
  *
  * `layers` is N triples [n_re, n_im, d] used as given (see deriv_stack).
  * Outputs (each length N): dRdd, dTdd, dAdd. Also writes base R,T,A to base[0..2]. */
 
-TMM_EXPORT("tmm_jacobian")
-void tmm_jacobian(double lambda_nm, double theta_deg, int pol,
-                  double n0_re, double n0_im, double ns_re, double ns_im,
-                  const double *layers, int N,
-                  double *dRdd, double *dTdd, double *dAdd, double *base) {
-    deriv_request q = { lambda_nm, theta_deg, pol, { n0_re, n0_im }, { ns_re, ns_im }, layers, N };
+static void jacobian_at(const deriv_request *q,
+                        double *dRdd, double *dTdd, double *dAdd, double *base) {
+    int N = q->N;
     deriv_stack s;
-    if (!deriv_stack_build(&q, &s)) {
+    if (!deriv_stack_build(q, &s)) {
         fill_nan(base, 3); fill_nan(dRdd, N); fill_nan(dTdd, N); fill_nan(dAdd, N);
         return;
     }
@@ -991,8 +1021,55 @@ void tmm_jacobian(double lambda_nm, double theta_deg, int pol,
     deriv_stack_free(&s);
 }
 
+TMM_EXPORT("tmm_jacobian")
+void tmm_jacobian(double lambda_nm, double theta_deg, int pol,
+                  double n0_re, double n0_im, double ns_re, double ns_im,
+                  const double *layers, int N,
+                  double *dRdd, double *dTdd, double *dAdd, double *base) {
+    deriv_request q = { lambda_nm, theta_deg, pol, { n0_re, n0_im }, { ns_re, ns_im }, layers, N };
+    jacobian_at(&q, dRdd, dTdd, dAdd, base);
+}
+
+/* The request of a grid derivative call at wavelength index `li`; `layers` is
+ * the caller's N-triple scratch, filled here. */
+static deriv_request grid_request(const grid_layout *g, int pol, int li, double *layers) {
+    layers_at(g, li, layers);
+    deriv_request q = { g->lambdas[li], theta_at(g->theta_deg, g->nTheta, li), pol,
+                        { g->n0arr[2 * li + 0], g->n0arr[2 * li + 1] },
+                        { g->nsarr[2 * li + 0], g->nsarr[2 * li + 1] }, layers, g->N };
+    return q;
+}
+
+/* ── Exported: thickness Jacobian over a wavelength grid ─────────────────────
+ * tmm_jacobian at every wavelength of a grid in one call, for one
+ * polarization. Inputs are laid out as for tmm_rta_spectrum.
+ *
+ *   dRdd/dTdd/dAdd : nLam × N each, [λ][layer]
+ *   base           : nLam × 3, [λ][R, T, A] */
+
+TMM_EXPORT("tmm_jacobian_spectrum")
+void tmm_jacobian_spectrum(const double *lambdas, int nLam,
+                           const double *theta_deg, int nTheta, int pol,
+                           const double *n0arr, const double *nsarr,
+                           const double *matNK, const double *thick, int N,
+                           double *dRdd, double *dTdd, double *dAdd, double *base) {
+    const grid_layout g = { lambdas, nLam, theta_deg, nTheta, n0arr, nsarr, matNK, thick, N };
+    double *layers = (double *)malloc(sizeof(double) * 3 * (N > 0 ? N : 1));
+    if (!layers) {
+        fill_nan(base, 3L * nLam); fill_nan(dRdd, (long)N * nLam);
+        fill_nan(dTdd, (long)N * nLam); fill_nan(dAdd, (long)N * nLam);
+        return;
+    }
+    for (int li = 0; li < nLam; li++) {
+        deriv_request q = grid_request(&g, pol, li, layers);
+        long at = (long)li * N;
+        jacobian_at(&q, &dRdd[at], &dTdd[at], &dAdd[at], &base[3L * li]);
+    }
+    free(layers);
+}
+
 /* ── Analytic needle P-function scan ─────────────────────────────────────────
- * Port of tmmNeedleScan() in tmm.js : the d→0 limit of
+ * Port of the needle scan in tmm.js : the d→0 limit of
  * Sullivan's pre/post method (Tikhonravov's analytic P-function). Returns the
  * merit-gradient ingredients {dR,dT,dA} of inserting an infinitesimal needle of
  * each candidate index at every gap position (0..N) and, optionally, at intra-
@@ -1005,18 +1082,23 @@ void tmm_jacobian(double lambda_nm, double theta_deg, int pol,
  *   intra : N*nFrac*nCand*3        layout [layer][frac][cand][dR,dT,dA] (nFrac>0)
  */
 
-TMM_EXPORT("tmm_needle_scan")
-void tmm_needle_scan(double lambda_nm, double theta_deg, int pol,
-                     double n0_re, double n0_im, double ns_re, double ns_im,
-                     const double *layers, int N,
-                     const double *candNs, int nCand,
-                     const double *fracs, int nFrac,
-                     double *base, double *gaps, double *intra) {
-    cx n0 = cmk(n0_re, n0_im);
-    deriv_request q = { lambda_nm, theta_deg, pol, { n0_re, n0_im }, { ns_re, ns_im }, layers, N };
+/* The needles a scan tries: nCand candidate indices as [re, im] pairs, and the
+ * nFrac split fractions at which every layer is opened. */
+typedef struct {
+    const double *candNs; int nCand;
+    const double *fracs; int nFrac;
+} needle_set;
+
+static void needle_scan_at(const deriv_request *q, const needle_set *needles,
+                           double *base, double *gaps, double *intra) {
+    const double *candNs = needles->candNs, *fracs = needles->fracs;
+    int nCand = needles->nCand, nFrac = needles->nFrac;
+    int N = q->N, pol = q->pol;
+    double lambda_nm = q->lambda_nm;
+    cx n0 = q->n0;
     deriv_stack s;
     mat2 *Ac = (mat2 *)malloc(sizeof(mat2) * (nCand > 0 ? nCand : 1));
-    if (!Ac || !deriv_stack_build(&q, &s)) {
+    if (!Ac || !deriv_stack_build(q, &s)) {
         free(Ac);
         fill_nan(base, 3);
         fill_nan(gaps, (long)(N + 1) * nCand * 3);
@@ -1078,6 +1160,63 @@ void tmm_needle_scan(double lambda_nm, double theta_deg, int pol,
     deriv_stack_free(&s);
 }
 
+TMM_EXPORT("tmm_needle_scan")
+void tmm_needle_scan(double lambda_nm, double theta_deg, int pol,
+                     double n0_re, double n0_im, double ns_re, double ns_im,
+                     const double *layers, int N,
+                     const double *candNs, int nCand,
+                     const double *fracs, int nFrac,
+                     double *base, double *gaps, double *intra) {
+    deriv_request q = { lambda_nm, theta_deg, pol, { n0_re, n0_im }, { ns_re, ns_im }, layers, N };
+    const needle_set needles = { candNs, nCand, fracs, nFrac };
+    needle_scan_at(&q, &needles, base, gaps, intra);
+}
+
+/* ── Exported: needle scan over a wavelength grid ────────────────────────────
+ * tmm_needle_scan at every wavelength of a grid in one call, for one
+ * polarization. Inputs are laid out as for tmm_rta_spectrum; the candidates
+ * are dispersive like the layers:
+ *   candNK : nCand × nLam × 2, [candidate][λ][re, im]
+ *   fracs  : nFrac split fractions, the same at every wavelength
+ * Outputs (caller-owned f64), each block of tmm_needle_scan once per λ:
+ *   base  : nLam × 3
+ *   gaps  : nLam × (N+1) × nCand × 3
+ *   intra : nLam × N × nFrac × nCand × 3   (nFrac > 0) */
+
+TMM_EXPORT("tmm_needle_scan_spectrum")
+void tmm_needle_scan_spectrum(const double *lambdas, int nLam,
+                              const double *theta_deg, int nTheta, int pol,
+                              const double *n0arr, const double *nsarr,
+                              const double *matNK, const double *thick, int N,
+                              const double *candNK, int nCand,
+                              const double *fracs, int nFrac,
+                              double *base, double *gaps, double *intra) {
+    const grid_layout g = { lambdas, nLam, theta_deg, nTheta, n0arr, nsarr, matNK, thick, N };
+    long gapBlock = (long)(N + 1) * nCand * 3;
+    long intraBlock = (long)N * nFrac * nCand * 3;
+    double *layers = (double *)malloc(sizeof(double) * 3 * (N > 0 ? N : 1));
+    double *cand = (double *)malloc(sizeof(double) * 2 * (nCand > 0 ? nCand : 1));
+    if (!layers || !cand) {
+        free(layers); free(cand);
+        fill_nan(base, 3L * nLam);
+        fill_nan(gaps, gapBlock * nLam);
+        if (nFrac > 0) fill_nan(intra, intraBlock * nLam);
+        return;
+    }
+    const needle_set needles = { cand, nCand, fracs, nFrac };
+    for (int li = 0; li < nLam; li++) {
+        deriv_request q = grid_request(&g, pol, li, layers);
+        for (int c = 0; c < nCand; c++) {
+            long at = ((long)c * nLam + li) * 2;
+            cand[2 * c + 0] = candNK[at + 0];
+            cand[2 * c + 1] = candNK[at + 1];
+        }
+        needle_scan_at(&q, &needles, &base[3L * li], &gaps[gapBlock * li],
+                       nFrac > 0 ? &intra[intraBlock * li] : intra);
+    }
+    free(layers); free(cand);
+}
+
 /* d²M/dd² = Q²·[[ −cosδ, i sinδ/η ], [ i η sinδ, −cosδ ]], with Q²/η = QP and
  * Q²η = QS */
 static inline mat2 layerMatrixSecondDerivative(cx delta, cx Q, generator_t G) {
@@ -1121,7 +1260,7 @@ static second_derivative response_second_derivative(const stack_response *s,
 }
 
 /* ── Analytic thickness-Hessian kernel ───────────
- * Port of tmmThicknessHessian() in tmm.js : the EXACT analytic second
+ * Port of the thickness Hessian in tmm.js : the EXACT analytic second
  * derivatives ∂²{R,T,A}/∂dᵢ∂dⱼ (full N×N symmetric) plus the first
  * derivatives, at one (λ,θ,pol). The middle product M_{i+1}···M_{j-1} carries
  * its own binary exponent, like the prefixes and suffixes.
@@ -1131,20 +1270,24 @@ static second_derivative response_second_derivative(const stack_response *s,
  *   dRdd/dTdd/dAdd : N each      first derivatives (verbatim tmm_jacobian)
  *   d2Rdd/d2Tdd/d2Add : N*N each row-major, FULL symmetric (both triangles set)
  */
-TMM_EXPORT("tmm_hessian")
-void tmm_hessian(double lambda_nm, double theta_deg, int pol,
-                 double n0_re, double n0_im, double ns_re, double ns_im,
-                 const double *layers, int N,
-                 double *dRdd, double *dTdd, double *dAdd,
-                 double *d2Rdd, double *d2Tdd, double *d2Add, double *base) {
-    deriv_request q = { lambda_nm, theta_deg, pol, { n0_re, n0_im }, { ns_re, ns_im }, layers, N };
+typedef struct {
+    double *dRdd, *dTdd, *dAdd;
+    double *d2Rdd, *d2Tdd, *d2Add;
+    double *base;
+} hessian_out;
+
+static void hessian_at(const deriv_request *q, const hessian_out *out) {
+    double *dRdd = out->dRdd, *dTdd = out->dTdd, *dAdd = out->dAdd;
+    double *d2Rdd = out->d2Rdd, *d2Tdd = out->d2Tdd, *d2Add = out->d2Add;
+    double *base = out->base;
+    int N = q->N;
     deriv_stack s;
     /* Per-layer first-derivative pieces: dM[k], v[k] = dMₖ·Post[k+1] (exponent
      * postExp[k+1]) and d[B,C]/den. */
     mat2 *dM    = (mat2 *)malloc(sizeof(mat2) * (N > 0 ? N : 1));
     vec2 *v     = (vec2 *)malloc(sizeof(vec2) * (N > 0 ? N : 1));
     vec2 *first = (vec2 *)malloc(sizeof(vec2) * (N > 0 ? N : 1));
-    if (!dM || !v || !first || !deriv_stack_build(&q, &s)) {
+    if (!dM || !v || !first || !deriv_stack_build(q, &s)) {
         free(dM); free(v); free(first);
         fill_nan(base, 3); fill_nan(dRdd, N); fill_nan(dTdd, N); fill_nan(dAdd, N);
         fill_nan(d2Rdd, (long)N * N); fill_nan(d2Tdd, (long)N * N); fill_nan(d2Add, (long)N * N);
@@ -1191,6 +1334,51 @@ void tmm_hessian(double lambda_nm, double theta_deg, int pol,
 
     free(dM); free(v); free(first);
     deriv_stack_free(&s);
+}
+
+TMM_EXPORT("tmm_hessian")
+void tmm_hessian(double lambda_nm, double theta_deg, int pol,
+                 double n0_re, double n0_im, double ns_re, double ns_im,
+                 const double *layers, int N,
+                 double *dRdd, double *dTdd, double *dAdd,
+                 double *d2Rdd, double *d2Tdd, double *d2Add, double *base) {
+    deriv_request q = { lambda_nm, theta_deg, pol, { n0_re, n0_im }, { ns_re, ns_im }, layers, N };
+    const hessian_out out = { dRdd, dTdd, dAdd, d2Rdd, d2Tdd, d2Add, base };
+    hessian_at(&q, &out);
+}
+
+/* ── Exported: thickness Hessian over a wavelength grid ──────────────────────
+ * tmm_hessian at every wavelength of a grid in one call, for one
+ * polarization. Inputs are laid out as for tmm_rta_spectrum.
+ *
+ *   dRdd/dTdd/dAdd    : nLam × N each, [λ][layer]
+ *   d2Rdd/d2Tdd/d2Add : nLam × N × N each, [λ][row][column], full symmetric
+ *   base              : nLam × 3, [λ][R, T, A] */
+
+TMM_EXPORT("tmm_hessian_spectrum")
+void tmm_hessian_spectrum(const double *lambdas, int nLam,
+                          const double *theta_deg, int nTheta, int pol,
+                          const double *n0arr, const double *nsarr,
+                          const double *matNK, const double *thick, int N,
+                          double *dRdd, double *dTdd, double *dAdd,
+                          double *d2Rdd, double *d2Tdd, double *d2Add, double *base) {
+    const grid_layout g = { lambdas, nLam, theta_deg, nTheta, n0arr, nsarr, matNK, thick, N };
+    long square = (long)N * N;
+    double *layers = (double *)malloc(sizeof(double) * 3 * (N > 0 ? N : 1));
+    if (!layers) {
+        fill_nan(base, 3L * nLam);
+        fill_nan(dRdd, (long)N * nLam); fill_nan(dTdd, (long)N * nLam); fill_nan(dAdd, (long)N * nLam);
+        fill_nan(d2Rdd, square * nLam); fill_nan(d2Tdd, square * nLam); fill_nan(d2Add, square * nLam);
+        return;
+    }
+    for (int li = 0; li < nLam; li++) {
+        deriv_request q = grid_request(&g, pol, li, layers);
+        long at = (long)li * N, at2 = square * li;
+        const hessian_out out = { &dRdd[at], &dTdd[at], &dAdd[at],
+                                  &d2Rdd[at2], &d2Tdd[at2], &d2Add[at2], &base[3L * li] };
+        hessian_at(&q, &out);
+    }
+    free(layers);
 }
 
 /* ── Third-order Taylor jets ─────────────────────────────────────────────────
@@ -1578,14 +1766,15 @@ static void jphase_core(double lambda, double omega, double theta_deg, int pol,
 }
 
 /* ── Exported: phase dispersion at one wavelength ─────────────────────────────
- * Mirrors tmmPhaseDispersion() in phase.js. Index jets are 8 doubles each,
- * [re,im] per order. `sinJet` may be NULL. */
+ * Mirrors the phase call in phase.js. Index jets are 8 doubles each, [re,im]
+ * per order. `omega` is the angular frequency at `lambda` and sets the time
+ * unit of the result; `sinJet`, the incident sine as a jet, may be NULL. */
 
-TMM_EXPORT("tmm_phase_one")
-void tmm_phase_one(double lambda, double omega, double theta_deg, int pol,
-                   const double *n0jet, const double *nsjet,
-                   const double *layerJets, const double *thick, int N,
-                   const double *sinJet, double *out) {
+TMM_EXPORT("tmm_phase")
+void tmm_phase(double lambda, double theta_deg, int pol,
+               const double *n0jet, const double *nsjet,
+               const double *layerJets, const double *thick, int N,
+               double omega, const double *sinJet, double *out) {
     jet *layerN = (jet *)malloc(sizeof(jet) * (N > 0 ? N : 1));
     if (!layerN) { fill_nan(out, 10); return; }
     for (int k = 0; k < N; k++) layerN[k] = jread(&layerJets[8 * k]);
@@ -1599,26 +1788,27 @@ void tmm_phase_one(double lambda, double omega, double theta_deg, int pol,
 
 /* ── Exported: batched phase dispersion over a wavelength grid ────────────────
  * One call evaluates the whole grid, amortizing the JS↔WASM boundary the same
- * way tmm_spectrum does. Polarization is an argument rather than both-at-once,
+ * way tmm_rta_spectrum does. Polarization is an argument rather than both-at-once,
  * because this kernel is an order of magnitude dearer per sample than the plain
  * spectrum and callers at normal incidence would pay twice for nothing.
  *
  * Memory layout (all f64, caller-owned):
- *   lambdas  : nLam
- *   omegas   : nLam                   angular frequency per λ; sets the unit
- *   n0jets   : nLam × 8               incident-medium index jet per λ
- *   nsjets   : nLam × 8               substrate index jet per λ
- *   matJets  : N × nLam × 8           per-layer index jet, layout [layer][λ]
- *   thick    : N
- *   sinJets  : nLam × 8, or NULL
- *   out      : nLam × 10              [r: phaseRad,GD,GDD,TOD,|r|²][t: same] */
+ *   lambdas   : nLam
+ *   theta_deg : nTheta, 1 or nLam
+ *   n0jets    : nLam × 8               incident-medium index jet per λ
+ *   nsjets    : nLam × 8               substrate index jet per λ
+ *   matJets   : N × nLam × 8           per-layer index jet, layout [layer][λ]
+ *   thick     : N
+ *   omegas    : nLam                   angular frequency per λ; sets the unit
+ *   sinJets   : nLam × 8, or NULL      incident sine as a jet; replaces θ
+ *   out       : nLam × 10              [r: phaseRad,GD,GDD,TOD,|r|²][t: same] */
 
 TMM_EXPORT("tmm_phase_spectrum")
-void tmm_phase_spectrum(const double *lambdas, const double *omegas, int nLam,
+void tmm_phase_spectrum(const double *lambdas, int nLam,
+                        const double *theta_deg, int nTheta, int pol,
                         const double *n0jets, const double *nsjets,
                         const double *matJets, const double *thick, int N,
-                        double theta_deg, int pol,
-                        const double *sinJets, double *out) {
+                        const double *omegas, const double *sinJets, double *out) {
     jet *layerN = (jet *)malloc(sizeof(jet) * (N > 0 ? N : 1));
     if (!layerN) { fill_nan(out, 10L * nLam); return; }
     for (int li = 0; li < nLam; li++) {
@@ -1628,7 +1818,7 @@ void tmm_phase_spectrum(const double *lambdas, const double *omegas, int nLam,
         }
         jet sine;
         if (sinJets) sine = jread(&sinJets[8 * (long)li]);
-        jphase_core(lambdas[li], omegas[li], theta_deg, pol,
+        jphase_core(lambdas[li], omegas[li], theta_at(theta_deg, nTheta, li), pol,
                     jread(&n0jets[8 * (long)li]), jread(&nsjets[8 * (long)li]),
                     layerN, thick, N,
                     sinJets ? &sine : NULL, &out[10 * (long)li]);
@@ -1637,14 +1827,15 @@ void tmm_phase_spectrum(const double *lambdas, const double *omegas, int nLam,
 }
 
 /* ── Exported: phase dispersion plus exact thickness derivatives ──────────────
- * Mirrors tmmPhaseThicknessJacobian() in phase.js. Frequency stays the Taylor
- * variable, so each thickness derivative is itself a third-order frequency jet.
+ * Mirrors the phase Jacobian in phase.js, with the arguments of tmm_phase.
+ * Frequency stays the Taylor variable, so each thickness derivative is itself
+ * a third-order frequency jet.
  * Zero-thickness layers are retained so derivative indices line up with the
  * caller's design array. Negative and NaN thicknesses are skipped with a zero
  * derivative, matching the point evaluator's base result.
  *
- *   out   : 10        as tmm_phase_one
- *   deriv : 10 × N    [side][quantity][layer], side 0 = r, 1 = t,
+ *   out   : 10        as tmm_phase
+ *  deriv : 10 × N    [side][quantity][layer], side 0 = r, 1 = t,
  *                     quantity 0 = dPhaseDeg, 1 = dGD, 2 = dGDD, 3 = dTOD,
  *                     4 = d(ln |coefficient|²)/dd, the relative intensity
  *                     derivative, which the amplitude ratio in ellipsometry
@@ -1764,10 +1955,10 @@ static void jphase_jacobian_core(double lambda, double omega, double theta_deg, 
 }
 
 TMM_EXPORT("tmm_phase_jacobian")
-void tmm_phase_jacobian(double lambda, double omega, double theta_deg, int pol,
+void tmm_phase_jacobian(double lambda, double theta_deg, int pol,
                         const double *n0jet, const double *nsjet,
                         const double *layerJets, const double *thick, int N,
-                        const double *sinJet, double *out, double *deriv) {
+                        double omega, const double *sinJet, double *out, double *deriv) {
     jet *layerN = (jet *)malloc(sizeof(jet) * (N > 0 ? N : 1));
     jphase_jacobian_scratch scratch;
     if (!layerN || !jphase_jacobian_alloc(N, &scratch)) {
@@ -1793,11 +1984,12 @@ void tmm_phase_jacobian(double lambda, double omega, double theta_deg, int pol,
  *   deriv : nLam × 10 × N    per λ, the 10 × N block of tmm_phase_jacobian */
 
 TMM_EXPORT("tmm_phase_jacobian_spectrum")
-void tmm_phase_jacobian_spectrum(const double *lambdas, const double *omegas, int nLam,
+void tmm_phase_jacobian_spectrum(const double *lambdas, int nLam,
+                                 const double *theta_deg, int nTheta, int pol,
                                  const double *n0jets, const double *nsjets,
                                  const double *matJets, const double *thick, int N,
-                                 double theta_deg, int pol,
-                                 const double *sinJets, double *out, double *deriv) {
+                                 const double *omegas, const double *sinJets,
+                                 double *out, double *deriv) {
     jet *layerN = (jet *)malloc(sizeof(jet) * (N > 0 ? N : 1));
     jphase_jacobian_scratch scratch;
     if (!layerN || !jphase_jacobian_alloc(N, &scratch)) {
@@ -1812,11 +2004,255 @@ void tmm_phase_jacobian_spectrum(const double *lambdas, const double *omegas, in
         }
         jet sine;
         if (sinJets) sine = jread(&sinJets[8 * (long)li]);
-        jphase_jacobian_core(lambdas[li], omegas[li], theta_deg, pol,
+        jphase_jacobian_core(lambdas[li], omegas[li], theta_at(theta_deg, nTheta, li), pol,
                              jread(&n0jets[8 * (long)li]), jread(&nsjets[8 * (long)li]),
                              layerN, thick, N, sinJets ? &sine : NULL,
                              &out[10 * (long)li], &deriv[10L * N * li], scratch);
     }
     jphase_jacobian_free(scratch);
     free(layerN);
+}
+
+/* ── Exported: Taylor-jet arithmetic over a grid ─────────────────────────────
+ * The arithmetic of taylorJet.js, one operation applied to `count` jets per
+ * call, so a caller in another language builds the index jet of a dispersion
+ * formula over a whole wavelength grid in a handful of calls. A jet is 8
+ * doubles, [re, im] for each of [f, f', f''/2!, f'''/3!]; a grid of jets is
+ * count × 8. A real argument that goes with each jet (a factor, an exponent, a
+ * bound) is given once per jet. An output may be the same buffer as an input
+ * of its shape. */
+
+static inline void jwrite(double *p, jet a) {
+    for (int i = 0; i < JET_N; i++) { p[2 * i] = a.c[i].re; p[2 * i + 1] = a.c[i].im; }
+}
+
+/* exp(f): e^{f0} at order 0, then (e^f)' = f'·e^f order by order. */
+static jet jexp_j(jet a) {
+    jet o;
+    double magnitude = exp(a.c[0].re);
+    o.c[0] = cmk(magnitude * cos(a.c[0].im), magnitude * sin(a.c[0].im));
+    for (int order = 1; order < JET_N; order++) {
+        cx sum = cmk(0.0, 0.0);
+        for (int i = 1; i <= order; i++) {
+            cx term = cmul(a.c[i], o.c[order - i]);
+            sum = cadd(sum, cmk(term.re * i, term.im * i));
+        }
+        double inv = 1.0 / (double)order;
+        o.c[order] = cmk(sum.re * inv, sum.im * inv);
+    }
+    return o;
+}
+
+/* Principal log: ln|f0| + i arg f0 at order 0, then (ln f)' = f'/f. */
+static jet jlog_j(jet a) {
+    jet o, derivative;
+    o.c[0] = cmk(log(hypot(a.c[0].re, a.c[0].im)), atan2(a.c[0].im, a.c[0].re));
+    derivative.c[0] = a.c[1];
+    derivative.c[1] = cmk(a.c[2].re * 2.0, a.c[2].im * 2.0);
+    derivative.c[2] = cmk(a.c[3].re * 3.0, a.c[3].im * 3.0);
+    derivative.c[3] = cmk(0.0, 0.0);
+    jet quotient = jmul(derivative, jrecip(a));
+    for (int order = 1; order < JET_N; order++) {
+        double inv = 1.0 / (double)order;
+        o.c[order] = cmk(quotient.c[order - 1].re * inv, quotient.c[order - 1].im * inv);
+    }
+    return o;
+}
+
+/* f(x) from f(x0) and [f'(x0), f''(x0), f'''(x0)]: the Taylor series of f in
+ * the displacement x − x0, which is the jet x with its value set to zero. */
+static jet jcompose_j(double value, const double *derivatives, jet x) {
+    jet displacement = x;
+    displacement.c[0] = cmk(0.0, 0.0);
+    jet square = jmul(displacement, displacement);
+    jet first = jscale(displacement, derivatives[0]);
+    jet second = jscale(square, derivatives[1] / 2.0);
+    jet third = jscale(jmul(square, displacement), derivatives[2] / 6.0);
+    return jadd(jadd(jconst(value, 0.0), first), jadd(second, third));
+}
+
+TMM_EXPORT("tmm_jet_constant")
+void tmm_jet_constant(const double *value, const double *imaginary, int count, double *out) {
+    for (int i = 0; i < count; i++) jwrite(&out[8L * i], jconst(value[i], imaginary[i]));
+}
+
+/* `derivatives` is count × 8: [f, f', f'', f'''] as [re, im] pairs. */
+TMM_EXPORT("tmm_jet_from_derivatives")
+void tmm_jet_from_derivatives(const double *derivatives, int count, double *out) {
+    for (int i = 0; i < count; i++) {
+        const double *d = &derivatives[8L * i];
+        jet o;
+        o.c[0] = cmk(d[0], d[1]);
+        o.c[1] = cmk(d[2], d[3]);
+        o.c[2] = cmk(d[4] * (1.0 / 2.0), d[5] * (1.0 / 2.0));
+        o.c[3] = cmk(d[6] * (1.0 / 6.0), d[7] * (1.0 / 6.0));
+        jwrite(&out[8L * i], o);
+    }
+}
+
+/* out is count × 8: [f, f', f'', f'''] as [re, im] pairs. */
+TMM_EXPORT("tmm_jet_derivatives")
+void tmm_jet_derivatives(const double *jets, int count, double *out) {
+    for (int i = 0; i < count; i++) {
+        cx d[JET_N];
+        jderivs(jread(&jets[8L * i]), d);
+        jet o;
+        for (int k = 0; k < JET_N; k++) o.c[k] = d[k];
+        jwrite(&out[8L * i], o);
+    }
+}
+
+TMM_EXPORT("tmm_jet_add")
+void tmm_jet_add(const double *left, const double *right, int count, double *out) {
+    for (int i = 0; i < count; i++)
+        jwrite(&out[8L * i], jadd(jread(&left[8L * i]), jread(&right[8L * i])));
+}
+
+TMM_EXPORT("tmm_jet_subtract")
+void tmm_jet_subtract(const double *left, const double *right, int count, double *out) {
+    for (int i = 0; i < count; i++)
+        jwrite(&out[8L * i], jsub(jread(&left[8L * i]), jread(&right[8L * i])));
+}
+
+TMM_EXPORT("tmm_jet_scale")
+void tmm_jet_scale(const double *jets, const double *scalar, int count, double *out) {
+    for (int i = 0; i < count; i++) jwrite(&out[8L * i], jscale(jread(&jets[8L * i]), scalar[i]));
+}
+
+TMM_EXPORT("tmm_jet_multiply")
+void tmm_jet_multiply(const double *left, const double *right, int count, double *out) {
+    for (int i = 0; i < count; i++)
+        jwrite(&out[8L * i], jmul(jread(&left[8L * i]), jread(&right[8L * i])));
+}
+
+TMM_EXPORT("tmm_jet_reciprocal")
+void tmm_jet_reciprocal(const double *jets, int count, double *out) {
+    for (int i = 0; i < count; i++) jwrite(&out[8L * i], jrecip(jread(&jets[8L * i])));
+}
+
+TMM_EXPORT("tmm_jet_divide")
+void tmm_jet_divide(const double *numerator, const double *denominator, int count, double *out) {
+    for (int i = 0; i < count; i++)
+        jwrite(&out[8L * i], jdiv(jread(&numerator[8L * i]), jread(&denominator[8L * i])));
+}
+
+/* The order-0 root is csqrt_, tmm.js's csqrt; taylorJet.js forms the modulus
+ * with Math.hypot, so the two agree to round-off rather than bit for bit while
+ * |f| lies between about 1e-154 and 1e154. Outside that range the re² + im² of
+ * csqrt_ underflows or overflows where hypot does not. A refractive index or a
+ * permittivity is far inside it. */
+TMM_EXPORT("tmm_jet_sqrt")
+void tmm_jet_sqrt(const double *jets, int count, double *out) {
+    for (int i = 0; i < count; i++) jwrite(&out[8L * i], jsqrt_j(jread(&jets[8L * i])));
+}
+
+TMM_EXPORT("tmm_jet_exp")
+void tmm_jet_exp(const double *jets, int count, double *out) {
+    for (int i = 0; i < count; i++) jwrite(&out[8L * i], jexp_j(jread(&jets[8L * i])));
+}
+
+TMM_EXPORT("tmm_jet_log")
+void tmm_jet_log(const double *jets, int count, double *out) {
+    for (int i = 0; i < count; i++) jwrite(&out[8L * i], jlog_j(jread(&jets[8L * i])));
+}
+
+/* f^p for real p, as exp(p log f); the branch cut of the log applies. */
+TMM_EXPORT("tmm_jet_power")
+void tmm_jet_power(const double *jets, const double *exponent, int count, double *out) {
+    for (int i = 0; i < count; i++)
+        jwrite(&out[8L * i], jexp_j(jscale(jlog_j(jread(&jets[8L * i])), exponent[i])));
+}
+
+TMM_EXPORT("tmm_jet_sin_cos")
+void tmm_jet_sin_cos(const double *jets, int count, double *sine, double *cosine) {
+    for (int i = 0; i < count; i++) {
+        jet s, c;
+        jsincos(jread(&jets[8L * i]), &s, &c);
+        jwrite(&sine[8L * i], s);
+        jwrite(&cosine[8L * i], c);
+    }
+}
+
+TMM_EXPORT("tmm_jet_sin")
+void tmm_jet_sin(const double *jets, int count, double *out) {
+    for (int i = 0; i < count; i++) {
+        jet s, c;
+        jsincos(jread(&jets[8L * i]), &s, &c);
+        jwrite(&out[8L * i], s);
+    }
+}
+
+TMM_EXPORT("tmm_jet_cos")
+void tmm_jet_cos(const double *jets, int count, double *out) {
+    for (int i = 0; i < count; i++) {
+        jet s, c;
+        jsincos(jread(&jets[8L * i]), &s, &c);
+        jwrite(&out[8L * i], c);
+    }
+}
+
+/* `value` is count reals, `derivatives` count × 3 reals [f', f'', f''']. */
+TMM_EXPORT("tmm_jet_compose")
+void tmm_jet_compose(const double *value, const double *derivatives, const double *x,
+                     int count, double *out) {
+    for (int i = 0; i < count; i++)
+        jwrite(&out[8L * i], jcompose_j(value[i], &derivatives[3L * i], jread(&x[8L * i])));
+}
+
+/* λ(ω) = 2πc/ω, in whatever unit `wavelength` is given in. */
+TMM_EXPORT("tmm_wavelength_omega_jet")
+void tmm_wavelength_omega_jet(const double *wavelength, const double *omega, int count, double *out) {
+    for (int i = 0; i < count; i++) jwrite(&out[8L * i], jwavelength(wavelength[i], omega[i]));
+}
+
+/* The real parts of one jet with the real parts of another as imaginary parts. */
+TMM_EXPORT("tmm_jet_with_imaginary_part")
+void tmm_jet_with_imaginary_part(const double *realJets, const double *imaginaryJets, int count,
+                                 double *out) {
+    for (int i = 0; i < count; i++) {
+        jet re = jread(&realJets[8L * i]), im = jread(&imaginaryJets[8L * i]), o;
+        for (int k = 0; k < JET_N; k++) o.c[k] = cmk(re.c[k].re, im.c[k].re);
+        jwrite(&out[8L * i], o);
+    }
+}
+
+TMM_EXPORT("tmm_jet_real_part")
+void tmm_jet_real_part(const double *jets, int count, double *out) {
+    for (int i = 0; i < count; i++) jwrite(&out[8L * i], jreal(jread(&jets[8L * i])));
+}
+
+/* The jet as given while its value is at least `minimum`, otherwise the
+ * constant `minimum`; NaN takes the constant. */
+TMM_EXPORT("tmm_jet_clamp_real_minimum")
+void tmm_jet_clamp_real_minimum(const double *jets, const double *minimum, int count, double *out) {
+    for (int i = 0; i < count; i++) {
+        jet a = jread(&jets[8L * i]);
+        jwrite(&out[8L * i], a.c[0].re >= minimum[i] ? a : jconst(minimum[i], 0.0));
+    }
+}
+
+TMM_EXPORT("tmm_jet_clamp_imaginary")
+void tmm_jet_clamp_imaginary(const double *jets, const double *limit, int count, double *out) {
+    for (int i = 0; i < count; i++) jwrite(&out[8L * i], jclampim(jread(&jets[8L * i]), limit[i]));
+}
+
+/* out[i] = 1 when all eight doubles of jet i are finite, else 0. */
+TMM_EXPORT("tmm_jet_is_finite")
+void tmm_jet_is_finite(const double *jets, int count, int *out) {
+    for (int i = 0; i < count; i++) {
+        int finite = 1;
+        for (int k = 0; k < 8; k++) if (!isfinite(jets[8L * i + k])) finite = 0;
+        out[i] = finite;
+    }
+}
+
+/* ── Exported: angular frequency of a vacuum wavelength ──────────────────────
+ * ω = 2πc/λ in rad/fs for λ in nm, the default frequency of the phase calls,
+ * which gives GD, GDD and TOD in fs, fs² and fs³. */
+
+#define C_NM_PER_FS 299.792458
+
+TMM_EXPORT("tmm_omega_from_lambda_nm")
+void tmm_omega_from_lambda_nm(const double *lambda_nm, int count, double *out) {
+    for (int i = 0; i < count; i++) out[i] = 2.0 * PI * C_NM_PER_FS / lambda_nm[i];
 }

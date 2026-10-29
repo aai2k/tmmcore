@@ -14,7 +14,7 @@
  *
  *   • tmm(), and T as the Jacobian, Hessian and needle scan report it
  *   • |t|² and the phase of t from the phase kernel
- *   • the WebAssembly kernel: tmm_one, tmm_spectrum, the phase kernels and
+ *   • the WebAssembly kernel: tmm_rta, tmm_rta_spectrum, the phase kernels and
  *     the three growing-stack kernels
  *
  * An ordinary dielectric stack runs alongside, where nothing is held.
@@ -245,7 +245,7 @@ if (kernel) {
             c.lambdas.forEach((lambda, i) => {
                 const curve = kernel.monitorCurve(lambda, theta, c.n0, c.ns, below, top.n, [top.d]);
                 for (const [name, Ts, Tp] of [
-                    ['tmm_spectrum', spectrum.Ts[i], spectrum.Tp[i]],
+                    ['batched spectrum', spectrum.Ts[i], spectrum.Tp[i]],
                     ['growing evaluator', sampled.Ts[i], sampled.Tp[i]],
                     ['deposition spectra', deposited.Ts[lastStep + i], deposited.Tp[lastStep + i]],
                     ['monitor curve', curve.Ts[0], curve.Tp[0]],

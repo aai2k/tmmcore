@@ -138,5 +138,14 @@ for (const [runName, dep] of Object.entries(RUNS)) {
     }
 }
 
+// An empty run deposits nothing, so every output has no entries.
+const empty = k.depositionSpectra(LAMBDAS, LAMBDAS.map(() => n0), LAMBDAS.map(() => ns), [], [], 0);
+for (const [key, values] of Object.entries(empty)) {
+    checks++;
+    if (values.length === 0) continue;
+    failures++;
+    console.log(`  FAIL empty run ${key}: ${values.length} entries`);
+}
+
 console.log(`growing-stack equivalence: ${checks} checks, ${failures} failures, worst diff ${worstDiff.toExponential(2)}`);
 process.exit(failures ? 1 : 0);

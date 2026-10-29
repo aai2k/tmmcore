@@ -1,9 +1,9 @@
 # Build the tmmcore WASM kernel with Emscripten (Windows / PowerShell).
 #
 # Usage:
-#   npm run build:wasm            # build the kernel (auto-finds emsdk)
-#   .\src\build.ps1          # same, directly
+#   .\src\build.ps1                 # find and activate emsdk, build, run the kernel tests
 #   .\src\build.ps1 -InstallEmsdk   # clone+install emsdk first if missing
+#   npm run build:wasm              # build only, with emsdk already activated
 #
 # emcc discovery order (first hit wins):
 #   1. emcc already on PATH
@@ -102,26 +102,16 @@ Searched: $($candidates -join '; ')
     }
 }
 
-# Each emcc flag is a quoted token. The EXPORTED_FUNCTIONS value contains commas;
-# unquoted, PowerShell parses them as its array operator and errors ("Missing
-# argument in parameter list"). Quoting passes the literal string through to emcc.
-$emccArgs = @(
-  'src/tmm_kernel.c'
-  '-O3'
-  '--no-entry'
-  '-sSTANDALONE_WASM=1'
-  '-sALLOW_MEMORY_GROWTH=1'
-  '-sEXPORTED_FUNCTIONS=_tmm_one,_tmm_spectrum,_tmm_jacobian,_tmm_needle_scan,_tmm_hessian,_tmm_phase_one,_tmm_phase_spectrum,_tmm_phase_jacobian,_tmm_monitor_curve,_tmm_deposition_spectra,_tmm_growing_eval_create,_tmm_growing_eval_set_top,_tmm_growing_eval_sample,_tmm_growing_eval_free,_malloc,_free'
-  '-o'
-  'src/tmm_kernel.wasm'
-)
-& emcc @emccArgs
-if ($LASTEXITCODE -ne 0) { Write-Error "emcc failed with exit code $LASTEXITCODE."; exit 1 }
+# The emcc flags and the Chromium 108 feature check live in one place,
+# scripts/build-wasm.mjs, shared with npm run build:wasm.
+node scripts/build-wasm.mjs
+if ($LASTEXITCODE -ne 0) { Write-Error "build-wasm failed with exit code $LASTEXITCODE."; exit 1 }
 
-Write-Host "Built src/tmm_kernel.wasm"
 node tests/equivalence.mjs
 if ($LASTEXITCODE -ne 0) { Write-Error "equivalence tests failed with exit code $LASTEXITCODE."; exit 1 }
 node tests/growing_equivalence.mjs
 if ($LASTEXITCODE -ne 0) { Write-Error "growing_equivalence tests failed with exit code $LASTEXITCODE."; exit 1 }
 node tests/growing_eval_equivalence.mjs
 if ($LASTEXITCODE -ne 0) { Write-Error "growing_eval_equivalence tests failed with exit code $LASTEXITCODE."; exit 1 }
+node tests/kernel_exports.mjs
+if ($LASTEXITCODE -ne 0) { Write-Error "kernel_exports tests failed with exit code $LASTEXITCODE."; exit 1 }

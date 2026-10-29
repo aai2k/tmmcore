@@ -257,7 +257,7 @@ A kernel that cannot allocate its working state, which happens only when the Web
 | `tmmNeedleScan(lambda_nm, theta_deg, polCode, n0, ns, layers, candidateNs, intraFracs?)` | `tmmNeedleScan` |
 | `tmmPhaseOne(lambda_nm, theta_deg, polCode, n0Jet, nsJet, layers, options?)` | `tmmPhaseDispersion` |
 | `tmmPhaseJacobian(lambda_nm, theta_deg, polCode, n0Jet, nsJet, layers, options?)` | `tmmPhaseThicknessJacobian` |
-| `hasHessian()`, `hasPhase()`, `hasPhaseJacobianSpectrum()`, `hasGrowingKernels()`, `hasGrowingEval()` | Whether this build carries those kernels |
+| `hasHessian()`, `hasPhase()`, `hasPhaseJacobianSpectrum()`, `hasGrowingKernels()`, `hasGrowingEval()` | Always `true`: a module missing any kernel is refused when it loads |
 
 ### `tmmSpectrum(lambdas, n0List, nsList, layerNK, thick, theta_deg)`
 

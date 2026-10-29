@@ -3,12 +3,12 @@
  * against Byrnes' results, and print the comparison table.
  *
  * Three timed paths:
- *   js        — the JavaScript `tmm()`, called per (lambda, pol). Same call
- *               granularity as Byrnes' coh_tmm, so this is the like-for-like row.
- *   wasm-one  — kernel `tmm_one()` per (lambda, pol). Same granularity again,
- *               but pays a JS->WASM boundary crossing per call.
- *   wasm-spec — kernel `tmm_spectrum()`, one call for the whole grid and both
- *               polarizations. The path a caller should actually use.
+ *   js         the JavaScript `tmm()`, called per (lambda, pol). Same call
+ *              granularity as Byrnes' coh_tmm, so this is the like-for-like row.
+ *   wasm-one   kernel `tmm_rta()` per (lambda, pol). Same granularity again,
+ *              but pays a JS->WASM boundary crossing per call.
+ *   wasm-spec  kernel `tmm_rta_spectrum()`, one call for the whole grid and
+ *              both polarizations. The path a caller should actually use.
  *
  * Run: node bench_js.mjs   (after bench_py.py has written results_py.json)
  */

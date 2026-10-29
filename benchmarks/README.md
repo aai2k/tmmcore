@@ -22,7 +22,7 @@ caveats that give them meaning.
 | `tmm_fast` | [`tmm_fast`](https://github.com/MLResearchAtOSRAM/tmm_fast) — PyTorch, batched, GPU-capable, autograd. |
 | `tmmax` | [`tmmax`](https://github.com/bahremsd/tmmax) — JAX with JIT and vmap. |
 | `tmmcore js` | The JavaScript `tmm()`, one call per (λ, polarization). |
-| `tmmcore wasm` | The C kernel's `tmm_spectrum()`, one call for the whole grid and both polarizations. |
+| `tmmcore wasm` | The C kernel's `tmm_rta_spectrum()`, one call for the whole grid and both polarizations. |
 
 ## The shared input set
 
