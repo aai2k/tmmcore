@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   javascript:
     runs-on: ${{ matrix.os }}
@@ -62,3 +65,48 @@ jobs:
 
           cl /c /W3 /WX /O2 src\c\*.c
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  # The javascript job tests src/wasm/tmm_kernel.wasm as committed, and the
+  # module is built by hand. Build it again from src/c and fail when it differs
+  # from the committed file by a byte, so a change to the C committed without a
+  # rebuild fails here. Built on Windows, as the committed module is, since the
+  # comparison is byte for byte.
+  wasm:
+    runs-on: windows-latest
+    env:
+      # The Emscripten release the committed module is built with, and the
+      # emsdk tag that installs it. Another version can write other bytes from
+      # the same C, so rebuilding the module with another version means
+      # changing this pin in the same commit.
+      EMSCRIPTEN_VERSION: '5.0.7'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      - name: Emscripten
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch $env:EMSCRIPTEN_VERSION https://github.com/emscripten-core/emsdk.git "$env:RUNNER_TEMP\emsdk"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP\emsdk\emsdk.ps1" install $env:EMSCRIPTEN_VERSION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$env:RUNNER_TEMP\emsdk\emsdk.ps1" activate $env:EMSCRIPTEN_VERSION
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build from src/c
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP\emsdk\emsdk_env.ps1"
+          npm run build:wasm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: The committed module is the one src/c builds
+        shell: pwsh
+        run: |
+          git diff --exit-code --stat -- src/wasm/tmm_kernel.wasm
+          if ($LASTEXITCODE -ne 0) {
+            echo "::error::src/wasm/tmm_kernel.wasm is not what src/c builds. Run npm run build:wasm under Emscripten $env:EMSCRIPTEN_VERSION and commit the result."
+            exit 1
+          }

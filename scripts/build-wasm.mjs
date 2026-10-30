@@ -13,6 +13,11 @@
  * src/c; only the allocator is listed here. The sources are compiled together
  * with link-time optimization, so a helper inlines across files.
  *
+ * CI rebuilds the module on Windows with the Emscripten version pinned in
+ * .github/workflows/test.yml and fails if it differs from the committed file
+ * by a byte, so rebuilding with another version means changing that pin in
+ * the same commit.
+ *
  *   npm run build:wasm
  *
  * Needs emcc on PATH (activate emsdk first, or use src/build.ps1 on Windows,
