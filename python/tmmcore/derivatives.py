@@ -84,45 +84,71 @@ def hessian_spectrum(stack, wavelengths, *, angle=0.0, pol="avg"):
     return _derivatives_spectrum(stack, wavelengths, angle, pol, second=True)
 
 
-def _needle_scan_kernel(point, pol_code, candidates, fractions):
+def _needle_triples(values):
+    """[dR, dT, dA] on the last axis, as three arrays."""
+    return {"dR": values[..., 0].copy(), "dT": values[..., 1].copy(), "dA": values[..., 2].copy()}
+
+
+def needle_scan(stack, wavelength, *, candidates, fractions=(), angle=0.0, pol="avg"):
     """
-    The needle scan at one wavelength on the kernel's own arrays. point is
-    (λ in nm, θ in degrees, ñ0, ñs, layers as N rows [n, k, d]), candidates
-    are complex indices, fractions split points inside each layer. Returns
-    {"base": [R, T, A], "gaps": (N + 1, nCand, 3), "intra": (N, nFrac, nCand, 3)},
-    the last axis [dR, dT, dA].
+    The derivatives of R, T and A, per nm of needle, for inserting a layer of
+    zero thickness of each candidate material at every interface of the stack
+    and, with fractions, inside its layers.
+
+    Takes the arguments of rta, and candidates, a list of indices, each a
+    number or {"n", "k"} as a medium is, and fractions, positions inside each
+    layer as fractions of its thickness from the incident side. Returns
+    {"R", "T", "A", "gaps", "intra", "N"}. "gaps" holds "dR", "dT" and "dA",
+    each (N + 1, nCand), interface 0 in front of the first layer and N against
+    the substrate; "intra" holds the same, each (N, nFrac, nCand).
     """
-    lambda_nm, theta_deg, n0, ns, layers = point
-    layers = np.ascontiguousarray(layers, dtype=np.float64)
-    candidates = np.ascontiguousarray(candidates, dtype=np.complex128)
-    fractions = np.ascontiguousarray(fractions, dtype=np.float64)
+    lam = _stack.read_wavelength(wavelength)
+    theta = _stack.read_angle(angle)
+    pol = _stack.read_rta_pol(pol)
+    candidates = _stack.read_candidates(candidates)
+    fractions = _stack.read_fractions(fractions)
+    n0, ns, layers = _stack.point_stack(stack)
     N, n_cand, n_frac = len(layers), len(candidates), len(fractions)
-    base = np.empty(3)
-    gaps = np.empty((N + 1, n_cand, 3))
-    intra = np.empty((N, n_frac, n_cand, 3))
-    lib.tmm_needle_scan(float(lambda_nm), float(theta_deg), int(pol_code), n0.real, n0.imag, ns.real, ns.imag,
-                        address(layers), N, address(candidates), n_cand, address(fractions), n_frac,
-                        address(base), address(gaps), address(intra))
-    return {"base": base, "gaps": gaps, "intra": intra}
+
+    def run(side):
+        base = np.empty(3)
+        gaps = np.empty((N + 1, n_cand, 3))
+        intra = np.empty((N, n_frac, n_cand, 3))
+        lib.tmm_needle_scan(lam, theta, _stack.POL_CODE[side], n0.real, n0.imag, ns.real, ns.imag,
+                            address(layers), N, address(candidates), n_cand, address(fractions), n_frac,
+                            address(base), address(gaps), address(intra))
+        return {"R": float(base[0]), "T": float(base[1]), "A": float(base[2]),
+                "gaps": _needle_triples(gaps), "intra": _needle_triples(intra), "N": N}
+
+    return _stack.polarized(pol, run)
 
 
-def _needle_scan_spectrum_kernel(grid, pol_code, candidates, fractions):
+def needle_scan_spectrum(stack, wavelengths, *, candidates, fractions=(), angle=0.0, pol="avg"):
     """
-    The needle scan over a grid on the kernel's own arrays. grid is (λs in
-    nm, θs in degrees, then the media, the layer table and the thicknesses as
-    _stack.grid_stack gives them); candidates are (nCand, nLam) complex.
-    Returns {"base": (nLam, 3), "gaps": (nLam, N + 1, nCand, 3),
-    "intra": (nLam, N, nFrac, nCand, 3)}.
+    The needle scan over a wavelength grid. Takes the arguments of
+    rta_spectrum, and candidates and fractions as needle_scan does, where a
+    candidate's n and k may also be one value per wavelength. Returns R, T and
+    A over the grid, and "gaps" and "intra" with a leading wavelength axis,
+    (nLam, N + 1, nCand) and (nLam, N, nFrac, nCand).
     """
-    lambdas, angles, n0, ns, table, thick = grid
-    candidates = np.ascontiguousarray(candidates, dtype=np.complex128)
-    fractions = np.ascontiguousarray(fractions, dtype=np.float64)
-    n_lam, N, n_cand, n_frac = len(lambdas), len(thick), len(candidates), len(fractions)
-    base = np.empty((n_lam, 3))
-    gaps = np.empty((n_lam, N + 1, n_cand, 3))
-    intra = np.empty((n_lam, N, n_frac, n_cand, 3))
-    lib.tmm_needle_scan_spectrum(address(lambdas), n_lam, address(angles), len(angles), int(pol_code),
-                                 address(n0), address(ns), address(table), address(thick), N,
-                                 address(candidates), n_cand, address(fractions), n_frac,
-                                 address(base), address(gaps), address(intra))
-    return {"base": base, "gaps": gaps, "intra": intra}
+    lambdas = _stack.read_wavelengths(wavelengths)
+    n_lam = len(lambdas)
+    angles = _stack.read_angle(angle, n_lam)
+    pol = _stack.read_rta_pol(pol)
+    candidates = _stack.read_candidates(candidates, n_lam)
+    fractions = _stack.read_fractions(fractions)
+    n0, ns, table, thick = _stack.grid_stack(stack, n_lam)
+    N, n_cand, n_frac = len(thick), len(candidates), len(fractions)
+
+    def run(side):
+        base = np.empty((n_lam, 3))
+        gaps = np.empty((n_lam, N + 1, n_cand, 3))
+        intra = np.empty((n_lam, N, n_frac, n_cand, 3))
+        lib.tmm_needle_scan_spectrum(address(lambdas), n_lam, address(angles), len(angles), _stack.POL_CODE[side],
+                                     address(n0), address(ns), address(table), address(thick), N,
+                                     address(candidates), n_cand, address(fractions), n_frac,
+                                     address(base), address(gaps), address(intra))
+        return {"R": base[:, 0].copy(), "T": base[:, 1].copy(), "A": base[:, 2].copy(),
+                "gaps": _needle_triples(gaps), "intra": _needle_triples(intra), "N": N}
+
+    return _stack.polarized(pol, run)

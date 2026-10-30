@@ -9,8 +9,9 @@
  *   • on the module each keeps the name and parameter count of the function
  *     it calls; on an instance the methods are not enumerable, as the methods
  *     of a class are
- *   • each prints one warning, on first use, naming its replacement;
- *     tmmNeedleScan and the growing-layer calls of an instance print none
+ *   • each prints one warning, on first use, naming its replacement, one for
+ *     a name the module and an instance share; the growing-layer calls of an
+ *     instance print none
  *
  * Skips cleanly if tmm_kernel.wasm has not been built.
  *
@@ -37,6 +38,9 @@ console.warn = message => warnings.push(String(message));
 const i = 2, lambda = LAMBDAS[i], angle = 30;
 const old = oldPoint(lambda);
 const G = OLD_GRID;
+// The needle scans try MgF2 and a weak absorber, and split each layer at its middle.
+const NEEDLES = { candidates: [1.38, { n: 2.1, k: 0.01 }], fractions: [0.5] };
+const OLD_CANDIDATES = [[1.38, 0], [2.1, 0.01]];
 const PAIRS = [
     ['tmm', pol => tmmcore.rta(pointStack(i), lambda, { angle, pol }),
         pol => tmmcore.tmm(lambda, angle, pol, old.n0, old.ns, old.layers)],
@@ -44,6 +48,8 @@ const PAIRS = [
         pol => tmmcore.tmmThicknessJacobian(lambda, angle, pol, old.n0, old.ns, old.layers)],
     ['tmmThicknessHessian', pol => tmmcore.hessian(pointStack(i), lambda, { angle, pol }),
         pol => tmmcore.tmmThicknessHessian(lambda, angle, pol, old.n0, old.ns, old.layers)],
+    ['tmmNeedleScan', pol => tmmcore.needleScan(pointStack(i), lambda, { angle, pol, ...NEEDLES }),
+        pol => tmmcore.tmmNeedleScan(lambda, angle, pol, old.n0, old.ns, old.layers, OLD_CANDIDATES, NEEDLES.fractions)],
     ['tmmPhaseDispersion', pol => tmmcore.phase(pointJetStack(i), lambda, { angle, pol }),
         pol => tmmcore.tmmPhaseDispersion(lambda, angle, pol, old.n0Jet, old.nsJet, old.jetLayers)],
     ['tmmPhaseThicknessJacobian', pol => tmmcore.phaseJacobian(pointJetStack(i), lambda, { angle, pol }),
@@ -56,6 +62,9 @@ const PAIRS = [
         (pol, code) => wasm.tmmJacobian(lambda, angle, code, old.n0, old.ns, old.layers)],
     ['tmmHessian', pol => wasm.hessian(pointStack(i), lambda, { angle, pol }),
         (pol, code) => wasm.tmmHessian(lambda, angle, code, old.n0, old.ns, old.layers)],
+    ['instance tmmNeedleScan', pol => wasm.needleScan(pointStack(i), lambda, { angle, pol, ...NEEDLES }),
+        (pol, code) => wasm.tmmNeedleScan(lambda, angle, code, old.n0, old.ns, old.layers, OLD_CANDIDATES,
+            NEEDLES.fractions)],
     ['tmmPhaseOne', pol => wasm.phase(pointJetStack(i), lambda, { angle, pol }),
         (pol, code) => wasm.tmmPhaseOne(lambda, angle, code, old.n0Jet, old.nsJet, old.jetLayers)],
     ['tmmPhaseJacobian', pol => wasm.phaseJacobian(pointJetStack(i), lambda, { angle, pol }),
@@ -154,16 +163,13 @@ for (const [name, args] of COEFFICIENT_CALLS) {
     for (let twice = 0; twice < 2; twice++) sameBits(tmmcore[name](...args), phaseKernels[name](...args), name);
 }
 
-// The needle scan and the growing-layer calls have no call of 0.5 in their
-// place, and print nothing.
-tmmcore.tmmNeedleScan(lambda, angle, 's', old.n0, old.ns, old.layers, [[1.38, 0]], [0.5]);
-wasm.tmmNeedleScan(lambda, angle, 0, old.n0, old.ns, old.layers, [[1.38, 0]], [0.5]);
+// The growing-layer calls have no call of 0.5 in their place, and print nothing.
 wasm.monitorCurve(lambda, angle, old.n0, old.ns, old.layers, [1.38, 0], [0, 50]);
 wasm.depositionSpectra(LAMBDAS, G.n0List, G.nsList, G.layerNK, G.thick, angle);
 wasm.growingEval(LAMBDAS, G.n0List, G.nsList, G.layerNK, G.thick, angle).free();
 
 const REPLACED = {
-    tmm: 'rta', tmmThicknessJacobian: 'jacobian', tmmThicknessHessian: 'hessian',
+    tmm: 'rta', tmmThicknessJacobian: 'jacobian', tmmThicknessHessian: 'hessian', tmmNeedleScan: 'needleScan',
     tmmPhaseDispersion: 'phase', tmmPhaseThicknessJacobian: 'phaseJacobian',
     tmmOne: 'rta', tmmSpectrum: 'rtaSpectrum', tmmJacobian: 'jacobian', tmmHessian: 'hessian',
     tmmPhaseOne: 'phase', tmmPhaseJacobian: 'phaseJacobian',

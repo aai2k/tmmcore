@@ -1,7 +1,7 @@
 /**
  * The needle P-function: where should the next layer go?
  *
- * Given a design and a merit function, tmmNeedleScan returns the derivative of
+ * Given a design and a merit function, needleScan returns the derivative of
  * each spectral quantity with respect to inserting an infinitesimally thin
  * layer of a candidate material, at every position in the stack at once. Chain
  * that through the merit function and you get P(z), whose most negative point
@@ -21,7 +21,7 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { rtaSpectrum, tmmNeedleScan } from '../src/js/index.js';
+import { rtaSpectrum, needleScan } from '../src/js/index.js';
 import { linePlot } from './_plot.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -49,10 +49,6 @@ const meritOf = layers => rtaSpectrum({ incident: 1, substrate: 1.52, layers }, 
 const FRACS = Array.from({ length: 49 }, (_, i) => (i + 1) / 50);
 const CANDS = [H, L];
 
-// tmmNeedleScan takes each index as an [re, im] pair.
-const pair = n => [n, 0];
-const designPairs = design.map(({ n, d }) => ({ n: pair(n), d }));
-
 // P(z) for each candidate, sampled inside every layer. Depth is measured from
 // the incident medium, which is the order the layers are stored in.
 const depthOf = (k, frac) =>
@@ -67,7 +63,8 @@ for (let k = 0; k < design.length; k++) {
 for (let c = 0; c < CANDS.length; c++) {
     const acc = new Array(Z.length).fill(0);
     for (const lam of band) {
-        const scan = tmmNeedleScan(lam, 0, 's', pair(1), pair(1.52), designPairs, CANDS.map(pair), FRACS);
+        const scan = needleScan({ incident: 1, substrate: 1.52, layers: design }, lam,
+            { pol: 's', candidates: CANDS, fractions: FRACS });
         let i = 0;
         for (let k = 0; k < design.length; k++) {
             for (let f = 0; f < FRACS.length; f++) {

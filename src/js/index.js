@@ -35,7 +35,8 @@ import { tmm as tmmKernel, rtaSpectrumKernel } from './rta.js';
 import {
     tmmThicknessJacobian as jacobianKernel,
     tmmThicknessHessian as hessianKernel,
-    jacobianSpectrumKernel, hessianSpectrumKernel,
+    tmmNeedleScan as needleKernel,
+    jacobianSpectrumKernel, hessianSpectrumKernel, needleScanSpectrumKernel,
 } from './derivatives.js';
 import {
     tmmPhaseDispersion as phaseKernel,
@@ -47,13 +48,14 @@ import {
     phaseSpectrumKernel, phaseJacobianSpectrumKernel,
 } from './phase.js';
 import { stackCalls } from './calls.js';
-import { pointStack, gridStack } from './stack.js';
+import { pointStack, gridStack, pairOf, pairsOver } from './stack.js';
 import { deprecated } from './deprecated.js';
 
 export const {
     rta, rtaSpectrum,
     jacobian, jacobianSpectrum,
     hessian, hessianSpectrum,
+    needleScan, needleScanSpectrum,
     phase, phaseSpectrum,
     phaseJacobian, phaseJacobianSpectrum,
 } = stackCalls({
@@ -62,6 +64,8 @@ export const {
     rta: (lambda, theta, pol, { n0, ns, layers }) => tmmKernel(lambda, theta, pol, n0, ns, layers),
     jacobian: (lambda, theta, pol, { n0, ns, layers }) => jacobianKernel(lambda, theta, pol, n0, ns, layers),
     hessian: (lambda, theta, pol, { n0, ns, layers }) => hessianKernel(lambda, theta, pol, n0, ns, layers),
+    needleScan: (lambda, theta, pol, { n0, ns, layers }, { candidates, fractions }) =>
+        needleKernel(lambda, theta, pol, n0, ns, layers, candidates.map(pairOf), fractions),
     phase: (lambda, theta, pol, { n0Jet, nsJet, layers }, sine) =>
         phaseKernel(lambda, theta, pol, n0Jet, nsJet, layers, { sinTheta0Jet: sine }),
     phaseJacobian: (lambda, theta, pol, { n0Jet, nsJet, layers }, sine) =>
@@ -69,15 +73,20 @@ export const {
     rtaSpectrum: rtaSpectrumKernel,
     jacobianSpectrum: jacobianSpectrumKernel,
     hessianSpectrum: hessianSpectrumKernel,
+    needleScanSpectrum: (grid, pol, { candidates, fractions }) => needleScanSpectrumKernel(grid, pol, {
+        candNK: candidates.map(candidate => pairsOver(candidate, grid.lambdas.length)), fracs: fractions,
+    }),
     phaseSpectrum: phaseSpectrumKernel,
     phaseJacobianSpectrum: phaseJacobianSpectrumKernel,
 });
 
 // The names of 0.4, with their old arguments: (λ, θ, pol, n0, ns, layers),
-// pol 's' or 'p', each ñ as [re, im].
+// pol 's' or 'p', each ñ as [re, im]; tmmNeedleScan then takes the candidates
+// and the split fractions.
 export const tmm = deprecated('tmm', 'rta', tmmKernel);
 export const tmmThicknessJacobian = deprecated('tmmThicknessJacobian', 'jacobian', jacobianKernel);
 export const tmmThicknessHessian = deprecated('tmmThicknessHessian', 'hessian', hessianKernel);
+export const tmmNeedleScan = deprecated('tmmNeedleScan', 'needleScan', needleKernel);
 export const tmmPhaseDispersion = deprecated('tmmPhaseDispersion', 'phase', phaseKernel);
 export const tmmPhaseThicknessJacobian =
     deprecated('tmmPhaseThicknessJacobian', 'phaseJacobian', phaseJacobianKernel);
@@ -91,9 +100,6 @@ export const coefficientPhaseDispersion =
     deprecated('coefficientPhaseDispersion', null, coefficientPhaseKernel);
 export const coefficientPhaseThicknessDerivatives =
     deprecated('coefficientPhaseThicknessDerivatives', null, coefficientPhaseDerivativesKernel);
-
-// Exact analytic needle P-function, one wavelength
-export { tmmNeedleScan } from './derivatives.js';
 
 // Low-level primitives, for building variants on the same conventions
 export {

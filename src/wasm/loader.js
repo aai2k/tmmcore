@@ -17,11 +17,13 @@
  */
 
 import { stackCalls } from '../js/calls.js';
-import { checkedStack } from '../js/stack.js';
+import { checkedStack, pairOf } from '../js/stack.js';
 import { memoryMethods, writeStackLayers, STACK } from './memory.js';
 import { wasmJetCalls } from './jet.js';
 import { rtaMethods, rtaSpectrumWasm } from './rta.js';
-import { derivativeMethods, jacobianSpectrumWasm, hessianSpectrumWasm } from './derivatives.js';
+import {
+    derivativeMethods, jacobianSpectrumWasm, hessianSpectrumWasm, needleScanSpectrumWasm,
+} from './derivatives.js';
 import { growingMethods } from './growing.js';
 import { phaseMethods, phaseSpectrumWasm, phaseJacobianSpectrumWasm } from './phase.js';
 
@@ -55,7 +57,8 @@ function instanceGridStack(stack, nLam) {
 }
 
 // The instance's kernels in the form calls.js builds on: pol 's' or 'p', the
-// stack of an R/T call read as above, the phase stacks as stack.js lays them out.
+// stack of an R/T call and of a needle scan read as above, the candidates as
+// checked media, the phase stacks as stack.js lays them out.
 function wasmKernels(wasm) {
     const code = pol => (pol === 'p' ? 1 : 0);
     return {
@@ -64,6 +67,8 @@ function wasmKernels(wasm) {
         rta: (lambda, theta, pol, media) => wasm._rta(lambda, theta, code(pol), media, writeStackLayers),
         jacobian: (lambda, theta, pol, media) => wasm._jacobian(lambda, theta, code(pol), media, writeStackLayers),
         hessian: (lambda, theta, pol, media) => wasm._hessian(lambda, theta, code(pol), media, writeStackLayers),
+        needleScan: (lambda, theta, pol, media, { candidates, fractions }) => wasm._needleScan(lambda, theta,
+            code(pol), { ...media, candidates: candidates.map(pairOf), fractions }, writeStackLayers),
         phase: (lambda, theta, pol, media, sine) =>
             wasm._phase(lambda, theta, code(pol), media, { sinTheta0Jet: sine }),
         phaseJacobian: (lambda, theta, pol, media, sine) =>
@@ -71,6 +76,8 @@ function wasmKernels(wasm) {
         rtaSpectrum: grid => rtaSpectrumWasm(wasm, grid, STACK),
         jacobianSpectrum: (grid, pol) => jacobianSpectrumWasm(wasm, grid, code(pol)),
         hessianSpectrum: (grid, pol) => hessianSpectrumWasm(wasm, grid, code(pol)),
+        needleScanSpectrum: (grid, pol, { candidates, fractions }) =>
+            needleScanSpectrumWasm(wasm, grid, code(pol), { candNK: candidates, fracs: fractions }, STACK),
         phaseSpectrum: (grid, pol) => phaseSpectrumWasm(wasm, grid, code(pol)),
         phaseJacobianSpectrum: (grid, pol) => phaseJacobianSpectrumWasm(wasm, grid, code(pol)),
     };

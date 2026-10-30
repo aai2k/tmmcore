@@ -5,19 +5,22 @@
  *   rta, rtaSpectrum                       R, T and A
  *   jacobian, jacobianSpectrum             with their thickness derivatives
  *   hessian, hessianSpectrum               and the second derivatives
+ *   needleScan, needleScanSpectrum         their derivatives for a thin layer inserted
  *   phase, phaseSpectrum                   phase, GD, GDD and TOD of r and t
  *   phaseJacobian, phaseJacobianSpectrum   with their thickness derivatives
  *
  * The stack is { incident, substrate, layers: [{ n, k, d }] } (stack.js).
  * `angle` is the angle of incidence in degrees, 0 when left out; a Spectrum
  * call also takes one angle per wavelength. `pol` is 's', 'p' or 'avg' in the
- * R/T and derivative calls, 'avg' when left out, which is the mean of the s and
- * p results; 's' or 'p' in the phase calls, which may leave it out at normal
- * incidence, where the two are the same. In place of `angle` a phase call
- * takes `sine`, the sine of the angle of incidence as a jet in ω (jet.js), one
- * jet per wavelength in a Spectrum call: for an angle held fixed outside a
- * dispersive incident medium, so that the angle inside it disperses. An option
- * a call does not take throws.
+ * R/T, derivative and needle calls, 'avg' when left out, which is the mean of
+ * the s and p results; 's' or 'p' in the phase calls, which may leave it out at
+ * normal incidence, where the two are the same. In place of `angle` a phase
+ * call takes `sine`, the sine of the angle of incidence as a jet in ω (jet.js),
+ * one jet per wavelength in a Spectrum call: for an angle held fixed outside a
+ * dispersive incident medium, so that the angle inside it disperses. A needle
+ * scan takes `candidates`, the materials it tries inserting, each an index
+ * given as a medium is, a number or { n, k }, and `fractions`, where inside each
+ * layer it also tries them. An option a call does not take throws.
  *
  * stackCalls() builds the calls on a set of kernels: the package index on the
  * JavaScript ones, each WebAssembly instance on its own. The two take the same
@@ -26,11 +29,12 @@
 
 import {
     readWavelength, readWavelengths, readAngle, readRtaPol, readPhasePol, readSine, atNormalIncidence,
-    pointJetStack, gridJetStack,
+    readCandidates, readFractions, pointJetStack, gridJetStack,
 } from './stack.js';
 
 const RTA_OPTIONS = ['angle', 'pol'];
 const PHASE_OPTIONS = ['angle', 'sine', 'pol'];
+const NEEDLE_OPTIONS = ['angle', 'pol', 'candidates', 'fractions'];
 const FIRST = ['dRdd', 'dTdd', 'dAdd'];
 const SECOND = ['d2Rdd', 'd2Tdd', 'd2Add'];
 const PHASE_DERIVATIVES = ['dPhaseDeg', 'dGd', 'dGdd', 'dTod', 'dLogMagnitudeSquared'];
@@ -44,24 +48,39 @@ function checkOptions(options, keys) {
     if (unknown !== undefined) throw new TypeError(`unknown option '${unknown}'; the options are ${listed(keys)}`);
 }
 
-// The angle and polarization of an R/T call; nLam is the grid size of a
-// Spectrum call, null at one wavelength.
+// The options of a call as its kernels take them: the angle, the polarization,
+// and in `extra` what else the kernel takes after the stack. nLam is the grid
+// size of a Spectrum call, null at one wavelength.
+
+// The angle and polarization of an R/T call.
 function readRtaOptions(options, nLam) {
     checkOptions(options, RTA_OPTIONS);
-    return { angle: readAngle(options.angle, nLam), pol: readRtaPol(options.pol) };
+    return { angle: readAngle(options.angle, nLam), pol: readRtaPol(options.pol), extra: null };
 }
 
 // The angle, or the incident sine as jets, and the polarization of a phase
-// call. With the sine the kernels take no angle, and are given 0.
+// call, with the sine, or null, in `extra`. With the sine the kernels take no
+// angle, and are given 0.
 function readPhaseOptions(options, nLam) {
     checkOptions(options, PHASE_OPTIONS);
     if (options.sine === undefined) {
         const angle = readAngle(options.angle, nLam);
-        return { angle, sine: null, pol: readPhasePol(options.pol, atNormalIncidence(angle, null, nLam)) };
+        return { angle, pol: readPhasePol(options.pol, atNormalIncidence(angle, null, nLam)), extra: null };
     }
     if (options.angle !== undefined) throw new TypeError('a phase call takes angle or sine, not both');
     const sine = readSine(options.sine, nLam);
-    return { angle: 0, sine, pol: readPhasePol(options.pol, atNormalIncidence(0, sine, nLam)) };
+    return { angle: 0, pol: readPhasePol(options.pol, atNormalIncidence(0, sine, nLam)), extra: sine };
+}
+
+// The angle and polarization of a needle scan, with its candidates and split
+// fractions in `extra`.
+function readNeedleOptions(options, nLam) {
+    checkOptions(options, NEEDLE_OPTIONS);
+    return {
+        angle: readAngle(options.angle, nLam),
+        pol: readRtaPol(options.pol),
+        extra: { candidates: readCandidates(options.candidates, nLam), fractions: readFractions(options.fractions) },
+    };
 }
 
 // The mean of the s and p results of one call, entry by entry, in the shape
@@ -103,39 +122,62 @@ function typedPhaseSide(side) {
     return out;
 }
 
+// [dR, dT, dA] triples, in the kernel's order, as three arrays.
+function splitTriples(values) {
+    const n = values.length / 3;
+    const out = { dR: new Float64Array(n), dT: new Float64Array(n), dA: new Float64Array(n) };
+    for (let i = 0; i < n; i++) {
+        out.dR[i] = values[3 * i];
+        out.dT[i] = values[3 * i + 1];
+        out.dA[i] = values[3 * i + 2];
+    }
+    return out;
+}
+
+// A needle scan over a grid, from the kernel's layout (needleScanSpectrumKernel
+// in derivatives.js): R, T and A per wavelength, and gaps and intra each as
+// { dR, dT, dA }, flat in the kernel's order.
+function needleGrid({ base, gaps, intra }, N) {
+    const { dR: R, dT: T, dA: A } = splitTriples(base);
+    return { R, T, A, gaps: splitTriples(gaps), intra: splitTriples(intra), N };
+}
+
 /**
  * The calls on `kernels`, with pol 's' or 'p':
  *   rta, jacobian, hessian     (λ, θ, pol, kernels.pointStack(stack))
+ *   needleScan                 (λ, θ, pol, kernels.pointStack(stack), { candidates, fractions })
  *   phase, phaseJacobian       (λ, θ, pol, { n0Jet, nsJet, layers: [{ nJet, d }] }, sine)
  *   rtaSpectrum                (grid), s and p together
  *   jacobianSpectrum, hessianSpectrum, phaseSpectrum, phaseJacobianSpectrum   (grid, pol)
+ *   needleScanSpectrum         (grid, pol, { candidates, fractions })
  * kernels.pointStack(stack) and kernels.gridStack(stack, nLam) read the stack
  * of an R/T call the way those kernels take it: stack.js's pointStack and
- * gridStack for the JavaScript ones. The phase calls read theirs with
- * pointJetStack and gridJetStack, and give the incident sine as a jet, or
- * null for the angle's own. The grid of a Spectrum call is
- * { lambdas, theta_deg } together with what kernels.gridStack, or
+ * gridStack for the JavaScript ones. The needle scans read theirs the same
+ * way, and take the candidates as stack.js's readCandidates gives them. The
+ * phase calls read theirs with pointJetStack and gridJetStack, and give the
+ * incident sine as a jet, or null for the angle's own. The grid of a Spectrum
+ * call is { lambdas, theta_deg } together with what kernels.gridStack, or
  * gridJetStack for the phase calls, returns, and sinJets, the sine per
  * wavelength, when a phase call is given one.
  */
 export function stackCalls(kernels) {
     const atOne = (read, readMedia, run) => (stack, wavelength, options = {}) => {
         const lambda = readWavelength(wavelength);
-        const { angle, sine, pol } = read(options, null);
+        const { angle, pol, extra } = read(options, null);
         const media = readMedia(stack);
-        return polarized(pol, side => run(lambda, angle, side, media, sine));
+        return polarized(pol, side => run(lambda, angle, side, media, extra));
     };
     const gridOf = (stack, wavelengths, options, read, readMedia) => {
         const lambdas = readWavelengths(wavelengths);
-        const { angle, sine, pol } = read(options, lambdas.length);
-        const grid = { lambdas, theta_deg: angle, ...readMedia(stack, lambdas.length) };
-        if (sine) grid.sinJets = sine;
-        return { pol, grid };
+        const { angle, pol, extra } = read(options, lambdas.length);
+        return { pol, extra, grid: { lambdas, theta_deg: angle, ...readMedia(stack, lambdas.length) } };
     };
     const overGrid = (read, readMedia, run) => (stack, wavelengths, options = {}) => {
-        const { pol, grid } = gridOf(stack, wavelengths, options, read, readMedia);
-        return polarized(pol, side => run(grid, side));
+        const { pol, extra, grid } = gridOf(stack, wavelengths, options, read, readMedia);
+        return polarized(pol, side => run(grid, side, extra));
     };
+    // A phase grid with the incident sine, when the call is given one.
+    const phaseGrid = kernel => (grid, side, sine) => kernel(sine ? { ...grid, sinJets: sine } : grid, side);
 
     // R, T and A of the polarization asked, and of s and p.
     const rtaSpectrum = (stack, wavelengths, options = {}) => {
@@ -156,12 +198,15 @@ export function stackCalls(kernels) {
             (...args) => derivativeResult(kernels.hessian(...args), true)),
         hessianSpectrum: overGrid(readRtaOptions, kernels.gridStack,
             (...args) => derivativeResult(kernels.hessianSpectrum(...args), false)),
+        needleScan: atOne(readNeedleOptions, kernels.pointStack, kernels.needleScan),
+        needleScanSpectrum: overGrid(readNeedleOptions, kernels.gridStack,
+            (grid, side, needles) => needleGrid(kernels.needleScanSpectrum(grid, side, needles), grid.thick.length)),
         phase: atOne(readPhaseOptions, pointJetStack, kernels.phase),
-        phaseSpectrum: overGrid(readPhaseOptions, gridJetStack, kernels.phaseSpectrum),
+        phaseSpectrum: overGrid(readPhaseOptions, gridJetStack, phaseGrid(kernels.phaseSpectrum)),
         phaseJacobian: atOne(readPhaseOptions, pointJetStack, (...args) => {
             const { r, t } = kernels.phaseJacobian(...args);
             return { r: typedPhaseSide(r), t: typedPhaseSide(t) };
         }),
-        phaseJacobianSpectrum: overGrid(readPhaseOptions, gridJetStack, kernels.phaseJacobianSpectrum),
+        phaseJacobianSpectrum: overGrid(readPhaseOptions, gridJetStack, phaseGrid(kernels.phaseJacobianSpectrum)),
     };
 }

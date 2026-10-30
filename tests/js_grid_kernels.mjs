@@ -21,6 +21,7 @@ import { needleScanSpectrumKernel } from '../src/js/derivatives.js';
 import { omegaFromLambdaNm, phaseSpectrumKernel, phaseJacobianSpectrumKernel } from '../src/js/phase.js';
 import { monitorCurveKernel, depositionSpectraKernel, growingStackKernel } from '../src/js/growing.js';
 import { needleScanSpectrumWasm } from '../src/wasm/derivatives.js';
+import { PAIRS } from '../src/wasm/memory.js';
 import { phaseSpectrumWasm, phaseJacobianSpectrumWasm } from '../src/wasm/phase.js';
 import { depositionSpectraWasm, growingStackWasm } from '../src/wasm/growing.js';
 import { instantiateTmmWasm } from '../src/wasm/index.js';
@@ -114,7 +115,7 @@ for (const theta of THETAS) {
         for (const [pol, code] of [['s', 0], ['p', 1]]) {
             const tag = `needle scan ${thetaTag(theta)} pol ${pol} fracs ${fracs.length}`;
             const js = needleScanSpectrumKernel(gridOf(theta), pol, { candNK, fracs });
-            const wa = needleScanSpectrumWasm(wasm, gridOf(theta), code, { candNK, fracs });
+            const wa = needleScanSpectrumWasm(wasm, gridOf(theta), code, { candNK, fracs }, PAIRS);
             assert.equal(js.base.length, 3 * nLam, `${tag} base length`);
             nearAll({ base: js.base }, { base: wa.base }, true, tag);
             nearAll({ gaps: js.gaps, intra: js.intra }, { gaps: wa.gaps, intra: wa.intra }, false, tag);

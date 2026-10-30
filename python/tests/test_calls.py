@@ -91,6 +91,23 @@ class Arguments(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "layer 0 k goes inside n when n is complex"):
             tmmcore.rta(with_layers(METAL, {"n": 0.13 + 3.0j, "k": 3.0, "d": 40.0}), 550)
 
+    def test_needle_options(self):
+        np.testing.assert_equal(tmmcore.needle_scan(PAIR, 550, candidates=[2.1 + 0.01j], fractions=[0.5]),
+                                tmmcore.needle_scan(PAIR, 550, candidates=[{"n": 2.1, "k": 0.01}], fractions=[0.5]))
+        np.testing.assert_equal(tmmcore.needle_scan(PAIR, 550, candidates=[1.38]),
+                                tmmcore.needle_scan(PAIR, 550, candidates=[1.38], fractions=[]))
+        with self.assertRaisesRegex(TypeError, "candidates"):
+            tmmcore.needle_scan(PAIR, 550)
+        with self.assertRaisesRegex(TypeError, r"candidates must be a list of indices, each a number or \{ n, k \}"):
+            tmmcore.needle_scan(PAIR, 550, candidates=1.38)
+        with self.assertRaisesRegex(TypeError, r"candidate 1 must be a number or \{ n, k \}"):
+            tmmcore.needle_scan(PAIR, 550, candidates=[1.38, [1.46, 0]])
+        with self.assertRaisesRegex(TypeError, "candidate 0 n must be a number or 5 numbers, one per wavelength"):
+            tmmcore.needle_scan_spectrum(PAIR, GRID, candidates=[{"n": [1.38, 1.37]}])
+        for bad in (0.5, ["0.5"], [[0.5]]):
+            with self.assertRaisesRegex(TypeError, "fractions must be a list of numbers"):
+                tmmcore.needle_scan(PAIR, 550, candidates=[1.38], fractions=bad)
+
     def test_phase_index_per_wavelength(self):
         table = with_layers(PAIR, {"n": np.full(5, 2.35), "d": 58.5})
         with self.assertRaisesRegex(TypeError, "layer 0 n per wavelength has no derivatives"):
@@ -119,6 +136,13 @@ class Results(unittest.TestCase):
         phase = tmmcore.phase_jacobian_spectrum(PAIR, GRID, pol="p")
         self.assertEqual((phase["t"]["gd"].shape, phase["r"]["d_gd"].shape), ((5,), (5, N)))
         self.assertEqual(tmmcore.phase_jacobian(PAIR, 550, pol="s")["r"]["d_gdd"].shape, (N,))
+        needles = {"candidates": [1.38, {"n": 2.1, "k": 0.01}], "fractions": [0.25, 0.5, 0.75]}
+        one = tmmcore.needle_scan(PAIR, 550, **needles)
+        self.assertEqual((list(one), one["gaps"]["dR"].shape, one["intra"]["dA"].shape),
+                         (["R", "T", "A", "gaps", "intra", "N"], (N + 1, 2), (N, 3, 2)))
+        grid = tmmcore.needle_scan_spectrum(PAIR, GRID, pol="p", **needles)
+        self.assertEqual((grid["R"].shape, grid["gaps"]["dT"].shape, grid["intra"]["dR"].shape),
+                         ((5,), (5, N + 1, 2), (5, N, 3, 2)))
 
     def test_jets_broadcast(self):
         jets = tmmcore.jet_from_derivatives(np.array([1.5, 1.6]), 0.01)

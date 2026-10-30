@@ -21,7 +21,7 @@ node examples/01-single-layer.mjs
 | 07 | [Which layer controls which wavelength](#which-layer-controls-which-wavelength) | `rta`, `jacobian`, `jacobianSpectrum` |
 | 08 | [Refinement with the analytic Jacobian](#refinement-with-the-analytic-jacobian) | `rtaSpectrum`, `jacobianSpectrum` |
 | 09 | [What thickness errors cost, from the exact Hessian](#what-thickness-errors-cost-from-the-exact-hessian) | `rtaSpectrum`, `hessianSpectrum` |
-| 10 | [The needle P-function: where the next layer goes](#the-needle-p-function-where-the-next-layer-goes) | `rtaSpectrum`, `tmmNeedleScan` |
+| 10 | [The needle P-function: where the next layer goes](#the-needle-p-function-where-the-next-layer-goes) | `rtaSpectrum`, `needleScan` |
 | 11 | [Ellipsometry of an oxide on silicon](#ellipsometry-of-an-oxide-on-silicon) | `phase` |
 | 12 | [Group delay, against a closed form](#group-delay-against-a-closed-form) | `phase`, `phaseSpectrum`, `phaseJacobian`, jet arithmetic |
 
@@ -323,7 +323,7 @@ One Hessian gives the mean rise for every σ. The Monte Carlo has to evaluate al
 
 `examples/10-needle.mjs`
 
-`tmmNeedleScan` returns the derivative of each spectral quantity with respect to inserting an infinitesimally thin layer of a candidate material, at every position in the stack at once. Chain that through a merit function and you get P(z), whose most negative point is the best place to insert.
+`needleScan` returns the derivative of each spectral quantity with respect to inserting an infinitesimally thin layer of a candidate material, at every position in the stack at once. Chain that through a merit function and you get P(z), whose most negative point is the best place to insert.
 
 ![Needle P-function through a four-layer antireflection start](img/needle.svg)
 

@@ -1,7 +1,8 @@
 /**
  * The calls of 0.5 on the package index and on a WebAssembly instance: rta,
- * rtaSpectrum, jacobian, jacobianSpectrum, hessian, hessianSpectrum, phase,
- * phaseSpectrum, phaseJacobian and phaseJacobianSpectrum.
+ * rtaSpectrum, jacobian, jacobianSpectrum, hessian, hessianSpectrum,
+ * needleScan, needleScanSpectrum, phase, phaseSpectrum, phaseJacobian and
+ * phaseJacobianSpectrum.
  *
  *   • module and instance agree on every call, at one wavelength and over a
  *     grid, with one angle and one per wavelength, in s, p and avg, to the
@@ -16,9 +17,10 @@
  *     a constant sine is the angle, and a sine that follows a dispersive
  *     incident medium gives the GD and GDD of differences of the phase in ω
  *   • a misspelled option, a malformed stack, a wavelength list holding
- *     anything but numbers, and an index per wavelength with no derivatives
- *     in a phase call are refused; two index values read as two wavelengths
- *     in a grid call and are refused at one wavelength
+ *     anything but numbers, missing or malformed needle candidates, malformed
+ *     fractions, and an index per wavelength with no derivatives in a phase
+ *     call are refused; two index values read as two wavelengths in a grid
+ *     call and are refused at one wavelength
  *
  * The names of 0.4 are in old_names.mjs. Skips cleanly if tmm_kernel.wasm has
  * not been built.
@@ -80,6 +82,16 @@ function close(js, wa, what, key = '') {
 }
 
 // ── Grids against points ─────────────────────────────────────────────────────
+// The needle scans try two candidates, a number and the first layer's material,
+// one value per wavelength over the grid, and split each layer at three places,
+// the first and last of them its faces.
+const FRACTIONS = [0, 0.37, 1];
+const needles = i => {
+    const { n, k } = i === null ? GRID_STACK.layers[0] : pointStack(i).layers[0];
+    return { candidates: [1.38, { n, k }], fractions: FRACTIONS };
+};
+const N_CAND = 2;
+
 // Wavelength i of a grid result, in the shape of the one-wavelength result.
 const SLICERS = { r: (value, i) => sliceAt(value, i), t: (value, i) => sliceAt(value, i), N: value => value };
 for (const key of ['R', 'T', 'A', 'phaseRad', 'gd', 'gdd', 'tod', 'magnitudeSquared']) {
@@ -92,6 +104,14 @@ for (const key of ['d2Rdd', 'd2Tdd', 'd2Add']) {
     SLICERS[key] = (value, i) =>
         Array.from({ length: N }, (_, j) => value.subarray((i * N + j) * N, (i * N + j + 1) * N));
 }
+// A needle scan's gaps as [position][candidate] and intra as [layer][fraction],
+// each entry from [(i * (N + 1) + position) * nCand + candidate] and
+// [((i * N + layer) * nFrac + fraction) * nCand + candidate] of the flat lists.
+const triple = ({ dR, dT, dA }, at) => ({ dR: dR[at], dT: dT[at], dA: dA[at] });
+const candidatesAt = (values, at) => Array.from({ length: N_CAND }, (_, c) => triple(values, at * N_CAND + c));
+SLICERS.gaps = (values, i) => Array.from({ length: N + 1 }, (_, pos) => candidatesAt(values, i * (N + 1) + pos));
+SLICERS.intra = (values, i) => Array.from({ length: N }, (_, k) => FRACTIONS.map((frac, f) =>
+    ({ frac, perCand: candidatesAt(values, (i * N + k) * FRACTIONS.length + f) })));
 function sliceAt(grid, i) {
     const keys = Object.keys(grid).filter(key => key in SLICERS);
     return Object.fromEntries(keys.map(key => [key, SLICERS[key](grid[key], i)]));
@@ -101,20 +121,23 @@ const CALLS = [
     ['rta', 'rtaSpectrum', [undefined, 's', 'p', 'avg'], false],
     ['jacobian', 'jacobianSpectrum', [undefined, 's', 'p', 'avg'], false],
     ['hessian', 'hessianSpectrum', [undefined, 's', 'p', 'avg'], false],
+    ['needleScan', 'needleScanSpectrum', [undefined, 's', 'p', 'avg'], false, needles],
     ['phase', 'phaseSpectrum', ['s', 'p'], true],
     ['phaseJacobian', 'phaseJacobianSpectrum', ['s', 'p'], true],
 ];
 const optionsOf = (angle, pol) => (pol === undefined ? { angle } : { angle, pol });
 const angleAt = (angle, i) => (typeof angle === 'number' ? angle : angle[i]);
 
-// One call over the grid and at each of its wavelengths, on both backends.
-function checkCall([point, spectrum, , jets], angle, pol) {
+// One call over the grid and at each of its wavelengths, on both backends;
+// more(i) gives the call's other options, at wavelength i or, for null, over the grid.
+function checkCall([point, spectrum, , jets, more = () => ({})], angle, pol) {
     const tag = `${spectrum} θ ${typeof angle === 'number' ? angle : 'per λ'} pol ${pol}`;
-    const grids = BACKENDS.map(([, b]) => b[spectrum](jets ? GRID_JET_STACK : GRID_STACK, LAMBDAS, optionsOf(angle, pol)));
+    const grids = BACKENDS.map(([, b]) => b[spectrum](jets ? GRID_JET_STACK : GRID_STACK, LAMBDAS,
+        { ...more(null), ...optionsOf(angle, pol) }));
     close(grids[0], grids[1], tag);
     LAMBDAS.forEach((lambda, i) => {
         const stack = jets ? pointJetStack(i) : pointStack(i);
-        const points = BACKENDS.map(([, b]) => b[point](stack, lambda, optionsOf(angleAt(angle, i), pol)));
+        const points = BACKENDS.map(([, b]) => b[point](stack, lambda, { ...more(i), ...optionsOf(angleAt(angle, i), pol) }));
         close(points[0], points[1], `${point} λ ${lambda} ${tag}`);
         BACKENDS.forEach(([name], b) =>
             sameBits(points[b], sliceAt(grids[b], i), `${name} ${spectrum} λ ${lambda} against ${point} ${tag}`));
@@ -174,6 +197,11 @@ for (const [name, b] of BACKENDS) {
     sameBits(b.phaseJacobianSpectrum(TYPED_TERMS_GRID, LAMBDAS, { pol: 's', angle: ANGLES }),
         b.phaseJacobianSpectrum(GRID_JET_STACK, LAMBDAS, { pol: 's', angle: ANGLES }),
         `${name} typed jet terms over the grid`);
+    sameBits(b.needleScan(SHORT, 550, { candidates: Float64Array.of(1.38, 2.35), fractions: Float64Array.of(0.5) }),
+        b.needleScan(LONG, 550, { candidates: [{ n: 1.38, k: 0 }, { n: 2.35, k: 0 }], fractions: [0.5] }),
+        `${name} short forms, needleScan`);
+    sameBits(b.needleScan(SHORT, 550, { candidates: [1.38] }), b.needleScan(SHORT, 550, { candidates: [1.38], fractions: [] }),
+        `${name} needleScan without fractions`);
 }
 
 // Two values over a grid of two wavelengths are two indices, not one complex
@@ -303,6 +331,16 @@ const REFUSED = [
         /sine must be 2 jets, one per wavelength/],
     [b => b.phaseSpectrum(ONE, [450, 550, 650], { pol: 's', sine: Object.assign(Array(3), { 0: J.jetConstant(0.5),
         2: J.jetConstant(0.5) }) }), /sine must be 3 jets, one per wavelength/],
+    [b => b.needleScan(ONE, 550), /candidates must be a list of indices, each a number or \{ n, k \}/],
+    [b => b.needleScan(ONE, 550, { candidates: 1.38 }), /candidates must be a list of indices/],
+    [b => b.needleScan(ONE, 550, { candidates: [1.38, [1.46, 0]] }), /candidate 1 must be a number or \{ n, k \}/],
+    [b => b.needleScanSpectrum(ONE, [500, 550], { candidates: [{ n: [1.38, 1.37, 1.36] }] }),
+        /candidate 0 n must be a number or 2 numbers, one per wavelength/],
+    [b => b.needleScan(ONE, 550, { candidates: [1.38], fractions: 0.5 }), /fractions must be a list of numbers/],
+    [b => b.needleScan(ONE, 550, { candidates: [1.38], fractions: ['0.5'] }), /fractions must be a list of numbers/],
+    [b => b.needleScan(ONE, 550, { candidates: [1.38], pol: 'x' }), /pol must be 's', 'p' or 'avg'/],
+    [b => b.needleScan(ONE, 550, { candidates: [1.38], sine: J.jetConstant(0) }),
+        /unknown option 'sine'; the options are angle, pol, candidates and fractions/],
     [b => b.rta(ONE, [550]), /wavelength must be a number \(nm\)/],
     [b => b.rtaSpectrum(ONE, 550), /wavelengths must be a list of numbers \(nm\)/],
     [b => b.rtaSpectrum(ONE, [{}, 550]), /wavelengths must be a list of numbers \(nm\)/],

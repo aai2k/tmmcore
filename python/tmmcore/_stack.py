@@ -231,6 +231,30 @@ def grid_stack(stack, n_lam):
     return n0, ns, table, thick
 
 
+def read_candidates(candidates, n_lam=None):
+    """
+    The materials a needle scan tries: a list of indices, each a number or
+    {"n", "k"} as a medium is. ñ of each, or with n_lam an (nCand, nLam) array.
+    """
+    if isinstance(candidates, np.ndarray) and candidates.ndim == 1:
+        candidates = list(candidates)
+    if not isinstance(candidates, (list, tuple)):
+        raise TypeError("candidates must be a list of indices, each a number or { n, k }")
+    indices = [_index(*_read_medium(value, f"candidate {c}"), n_lam, f"candidate {c}")
+               for c, value in enumerate(candidates)]
+    shape = (len(indices),) if n_lam is None else (len(indices), n_lam)
+    return np.array(indices, dtype=np.complex128).reshape(shape)
+
+
+def read_fractions(fractions):
+    """Where a needle scan also opens each layer, as fractions of its thickness from the incident side."""
+    array = _array(fractions)
+    values = None if array is None or array.ndim != 1 else _numbers(array, array.shape)
+    if values is None:
+        raise TypeError("fractions must be a list of numbers")
+    return np.ascontiguousarray(values, dtype=np.float64)
+
+
 # ── Phase calls: ñ as a jet ──────────────────────────────────────────────────
 
 def _jet_index(n, k, n_lam, where):

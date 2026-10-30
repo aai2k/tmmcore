@@ -67,7 +67,7 @@ const { R } = rtaSpectrum({ incident: 1, substrate: 1.52, layers }, wavelengths)
 
 ## Polarization
 
-`pol` is `'s'`, `'p'`, or `'avg'`, the mean of the two, which is natural light. The R/T and derivative calls take `'avg'` when it is left out:
+`pol` is `'s'`, `'p'`, or `'avg'`, the mean of the two, which is natural light. The R/T, derivative and needle calls take `'avg'` when it is left out:
 
 ```js
 rta(stack, 550, { angle: 45 }).R;              // natural light

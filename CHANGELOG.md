@@ -3,11 +3,12 @@
 ## [0.5.0] - unreleased
 
 ### Added
-- A Python package, `pip install tmmcore`, on the same C kernel: the R/T, derivative, phase and jet calls under snake_case names, taking numpy arrays.
-- One call shape for the R/T, derivative and phase calls: `name(stack, wavelength or wavelengths, { angle, pol })`, with the stack given once as `{ incident, substrate, layers: [{ n, k, d }] }`.
+- A Python package, `pip install tmmcore`, on the same C kernel: the R/T, derivative, needle, phase and jet calls under snake_case names, taking numpy arrays.
+- One call shape for the R/T, derivative, needle and phase calls: `name(stack, wavelength or wavelengths, { angle, pol })`, with the stack given once as `{ incident, substrate, layers: [{ n, k, d }] }`. The needle scan takes its candidate materials and split fractions as the options `candidates` and `fractions`.
 - Grid calls in JavaScript for R/T, phase and the phase Jacobian, which only the WebAssembly instance had.
 - Grid versions of the Jacobian and the Hessian, in JavaScript, on the WebAssembly instance and in C.
-- `pol: 'avg'`, the mean of s and p, the default in the R/T and derivative calls.
+- `needleScanSpectrum`, the needle scan over a grid, in JavaScript and on the WebAssembly instance.
+- `pol: 'avg'`, the mean of s and p, the default in the R/T, derivative and needle calls.
 - Grid calls take one angle or one per wavelength.
 - The phase calls take a plain number as a constant index; a jet is needed only for dispersion.
 - The phase calls may leave out `pol` at normal incidence, where s and p are the same.

@@ -174,6 +174,13 @@ function checkIndex(index, nLam, where) {
     if (index.k !== undefined) checkValue(index.k, nLam, where, 'k');
 }
 
+/** ñ of a checked index at one wavelength, as [re, im]. */
+export const pairOf = index => [index.n, index.k ?? 0];
+
+/** ñ of a checked index at each of nLam wavelengths, as [re, im]. */
+export const pairsOver = (index, nLam) => Array.from({ length: nLam },
+    (_, i) => [valueAt(index.n, i), index.k === undefined ? 0 : valueAt(index.k, i)]);
+
 /**
  * The stack of an R/T call, checked: { incident, substrate, layers }, each
  * medium as { n, k } with k undefined when it was left out, and the layers as
@@ -194,11 +201,10 @@ export function checkedStack(stack, nLam) {
  */
 export function pointStack(stack) {
     const s = checkedStack(stack, null);
-    const nk = index => [index.n, index.k ?? 0];
     return {
-        n0: nk(s.incident),
-        ns: nk(s.substrate),
-        layers: s.layers.map(layer => ({ n: nk(layer), d: layer.d })),
+        n0: pairOf(s.incident),
+        ns: pairOf(s.substrate),
+        layers: s.layers.map(layer => ({ n: pairOf(layer), d: layer.d })),
     };
 }
 
@@ -209,14 +215,38 @@ export function pointStack(stack) {
  */
 export function gridStack(stack, nLam) {
     const s = checkedStack(stack, nLam);
-    const nkList = index => Array.from({ length: nLam },
-        (_, i) => [valueAt(index.n, i), index.k === undefined ? 0 : valueAt(index.k, i)]);
     return {
-        n0List: nkList(s.incident),
-        nsList: nkList(s.substrate),
-        layerNK: s.layers.map(nkList),
+        n0List: pairsOver(s.incident, nLam),
+        nsList: pairsOver(s.substrate, nLam),
+        layerNK: s.layers.map(layer => pairsOver(layer, nLam)),
         thick: s.layers.map(layer => layer.d),
     };
+}
+
+/**
+ * The materials a needle scan tries: a list of indices, each a number or
+ * { n, k } as a medium is, and checked as one, returned as { n, k } with k
+ * undefined when it was left out. nLam is the grid size of a Spectrum call,
+ * null at one wavelength.
+ */
+export function readCandidates(candidates, nLam) {
+    if (!isList(candidates)) throw new TypeError('candidates must be a list of indices, each a number or { n, k }');
+    return Array.from(candidates, (value, c) => {
+        const index = readMedium(value, `candidate ${c}`);
+        checkIndex(index, nLam, `candidate ${c}`);
+        return index;
+    });
+}
+
+/**
+ * Where a needle scan also opens each layer, as fractions of its thickness from
+ * the incident side: none when left out.
+ */
+export function readFractions(fractions = []) {
+    if (!isList(fractions) || !isNumbers(fractions, fractions.length)) {
+        throw new TypeError('fractions must be a list of numbers');
+    }
+    return fractions;
 }
 
 // ── Phase calls: ñ as a jet ──────────────────────────────────────────────────

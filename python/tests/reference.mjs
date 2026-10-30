@@ -15,7 +15,6 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { instantiateTmmWasm } from '../../src/wasm/index.js';
-import { needleScanSpectrumWasm } from '../../src/wasm/derivatives.js';
 import { omegaFromLambdaNm } from '../../src/js/phase.js';
 import { jetConstant, jetDivide } from '../../src/js/jet.js';
 import {
@@ -91,6 +90,35 @@ for (const [rows, pol] of product(Object.values(PHASE_STACKS), RTA_POLS)) {
     const kwargs = { angle: 30, pol };
     add('rta_spectrum', [stack, PHASE_GRID], kwargs, kernel.rtaSpectrum(stack, PHASE_GRID, kwargs));
     add('jacobian_spectrum', [stack, PHASE_GRID], kwargs, kernel.jacobianSpectrum(stack, PHASE_GRID, kwargs));
+}
+
+// ── Needle scan ──────────────────────────────────────────────────────────────
+// At one wavelength the package returns, for each of dR, dT and dA, an array
+// over [interface][candidate] and one over [layer][fraction][candidate], where
+// the JavaScript nests lists of { dR, dT, dA }.
+
+const byKey = pick => Object.fromEntries(['dR', 'dT', 'dA'].map(key => [key, pick(key)]));
+const needleArrays = ({ R, T, A, gaps, intra, N }) => ({
+    R, T, A,
+    gaps: byKey(key => gaps.map(row => row.map(entry => entry[key]))),
+    intra: byKey(key => intra.map(layer => layer.map(({ perCand }) => perCand.map(entry => entry[key])))),
+    N,
+});
+const NEEDLE_CANDIDATES = CANDIDATES.map(([n, k]) => ({ n, k }));
+
+for (const [rows, lambda, angle, pol] of product(Object.values(STACKS), LAMBDAS, [0, 45], RTA_POLS)) {
+    const stack = stackOf(rows);
+    const kwargs = { angle, pol, candidates: NEEDLE_CANDIDATES, fractions: INTRA_FRACS };
+    add('needle_scan', [stack, lambda], kwargs, needleArrays(kernel.needleScan(stack, lambda, kwargs)));
+}
+// Over a grid the candidates after the first have an index per wavelength,
+// rising by 0.01 from each wavelength to the next.
+const GRID_CANDIDATES = NEEDLE_CANDIDATES.map(({ n, k }, c) => (c === 0 ? { n, k }
+    : { n: LAMBDAS.map((_, i) => n + 0.01 * i), k: LAMBDAS.map(() => k) }));
+for (const [rows, angle, pol] of product(Object.values(STACKS), GRID_ANGLES, RTA_POLS)) {
+    const stack = stackOf(rows);
+    const kwargs = { angle, pol, candidates: GRID_CANDIDATES, fractions: INTRA_FRACS };
+    add('needle_scan_spectrum', [stack, LAMBDAS], kwargs, kernel.needleScanSpectrum(stack, LAMBDAS, kwargs));
 }
 
 // ── Phase calls ──────────────────────────────────────────────────────────────
@@ -199,22 +227,12 @@ jetCall('wavelength_omega_jet', [PHASE_GRID.slice(0, 6), PHASE_GRID.slice(0, 6).
 add('jet_is_finite', [complex([JETS[0], [[NaN, 0], ...JETS[1].slice(1)], JETS[2]])], {},
     [true, false, true]);
 
-// ── Needle scan and the growing stack, on the kernel's own arrays ───────────
+// ── The growing stack, on the kernel's own arrays ───────────────────────────
 
 // One wavelength: (λ, θ, ñ0, ñs, layers as rows [n, k, d]).
 const pointArgs = (lambda, angle, rows) =>
     [lambda, angle, complex(n0), complex(ns), rows.map(([[n, k], d]) => [n, k, d])];
 const layersOf = rows => rows.map(([n, d]) => ({ n, d }));
-
-for (const [rows, lambda, angle, [, code]] of product(Object.values(STACKS), LAMBDAS, [0, 45], POLS)) {
-    const scan = kernel.tmmNeedleScan(lambda, angle, code, n0, ns, layersOf(rows), CANDIDATES, INTRA_FRACS);
-    add('derivatives._needle_scan_kernel', [pointArgs(lambda, angle, rows), code, complex(CANDIDATES), INTRA_FRACS],
-        {}, {
-            base: [scan.R, scan.T, scan.A],
-            gaps: scan.gaps.flat().flatMap(({ dR, dT, dA }) => [dR, dT, dA]),
-            intra: scan.intra.flat().flatMap(({ perCand }) => perCand.flatMap(({ dR, dT, dA }) => [dR, dT, dA])),
-        });
-}
 
 // A grid in the kernel's layout: ñ per wavelength of each medium, [layer][λ]
 // of the layers, with the stack's thicknesses; in Python the tuple
@@ -226,13 +244,6 @@ const gridOf = rows => ({
 });
 const gridArgs = grid => [grid.lambdas, grid.theta_deg, complex(grid.n0List), complex(grid.nsList),
     complex(grid.layerNK), grid.thick];
-const CANDIDATE_TABLE = CANDIDATES.map(nk => LAMBDAS.map(() => nk));
-
-for (const [rows, [, code]] of product(Object.values(STACKS), POLS)) {
-    const grid = gridOf(rows);
-    add('derivatives._needle_scan_spectrum_kernel', [gridArgs(grid), code, complex(CANDIDATE_TABLE), INTRA_FRACS],
-        {}, needleScanSpectrumWasm(kernel, grid, code, { candNK: CANDIDATE_TABLE, fracs: INTRA_FRACS }));
-}
 
 const THICKNESSES = [0, 12.5, 40, 133.7];
 for (const rows of Object.values(STACKS)) {

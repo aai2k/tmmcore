@@ -1,6 +1,6 @@
 # API reference
 
-The R/T, derivative and phase calls take a stack, a wavelength in nm or, in a `Spectrum` call, a list of them, and an options object:
+The R/T, derivative, needle and phase calls take a stack, a wavelength in nm or, in a `Spectrum` call, a list of them, and an options object:
 
 ```js
 import { rta, rtaSpectrum } from 'tmmcore';
@@ -23,7 +23,7 @@ The [WebAssembly instance](#webassembly) has the same calls, and the [Python pac
 | [`rta`, `rtaSpectrum`](#r-t-and-a) | R, T and A |
 | [`jacobian`, `jacobianSpectrum`](#thickness-derivatives) | R, T and A, and their derivatives in each layer's thickness |
 | [`hessian`, `hessianSpectrum`](#thickness-derivatives) | the same, and the second derivatives |
-| [`tmmNeedleScan`](#needle-scan) | the derivatives of R, T and A for inserting a thin layer anywhere in the stack |
+| [`needleScan`, `needleScanSpectrum`](#needle-scan) | the derivatives of R, T and A for inserting a thin layer anywhere in the stack |
 | [`phase`, `phaseSpectrum`](#phase-gd-gdd-and-tod) | phase, GD, GDD and TOD of r and t |
 | [`phaseJacobian`, `phaseJacobianSpectrum`](#phase-gd-gdd-and-tod) | the same, and their thickness derivatives |
 | [`jetConstant` … `jetIsFinite`](#jet-arithmetic) | Taylor-jet arithmetic, which builds the dispersive indices the phase calls take |
@@ -51,7 +51,9 @@ In the phase calls an index is a number, which is a constant index with no dispe
 |---|---|
 | `angle` | Angle of incidence in degrees from the normal, 0 when left out. A `Spectrum` call also takes a list with one angle per wavelength. |
 | `sine` | Phase calls only, in place of `angle`: the sine of the angle of incidence as a [jet](#indices-as-jets), a list with one jet per wavelength in a `Spectrum` call. For [an angle fixed outside the incident medium](#an-angle-fixed-outside-the-incident-medium). |
-| `pol` | In the R/T and derivative calls `'s'`, `'p'` or `'avg'`, the mean of the two, which is the default. In the phase calls `'s'` or `'p'`; it may be left out at normal incidence, where the two are the same. |
+| `pol` | In the R/T, derivative and needle calls `'s'`, `'p'` or `'avg'`, the mean of the two, which is the default. In the phase calls `'s'` or `'p'`; it may be left out at normal incidence, where the two are the same. |
+| `candidates` | Needle calls only, and required there: the materials that could be inserted, a list of indices, each a number or `{ n, k }` as a medium is. |
+| `fractions` | Needle calls only: positions inside each layer, as fractions of its thickness from the incident side, where the needle is also tried. None when left out. |
 
 ### Results over a grid
 
@@ -59,7 +61,7 @@ Each value is a `Float64Array` with one entry per wavelength. `N`, where a resul
 
 ### Errors
 
-A wrong argument throws a `TypeError` that names it, such as `layer 0 needs {n, d}`, `pol must be 's', 'p' or 'avg'` or `unknown option 'polarization'; the options are angle and pol`. The needle scan and the monitoring calls check their layers the same way.
+A wrong argument throws a `TypeError` that names it, such as `layer 0 needs {n, d}`, `pol must be 's', 'p' or 'avg'` or `unknown option 'polarization'; the options are angle and pol`. The monitoring calls check their layers the same way.
 
 ## R, T and A
 
@@ -127,32 +129,27 @@ The Hessian at every wavelength of a grid. **Returns** the fields of `jacobianSp
 
 ## Needle scan
 
-### `tmmNeedleScan(lambda_nm, theta_deg, pol, n0, ns, layers, candidateNs, intraFracs?)`
-
 The derivatives of R, T and A for inserting a layer of zero thickness of a candidate material, at every interface of the stack at once and, if asked, inside its layers. This is the analytic P-function of Tikhonravov et al. (*Appl. Opt.* **35**, 5493, 1996), the $d \to 0$ limit of the numerical method of Sullivan and Dobrowolski (*Appl. Opt.* **35**, 5484, 1996), so it needs no trial thickness and no second evaluation.
 
-It takes its arguments one by one: `pol` is `'s'` or `'p'`, `n0`, `ns` and each candidate are `[re, im]`, and `layers` is `{ n: [re, im], d }[]`.
+### `needleScan(stack, wavelength, options)`
 
 ```js
-import { tmmNeedleScan } from 'tmmcore';
+import { needleScan } from 'tmmcore';
 
-const scan = tmmNeedleScan(550, 0, 's', [1, 0], [1.52, 0],
-                           [{ n: [2.35, 0], d: 58.5 }, { n: [1.46, 0], d: 94.2 }],
-                           [[2.35, 0], [1.46, 0]]);
+const scan = needleScan(stack, 550, { pol: 's', candidates: [2.35, 1.46] });
 // scan.gaps[position][candidate] = { dR, dT, dA }
 ```
-
-| Argument | |
-|---|---|
-| `candidateNs` | `[re, im][]`, the materials that could be inserted |
-| `intraFracs` | optional `number[]`, positions inside each layer as fractions of its thickness from the incident side |
 
 **Returns** `{ R, T, A, gaps, intra, N }`.
 
 - `gaps` has $N + 1$ entries, one per interface: 0 is in front of the first layer and `N` against the substrate. Each holds one `{ dR, dT, dA }` per candidate, per nm of needle. Insert where the derivative of your merit function is negative.
-- `intra[k][i]` is `{ frac, perCand }` for a needle inside layer `k` at fraction `intraFracs[i]`, with `perCand` shaped like an entry of `gaps`. Fractions 0 and 1 give the interfaces either side of the layer.
+- `intra[k][i]` is `{ frac, perCand }` for a needle inside layer `k` at fraction `fractions[i]`, with `perCand` shaped like an entry of `gaps`. Fractions 0 and 1 give the interfaces either side of the layer.
 
-The positions count the layers as given, zero-thickness ones included. A needle of a layer's own material at its boundary is that layer made thicker, so `gaps[0][c].dR` for a candidate with layer 0's index equals `dRdd[0]` from `jacobian`; the two are computed independently. See the [needle example](examples.md#the-needle-p-function-where-the-next-layer-goes).
+The positions count the layers as given, zero-thickness ones included. A needle of a layer's own material at its boundary is that layer made thicker, so `gaps[0][c].dR` for a candidate with layer 0's index equals `dRdd[0]` from `jacobian`; the two are computed independently. With `pol: 'avg'` the derivatives are the mean of the s and p ones. See the [needle example](examples.md#the-needle-p-function-where-the-next-layer-goes).
+
+### `needleScanSpectrum(stack, wavelengths, options)`
+
+The needle scan at every wavelength of a grid, where a candidate's `n` and `k` may also be one value per wavelength. **Returns** R, T and A over the grid, `gaps` and `intra` each as `{ dR, dT, dA }`, and `N`. Each list is flat and wavelength-major: wavelength `i`, interface `p` and candidate `c` at `[(i * (N + 1) + p) * nCand + c]` in `gaps`, and wavelength `i`, layer `k`, fraction `f` and candidate `c` at `[((i * N + k) * nFrac + f) * nCand + c]` in `intra`.
 
 ## Phase, GD, GDD and TOD
 
@@ -291,9 +288,8 @@ An instance is not shared between threads, since there is no shared memory. Each
 
 | Method | |
 |---|---|
-| `rta`, `rtaSpectrum`, `jacobian`, `jacobianSpectrum`, `hessian`, `hessianSpectrum`, `phase`, `phaseSpectrum`, `phaseJacobian`, `phaseJacobianSpectrum` | the calls above, with the same arguments and results |
+| `rta`, `rtaSpectrum`, `jacobian`, `jacobianSpectrum`, `hessian`, `hessianSpectrum`, `needleScan`, `needleScanSpectrum`, `phase`, `phaseSpectrum`, `phaseJacobian`, `phaseJacobianSpectrum` | the calls above, with the same arguments and results |
 | `jetConstant` … `jetIsFinite`, `wavelengthOmegaJet`, `omegaFromLambdaNm` | the jet arithmetic |
-| `tmmNeedleScan(lambda_nm, theta_deg, polCode, n0, ns, layers, candidateNs, intraFracs?)` | the [needle scan](#needle-scan), with the polarization as `0` for s or `1` for p |
 | `monitorCurve`, `depositionSpectra`, `growingEval` | [below](#monitoring-and-deposition) |
 | `hasHessian()`, `hasPhase()`, `hasPhaseJacobianSpectrum()`, `hasGrowingKernels()`, `hasGrowingEval()` | always `true`: a module missing a kernel is refused when it loads |
 
@@ -388,13 +384,14 @@ The derivatives include the factor, so $T$ falls with an opaque layer's thicknes
 | | `tmmSpectrum` | `rtaSpectrum` |
 | `tmmThicknessJacobian` | `tmmJacobian` | `jacobian` |
 | `tmmThicknessHessian` | `tmmHessian` | `hessian` |
+| `tmmNeedleScan` | `tmmNeedleScan` | `needleScan` |
 | `tmmPhaseDispersion` | `tmmPhaseOne` | `phase` |
 | | `tmmPhaseSpectrum` | `phaseSpectrum` |
 | `tmmPhaseThicknessJacobian` | `tmmPhaseJacobian` | `phaseJacobian` |
 | | `tmmPhaseJacobianSpectrum` | `phaseJacobianSpectrum` |
 | `tmmCoefficientJets`, `tmmCoefficientThicknessJets`, `coefficientPhaseDispersion`, `coefficientPhaseThicknessDerivatives` | | none |
 
-The one-wavelength names take `(lambda_nm, theta_deg, pol, n0, ns, layers)`, each index as `[re, im]` and the layers as `{ n, d }[]`, or in the phase names `{ nJet, d }[]` with the media as jets; the instance takes `pol` as `0` or `1`. The [0.4.2 API reference](https://github.com/aai2k/tmmcore/blob/0a432b7/docs/api.md) has them in full.
+The one-wavelength names take `(lambda_nm, theta_deg, pol, n0, ns, layers)`, each index as `[re, im]` and the layers as `{ n, d }[]`, or in the phase names `{ nJet, d }[]` with the media as jets; the instance takes `pol` as `0` or `1`. `tmmNeedleScan` takes after them the candidates, each as `[re, im]`, and the fractions. The [0.4.2 API reference](https://github.com/aai2k/tmmcore/blob/0a432b7/docs/api.md) has them in full.
 
 The 0.4 phase names take the incident sine as the option `sinTheta0Jet`, and over a grid `sinJets`, where the 0.5 calls take `sine`. The 0.5 calls take no `omega`, which sets the time unit; the 0.4 phase names still do.
 

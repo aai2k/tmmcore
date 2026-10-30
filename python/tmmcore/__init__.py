@@ -8,6 +8,7 @@ keyword options:
     rta, rta_spectrum                           R, T and A
     jacobian, jacobian_spectrum                 with their thickness derivatives
     hessian, hessian_spectrum                   and the second derivatives
+    needle_scan, needle_scan_spectrum           their derivatives for a thin layer inserted
     phase, phase_spectrum                       phase, GD, GDD and TOD of r and t
     phase_jacobian, phase_jacobian_spectrum     with their thickness derivatives
 
@@ -18,18 +19,22 @@ keyword options:
 A layer is {"n", "k", "d"} with d in nm, ñ = n + ik, k optional; n may be
 complex instead. `angle` is the angle of incidence in degrees from the normal,
 0 when left out. `pol` is "s", "p" or "avg" (the default, the mean of the two)
-in the R/T and derivative calls, and "s" or "p" in the phase calls, which may
-leave it out at normal incidence, where the two are the same. In place of
-`angle` the phase calls take `sine`, the sine of the angle of incidence as a
-jet. The jet calls (jet.py) build the dispersive index jets the phase calls
-take.
+in the R/T, derivative and needle calls, and "s" or "p" in the phase calls,
+which may leave it out at normal incidence, where the two are the same. In
+place of `angle` the phase calls take `sine`, the sine of the angle of
+incidence as a jet. The needle calls take `candidates`, the materials they try
+inserting, each an index given as a medium is, and `fractions`, where inside
+each layer they also try them. The jet calls (jet.py) build the dispersive
+index jets the phase calls take.
 
 The numbers come from the same C kernel as the npm package; they agree with
 it to round-off, the last digits differing where the platform's math library
 does.
 """
 
-from .derivatives import hessian, hessian_spectrum, jacobian, jacobian_spectrum
+from .derivatives import (
+    hessian, hessian_spectrum, jacobian, jacobian_spectrum, needle_scan, needle_scan_spectrum,
+)
 from .jet import (
     jet_add, jet_clamp_imaginary, jet_clamp_real_minimum, jet_compose, jet_constant, jet_cos,
     jet_derivatives, jet_divide, jet_exp, jet_from_derivatives, jet_is_finite, jet_log, jet_multiply,
@@ -41,6 +46,7 @@ from .rta import rta, rta_spectrum
 
 __all__ = [
     "rta", "rta_spectrum", "jacobian", "jacobian_spectrum", "hessian", "hessian_spectrum",
+    "needle_scan", "needle_scan_spectrum",
     "phase", "phase_spectrum", "phase_jacobian", "phase_jacobian_spectrum", "omega_from_lambda_nm",
     "jet_constant", "jet_from_derivatives", "jet_derivatives", "jet_add", "jet_subtract", "jet_scale",
     "jet_multiply", "jet_reciprocal", "jet_divide", "jet_sqrt", "jet_exp", "jet_log", "jet_power",

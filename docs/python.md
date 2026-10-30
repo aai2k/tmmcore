@@ -17,6 +17,7 @@ Wheels are built for Windows (x86-64), macOS (Intel and Apple silicon) and Linux
 | `rta`, `rtaSpectrum` | `rta`, `rta_spectrum` |
 | `jacobian`, `jacobianSpectrum` | `jacobian`, `jacobian_spectrum` |
 | `hessian`, `hessianSpectrum` | `hessian`, `hessian_spectrum` |
+| `needleScan`, `needleScanSpectrum` | `needle_scan`, `needle_scan_spectrum` |
 | `phase`, `phaseSpectrum` | `phase`, `phase_spectrum` |
 | `phaseJacobian`, `phaseJacobianSpectrum` | `phase_jacobian`, `phase_jacobian_spectrum` |
 | `jetConstant` … `jetIsFinite`, `wavelengthOmegaJet`, `omegaFromLambdaNm` | `jet_constant` … `jet_is_finite`, `wavelength_omega_jet`, `omega_from_lambda_nm` |
@@ -34,9 +35,9 @@ tmmcore.rta(stack, 550)["R"]                                              # natu
 tmmcore.rta_spectrum(stack, np.linspace(400, 800, 401), angle=45, pol="s")["R"]
 ```
 
-The phase calls also take `sine` in place of `angle`: a jet, or in a `_spectrum` call an array of shape (nLam, 4), for [an angle fixed outside the incident medium](api.md#an-angle-fixed-outside-the-incident-medium).
+The phase calls also take `sine` in place of `angle`: a jet, or in a `_spectrum` call an array of shape (nLam, 4), for [an angle fixed outside the incident medium](api.md#an-angle-fixed-outside-the-incident-medium). The needle scans take `candidates` and `fractions`, as in the [needle scan](api.md#needle-scan).
 
-Not in the Python package yet: the needle scan, the monitoring calls (monitoring curve, deposition spectra, growing stack), the low-level primitives, and the constants `C_NM_PER_FS` and `JET_ORDER`.
+Not in the Python package yet: the monitoring calls (monitoring curve, deposition spectra, growing stack), the low-level primitives, and the constants `C_NM_PER_FS` and `JET_ORDER`.
 
 ## The stack
 
@@ -53,7 +54,7 @@ stack = {"incident": 1.0,
 - `n` may also be complex, `n + ik`, with `k` left out: `{"n": 2.35 + 0.0005j, "d": 58.5}`.
 - In the phase calls an index is a number, which is a constant index with no dispersion, or a jet (below). An array of plain indices per wavelength is refused there, since group delay computed from it would leave out the material's dispersion.
 
-A wrong value raises `TypeError` with a message naming it, such as `layer 1 needs {n, d}`. An unknown keyword raises Python's own `TypeError`.
+A wrong value raises `TypeError` with a message naming it, such as `layer 1 needs {n, d}`. An unknown keyword, or a needle scan without `candidates`, raises Python's own `TypeError`.
 
 ## Results
 
@@ -72,6 +73,15 @@ Derivatives over a grid come as arrays indexed by wavelength and then layer, whe
 |---|---|---|
 | `dRdd` of `jacobian_spectrum`, `d_gdd` of `phase_jacobian_spectrum` | nLam × N values, `[i * N + k]` | shape (nLam, N), `[i, k]` |
 | `d2Rdd` of `hessian_spectrum` | nLam × N × N values, `[(i * N + j) * N + k]` | shape (nLam, N, N), `[i, j, k]` |
+
+A needle scan's `gaps` and `intra` are each a dict of `dR`, `dT` and `dA`, arrays where the JavaScript nests lists at one wavelength and returns flat lists over a grid. For wavelength `i`, interface `p`, layer `k`, fraction `f` and candidate `c`:
+
+| | JavaScript | Python |
+|---|---|---|
+| `gaps` of `needle_scan` | `gaps[p][c].dR` | `gaps["dR"]`, shape (N + 1, nCand), `[p, c]` |
+| `intra` of `needle_scan` | `intra[k][f].perCand[c].dR` | `intra["dR"]`, shape (N, nFrac, nCand), `[k, f, c]` |
+| `gaps` of `needle_scan_spectrum` | `gaps.dR[(i * (N + 1) + p) * nCand + c]` | `gaps["dR"]`, shape (nLam, N + 1, nCand), `[i, p, c]` |
+| `intra` of `needle_scan_spectrum` | `intra.dR[((i * N + k) * nFrac + f) * nCand + c]` | `intra["dR"]`, shape (nLam, N, nFrac, nCand), `[i, k, f, c]` |
 
 `phase` and `phase_jacobian` return `None` for a coefficient that is exactly zero, where the JavaScript returns `null`.
 

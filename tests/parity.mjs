@@ -31,11 +31,11 @@ if (!existsSync(WASM)) {
 }
 const wasm = await tmmcore.instantiateTmmWasm(readFileSync(WASM));
 
-// Exports the module does not offer under their own names: the needle scans,
-// reached through tmmNeedleScan, and the growing-layer kernels, reached
-// through an instance's monitorCurve, depositionSpectra and growingEval.
+// Exports the module does not offer under their own names: the growing-layer
+// kernels, reached through an instance's monitorCurve, depositionSpectra and
+// growingEval.
 const NOT_CALLS = [
-    'needleScan', 'needleScanSpectrum', 'monitorCurve', 'depositionSpectra',
+    'monitorCurve', 'depositionSpectra',
     'growingStackCreate', 'growingStackSetTop', 'growingStackSample', 'growingStackFree',
 ];
 

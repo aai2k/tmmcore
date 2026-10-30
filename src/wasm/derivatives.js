@@ -6,7 +6,7 @@
 
 import { checkLayerKeys } from '../js/stack.js';
 import { warnOnce } from '../js/deprecated.js';
-import { onGrid, named, PAIRS, STACK, writePairLayers } from './memory.js';
+import { onGrid, named, STACK, writePairLayers } from './memory.js';
 
 const FIRST = ['dRdd', 'dTdd', 'dAdd'];
 const SECOND = ['d2Rdd', 'd2Tdd', 'd2Add'];
@@ -110,16 +110,16 @@ export const derivativeMethods = {
 
     /**
      * Analytic needle P-function scan : mirrors tmmNeedleScan() in src/js/derivatives.js,
-     * reshaping the flat kernel output into the same nested structure.
-     * @param {{n:[number,number],d:number}[]} layers   used AS-IS (index parity)
-     * @param {[number,number][]} candidateNs           candidate ñ
-     * @param {number[]} intraFracs                      intra-layer split fractions
+     * reshaping the flat kernel output into the same nested structure. The
+     * layers, used AS-IS (index parity), are written by `writeLayers`
+     * (memory.js) and their keys are checked by the caller. `candidates` are
+     * the candidate ñ as [re, im], `fractions` the intra-layer split fractions.
      * @returns {{R,T,A,N, gaps:Array, intra:Array}}
      *   gaps[pos][ci] = {dR,dT,dA}  (pos = 0..N)
      *   intra[k][fi]  = {frac, perCand:[{dR,dT,dA}]}
      */
-    tmmNeedleScan(lambda_nm, theta_deg, polCode, n0, ns, layers, candidateNs, intraFracs = []) {
-        checkLayerKeys(layers, 'n', 'd');
+    _needleScan(lambda_nm, theta_deg, polCode, { n0, ns, layers, candidates: candidateNs, fractions: intraFracs },
+        writeLayers) {
         const N = layers.length;
         const nCand = candidateNs.length;
         const nFrac = intraFracs.length;
@@ -133,12 +133,7 @@ export const derivativeMethods = {
         const gapPtr = this._alloc(Math.max(1, nGap));
         const intraPtr = this._alloc(nIntra);
 
-        const lay = this._view(layPtr, Math.max(1, 3 * N));
-        for (let i = 0; i < N; i++) {
-            lay[3 * i + 0] = layers[i].n[0];
-            lay[3 * i + 1] = layers[i].n[1];
-            lay[3 * i + 2] = layers[i].d;
-        }
+        writeLayers(this._view(layPtr, Math.max(1, 3 * N)), layers);
         const cand = this._view(candPtr, Math.max(1, 2 * nCand));
         for (let c = 0; c < nCand; c++) { cand[2 * c] = candidateNs[c][0]; cand[2 * c + 1] = candidateNs[c][1]; }
         const frac = this._view(fracPtr, Math.max(1, nFrac));
@@ -181,6 +176,18 @@ export const derivativeMethods = {
         for (const p of [layPtr, candPtr, fracPtr, basePtr, gapPtr, intraPtr]) this.free(p);
         return { R, T, A, gaps, intra, N };
     },
+
+    /**
+     * Deprecated, removed in 0.6.0: use needleScan(stack, wavelength,
+     * { angle, pol, candidates, fractions }). Arguments as tmmOne, then the
+     * candidate ñ as [re, im] and the split fractions.
+     */
+    tmmNeedleScan(lambda_nm, theta_deg, polCode, n0, ns, layers, candidateNs, intraFracs = []) {
+        warnOnce('tmmNeedleScan', 'needleScan');
+        checkLayerKeys(layers, 'n', 'd');
+        return this._needleScan(lambda_nm, theta_deg, polCode,
+            { n0, ns, layers, candidates: candidateNs, fractions: intraFracs }, writePairLayers);
+    },
 };
 
 // R, T and A per wavelength, from the kernel's [R, T, A] triple per wavelength.
@@ -218,16 +225,18 @@ export function hessianSpectrumWasm(wasm, grid, polCode) {
 /**
  * The needle scan over the grid for one polarization, as
  * needleScanSpectrumKernel: { base, gaps, intra } in the kernel's layout.
- * candNK is [candidate][λ] ñ; fracs the split fractions.
+ * `indices` says how the grid holds its indices (memory.js), PAIRS or STACK,
+ * and candNK holds the candidates the same way: [candidate][λ] ñ, or each a
+ * checked medium. fracs are the split fractions.
  */
-export function needleScanSpectrumWasm(wasm, grid, polCode, { candNK, fracs }) {
+export function needleScanSpectrumWasm(wasm, grid, polCode, { candNK, fracs }, indices) {
     const nLam = grid.lambdas.length;
     const N = grid.thick.length;
     const nCand = candNK.length;
     const sizes = [3 * nLam, nLam * (N + 1) * nCand * 3, nLam * N * fracs.length * nCand * 3];
-    return onGrid(wasm, grid, PAIRS, ({ lead, put, putTable, out, read }) => {
+    return onGrid(wasm, grid, indices, ({ lead, put, putTable, out, read }) => {
         const outs = sizes.map(size => out(size));
-        wasm._tmm_needle_scan_spectrum(...lead(polCode), putTable(candNK, nCand, PAIRS), nCand,
+        wasm._tmm_needle_scan_spectrum(...lead(polCode), putTable(candNK, nCand, indices), nCand,
             put(fracs), fracs.length, ...outs);
         return named(['base', 'gaps', 'intra'], outs.map((ptr, i) => read(ptr, sizes[i])));
     });
