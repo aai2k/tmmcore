@@ -6,7 +6,7 @@
 
 import { checkLayerKeys } from '../js/stack.js';
 import { warnOnce } from '../js/deprecated.js';
-import { onGrid, named, PAIRS } from './memory.js';
+import { onGrid, named, PAIRS, STACK, writePairLayers } from './memory.js';
 
 const FIRST = ['dRdd', 'dTdd', 'dAdd'];
 const SECOND = ['d2Rdd', 'd2Tdd', 'd2Add'];
@@ -14,11 +14,11 @@ const SECOND = ['d2Rdd', 'd2Tdd', 'd2Add'];
 export const derivativeMethods = {
     /**
      * Analytic thickness Jacobian for one (λ, θ, pol) : mirrors
-     * tmmThicknessJacobian(). layers used AS-IS (index parity).
+     * tmmThicknessJacobian(). layers used AS-IS (index parity), written by
+     * `writeLayers` (memory.js); their keys are checked by the caller.
      * @returns {{R,T,A, dRdd:Float64Array, dTdd, dAdd, N}}
      */
-    _jacobian(lambda_nm, theta_deg, polCode, { n0, ns, layers }) {
-        checkLayerKeys(layers, 'n', 'd');
+    _jacobian(lambda_nm, theta_deg, polCode, { n0, ns, layers }, writeLayers) {
         const N = layers.length;
         const M = Math.max(1, N);
         // arena layout: layers[3N] | dRdd[M] | dTdd[M] | dAdd[M] | base[3]
@@ -26,11 +26,7 @@ export const derivativeMethods = {
         const need = oBase + 3;
         const ptr = this._scratch(need);
         const buf = this._view(ptr, need);
-        for (let i = 0; i < N; i++) {
-            buf[3 * i + 0] = layers[i].n[0];
-            buf[3 * i + 1] = layers[i].n[1];
-            buf[3 * i + 2] = layers[i].d;
-        }
+        writeLayers(buf, layers);
         const P = (off) => ptr + off * 8;
         this._tmm_jacobian(lambda_nm, theta_deg, polCode | 0,
             n0[0], n0[1], ns[0], ns[1], P(oLay), N, P(oDR), P(oDT), P(oDA), P(oBase));
@@ -54,7 +50,8 @@ export const derivativeMethods = {
      */
     tmmJacobian(lambda_nm, theta_deg, polCode, n0, ns, layers) {
         warnOnce('tmmJacobian', 'jacobian');
-        return this._jacobian(lambda_nm, theta_deg, polCode, { n0, ns, layers });
+        checkLayerKeys(layers, 'n', 'd');
+        return this._jacobian(lambda_nm, theta_deg, polCode, { n0, ns, layers }, writePairLayers);
     },
 
     /** True: every build since 0.5.0 carries the Hessian kernel. */
@@ -65,10 +62,11 @@ export const derivativeMethods = {
      * tmmThicknessHessian(). Returns first AND second derivatives; the N×N
      * second-derivative blocks are reshaped into nested arrays (one Float64Array
      * row per layer, FULL symmetric) so the shape matches the JS oracle exactly.
+     * The layers are written by `writeLayers` (memory.js) and their keys are
+     * checked by the caller.
      * @returns {{R,T,A, dRdd, dTdd, dAdd, d2Rdd, d2Tdd, d2Add, N}}
      */
-    _hessian(lambda_nm, theta_deg, polCode, { n0, ns, layers }) {
-        checkLayerKeys(layers, 'n', 'd');
+    _hessian(lambda_nm, theta_deg, polCode, { n0, ns, layers }, writeLayers) {
         const N = layers.length;
         const M = Math.max(1, N);
         const NN = Math.max(1, N * N);
@@ -78,11 +76,7 @@ export const derivativeMethods = {
         const need = oBase + 3;
         const ptr = this._scratch(need);
         const buf = this._view(ptr, need);
-        for (let i = 0; i < N; i++) {
-            buf[3 * i + 0] = layers[i].n[0];
-            buf[3 * i + 1] = layers[i].n[1];
-            buf[3 * i + 2] = layers[i].d;
-        }
+        writeLayers(buf, layers);
         const P = (off) => ptr + off * 8;
         this._tmm_hessian(lambda_nm, theta_deg, polCode | 0,
             n0[0], n0[1], ns[0], ns[1], P(oLay), N,
@@ -110,7 +104,8 @@ export const derivativeMethods = {
      */
     tmmHessian(lambda_nm, theta_deg, polCode, n0, ns, layers) {
         warnOnce('tmmHessian', 'hessian');
-        return this._hessian(lambda_nm, theta_deg, polCode, { n0, ns, layers });
+        checkLayerKeys(layers, 'n', 'd');
+        return this._hessian(lambda_nm, theta_deg, polCode, { n0, ns, layers }, writePairLayers);
     },
 
     /**
@@ -194,13 +189,15 @@ function splitBase(values, nLam) {
     return { R, T, A };
 }
 
+// The Jacobian, or with `second` the Hessian, over the grid of a checked stack
+// (memory.js, STACK).
 function derivativesWasm(wasm, grid, polCode, second) {
     const nLam = grid.lambdas.length;
     const N = grid.thick.length;
     const keys = second ? [...FIRST, ...SECOND] : FIRST;
     const sizes = [...keys.map((_, q) => (q < 3 ? nLam * N : nLam * N * N)), 3 * nLam];
     const kernel = second ? wasm._tmm_hessian_spectrum : wasm._tmm_jacobian_spectrum;
-    return onGrid(wasm, grid, PAIRS, ({ lead, out, read }) => {
+    return onGrid(wasm, grid, STACK, ({ lead, out, read }) => {
         const outs = sizes.map(size => out(size));
         kernel(...lead(polCode), ...outs);
         const values = outs.map((ptr, i) => read(ptr, sizes[i]));
@@ -208,12 +205,12 @@ function derivativesWasm(wasm, grid, polCode, second) {
     });
 }
 
-/** The thickness Jacobian over the grid for one polarization, as jacobianSpectrumKernel. */
+/** The thickness Jacobian over a stack's grid for one polarization, results as jacobianSpectrumKernel's. */
 export function jacobianSpectrumWasm(wasm, grid, polCode) {
     return derivativesWasm(wasm, grid, polCode, false);
 }
 
-/** The thickness Hessian over the grid for one polarization, as hessianSpectrumKernel. */
+/** The thickness Hessian over a stack's grid for one polarization, results as hessianSpectrumKernel's. */
 export function hessianSpectrumWasm(wasm, grid, polCode) {
     return derivativesWasm(wasm, grid, polCode, true);
 }

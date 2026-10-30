@@ -39,12 +39,11 @@ export const phaseMethods = {
      *
      * @param {number[][]} n0Jet  incident-medium index jet, 4 × [re, im]
      * @param {number[][]} nsJet  substrate index jet
-     * @param {{nJet:number[][], d:number}[]} layers
+     * @param {{nJet:number[][], d:number}[]} layers  keys checked by the caller
      * @param {{omega?:number, sinTheta0Jet?:number[][]}} [options]
      * @returns {{r: object|null, t: object|null}}
      */
     _phase(lambda_nm, theta_deg, polCode, { n0Jet, nsJet, layers }, options = {}) {
-        checkLayerKeys(layers, 'nJet', 'd');
         const N = layers.length;
         const omega = options.omega ?? omegaFromLambdaNm(lambda_nm);
         const sinJet = options.sinTheta0Jet || null;
@@ -76,6 +75,7 @@ export const phaseMethods = {
      */
     tmmPhaseOne(lambda_nm, theta_deg, polCode, n0Jet, nsJet, layers, options = {}) {
         warnOnce('tmmPhaseOne', 'phase');
+        checkLayerKeys(layers, 'nJet', 'd');
         return this._phase(lambda_nm, theta_deg, polCode, { n0Jet, nsJet, layers }, options);
     },
 
@@ -102,13 +102,13 @@ export const phaseMethods = {
 
     /**
      * Phase dispersion plus exact thickness derivatives : mirrors
-     * tmmPhaseThicknessJacobian(). Layers used AS-IS (index parity).
+     * tmmPhaseThicknessJacobian(). Layers used AS-IS (index parity), their
+     * keys checked by the caller.
      *
      * @returns {{r, t}} each the phase quantities plus `dPhaseDeg`, `dGd`,
      *   `dGdd`, `dTod` and `dLogMagnitudeSquared` as Float64Array(N).
      */
     _phaseJacobian(lambda_nm, theta_deg, polCode, { n0Jet, nsJet, layers }, options = {}) {
-        checkLayerKeys(layers, 'nJet', 'd');
         const N = layers.length;
         const M = Math.max(1, N);
         const omega = options.omega ?? omegaFromLambdaNm(lambda_nm);
@@ -151,6 +151,7 @@ export const phaseMethods = {
      */
     tmmPhaseJacobian(lambda_nm, theta_deg, polCode, n0Jet, nsJet, layers, options = {}) {
         warnOnce('tmmPhaseJacobian', 'phaseJacobian');
+        checkLayerKeys(layers, 'nJet', 'd');
         return this._phaseJacobian(lambda_nm, theta_deg, polCode, { n0Jet, nsJet, layers }, options);
     },
 

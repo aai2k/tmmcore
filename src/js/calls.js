@@ -21,8 +21,7 @@
  */
 
 import {
-    readWavelength, readWavelengths, readAngle, readRtaPol, readPhasePol,
-    pointStack, gridStack, pointJetStack, gridJetStack,
+    readWavelength, readWavelengths, readAngle, readRtaPol, readPhasePol, pointJetStack, gridJetStack,
 } from './stack.js';
 
 const OPTIONS = ['angle', 'pol'];
@@ -43,18 +42,27 @@ function readOptions(options, nLam, readPol) {
 // of either.
 function mean(s, p) {
     if (typeof s === 'number') return (s + p) / 2;
-    if (ArrayBuffer.isView(s) || Array.isArray(s)) return s.map((value, i) => mean(value, p[i]));
+    if (ArrayBuffer.isView(s)) {
+        const out = new Float64Array(s.length);
+        for (let i = 0; i < s.length; i++) out[i] = (s[i] + p[i]) / 2;
+        return out;
+    }
+    if (Array.isArray(s)) return s.map((value, i) => mean(value, p[i]));
     return Object.fromEntries(Object.keys(s).map(key => [key, mean(s[key], p[key])]));
 }
 
 const polarized = (pol, run) => (pol === 'avg' ? mean(run('s'), run('p')) : run(pol));
 
+// Derivatives at one wavelength as Float64Arrays: the JavaScript kernels build
+// plain arrays; the WebAssembly ones return copies out of kernel memory, kept
+// as they are.
+const asFloat64 = values => (values instanceof Float64Array ? values : Float64Array.from(values));
+
 // A derivative result in one key order on module and instance: R, T, A, the
-// first derivatives, the second when there are any, then N. At one wavelength
-// the derivatives become Float64Arrays: the JavaScript kernels build plain
-// arrays, the WebAssembly ones copy out of kernel memory.
+// first derivatives, the second when there are any, then N, with the
+// derivatives at one wavelength as Float64Arrays.
 function derivativeResult(result, atOneWavelength) {
-    const typed = values => (atOneWavelength ? Float64Array.from(values) : values);
+    const typed = values => (atOneWavelength ? asFloat64(values) : values);
     const out = { R: result.R, T: result.T, A: result.A };
     for (const key of FIRST) out[key] = typed(result[key]);
     if (result.d2Rdd) for (const key of SECOND) out[key] = atOneWavelength ? result[key].map(typed) : result[key];
@@ -65,16 +73,22 @@ function derivativeResult(result, atOneWavelength) {
 function typedPhaseSide(side) {
     if (!side) return side;
     const out = { ...side };
-    for (const key of PHASE_DERIVATIVES) out[key] = Float64Array.from(side[key]);
+    for (const key of PHASE_DERIVATIVES) out[key] = asFloat64(side[key]);
     return out;
 }
 
 /**
- * The calls on `kernels`, with pol 's' or 'p' and the grid of stack.js:
- *   rta, jacobian, hessian     (λ, θ, pol, { n0, ns, layers: [{ n, d }] }), ñ as [re, im]
+ * The calls on `kernels`, with pol 's' or 'p':
+ *   rta, jacobian, hessian     (λ, θ, pol, kernels.pointStack(stack))
  *   phase, phaseJacobian       (λ, θ, pol, { n0Jet, nsJet, layers: [{ nJet, d }] })
  *   rtaSpectrum                (grid), s and p together
  *   jacobianSpectrum, hessianSpectrum, phaseSpectrum, phaseJacobianSpectrum   (grid, pol)
+ * kernels.pointStack(stack) and kernels.gridStack(stack, nLam) read the stack
+ * of an R/T call the way those kernels take it: stack.js's pointStack and
+ * gridStack for the JavaScript ones. The phase calls read theirs with
+ * pointJetStack and gridJetStack. The grid of a Spectrum call is
+ * { lambdas, theta_deg } together with what kernels.gridStack, or
+ * gridJetStack for the phase calls, returns.
  */
 export function stackCalls(kernels) {
     const atOne = (readPol, readMedia, run) => (stack, wavelength, options = {}) => {
@@ -95,20 +109,22 @@ export function stackCalls(kernels) {
 
     // R, T and A of the polarization asked, and of s and p.
     const rtaSpectrum = (stack, wavelengths, options = {}) => {
-        const { pol, grid } = gridOf(stack, wavelengths, options, readRtaPol, gridStack);
+        const { pol, grid } = gridOf(stack, wavelengths, options, readRtaPol, kernels.gridStack);
         const both = kernels.rtaSpectrum(grid);
         const pick = (s, p) => (pol === 'avg' ? mean(s, p) : (pol === 's' ? s : p).slice());
         return { R: pick(both.Rs, both.Rp), T: pick(both.Ts, both.Tp), A: pick(both.As, both.Ap), ...both };
     };
 
     return {
-        rta: atOne(readRtaPol, pointStack, kernels.rta),
+        rta: atOne(readRtaPol, kernels.pointStack, kernels.rta),
         rtaSpectrum,
-        jacobian: atOne(readRtaPol, pointStack, (...args) => derivativeResult(kernels.jacobian(...args), true)),
-        jacobianSpectrum: overGrid(readRtaPol, gridStack,
+        jacobian: atOne(readRtaPol, kernels.pointStack,
+            (...args) => derivativeResult(kernels.jacobian(...args), true)),
+        jacobianSpectrum: overGrid(readRtaPol, kernels.gridStack,
             (...args) => derivativeResult(kernels.jacobianSpectrum(...args), false)),
-        hessian: atOne(readRtaPol, pointStack, (...args) => derivativeResult(kernels.hessian(...args), true)),
-        hessianSpectrum: overGrid(readRtaPol, gridStack,
+        hessian: atOne(readRtaPol, kernels.pointStack,
+            (...args) => derivativeResult(kernels.hessian(...args), true)),
+        hessianSpectrum: overGrid(readRtaPol, kernels.gridStack,
             (...args) => derivativeResult(kernels.hessianSpectrum(...args), false)),
         phase: atOne(readPhasePol, pointJetStack, kernels.phase),
         phaseSpectrum: overGrid(readPhasePol, gridJetStack, kernels.phaseSpectrum),

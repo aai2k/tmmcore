@@ -5,27 +5,23 @@
 
 import { checkLayerKeys } from '../js/stack.js';
 import { warnOnce } from '../js/deprecated.js';
-import { onGrid, named, PAIRS } from './memory.js';
+import { onGrid, named, PAIRS, writePairLayers } from './memory.js';
 
 const RTA_KEYS = ['Rs', 'Ts', 'As', 'Rp', 'Tp', 'Ap'];
 
 export const rtaMethods = {
     /**
      * R, T and A at one (λ, θ, pol), pol 0 for s and 1 for p : mirrors tmm()
-     * in src/js/rta.js.
+     * in src/js/rta.js. The layers are written by `writeLayers` (memory.js)
+     * and their keys are checked by the caller.
      * @returns {{R:number,T:number,A:number}}
      */
-    _rta(lambda_nm, theta_deg, polCode, { n0, ns, layers }) {
-        checkLayerKeys(layers, 'n', 'd');
+    _rta(lambda_nm, theta_deg, polCode, { n0, ns, layers }, writeLayers) {
         const N = layers.length;
         const need = 3 * N + 3;                  // layers [0..3N) + out [3N..3N+3)
         const ptr = this._scratch(need);         // may grow→detach; view created AFTER
         const buf = this._view(ptr, need);
-        for (let i = 0; i < N; i++) {
-            buf[3 * i + 0] = layers[i].n[0];
-            buf[3 * i + 1] = layers[i].n[1];
-            buf[3 * i + 2] = layers[i].d;
-        }
+        writeLayers(buf, layers);
         const outPtr = ptr + 3 * N * 8;
         this._tmm_rta(lambda_nm, theta_deg, polCode | 0,
             n0[0], n0[1], ns[0], ns[1], ptr, N, outPtr);
@@ -39,7 +35,8 @@ export const rtaMethods = {
      */
     tmmOne(lambda_nm, theta_deg, polCode, n0, ns, layers) {
         warnOnce('tmmOne', 'rta');
-        return this._rta(lambda_nm, theta_deg, polCode, { n0, ns, layers });
+        checkLayerKeys(layers, 'n', 'd');
+        return this._rta(lambda_nm, theta_deg, polCode, { n0, ns, layers }, writePairLayers);
     },
 
     /**
@@ -55,14 +52,17 @@ export const rtaMethods = {
      */
     tmmSpectrum(lambdas, n0List, nsList, layerNK, thick, theta_deg) {
         warnOnce('tmmSpectrum', 'rtaSpectrum');
-        return rtaSpectrumWasm(this, { lambdas, n0List, nsList, layerNK, thick, theta_deg: [Number(theta_deg)] });
+        return rtaSpectrumWasm(this, { lambdas, n0List, nsList, layerNK, thick, theta_deg: [Number(theta_deg)] }, PAIRS);
     },
 };
 
-/** R, T and A in s and p over the grid: { Rs, Ts, As, Rp, Tp, Ap }. */
-export function rtaSpectrumWasm(wasm, grid) {
+/**
+ * R, T and A in s and p over the grid: { Rs, Ts, As, Rp, Tp, Ap }. `indices`
+ * says how the grid holds its indices (memory.js): PAIRS or STACK.
+ */
+export function rtaSpectrumWasm(wasm, grid, indices) {
     const nLam = grid.lambdas.length;
-    return onGrid(wasm, grid, PAIRS, ({ lead, out, read }) => {
+    return onGrid(wasm, grid, indices, ({ lead, out, read }) => {
         const outs = RTA_KEYS.map(() => out(nLam));
         wasm._tmm_rta_spectrum(...lead(), ...outs);
         return named(RTA_KEYS, outs.map(ptr => read(ptr, nLam)));

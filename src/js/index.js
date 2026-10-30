@@ -47,6 +47,7 @@ import {
     phaseSpectrumKernel, phaseJacobianSpectrumKernel,
 } from './phase.js';
 import { stackCalls } from './calls.js';
+import { pointStack, gridStack } from './stack.js';
 import { deprecated } from './deprecated.js';
 
 export const {
@@ -56,6 +57,8 @@ export const {
     phase, phaseSpectrum,
     phaseJacobian, phaseJacobianSpectrum,
 } = stackCalls({
+    pointStack,
+    gridStack,
     rta: (lambda, theta, pol, { n0, ns, layers }) => tmmKernel(lambda, theta, pol, n0, ns, layers),
     jacobian: (lambda, theta, pol, { n0, ns, layers }) => jacobianKernel(lambda, theta, pol, n0, ns, layers),
     hessian: (lambda, theta, pol, { n0, ns, layers }) => hessianKernel(lambda, theta, pol, n0, ns, layers),

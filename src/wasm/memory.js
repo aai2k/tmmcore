@@ -1,13 +1,18 @@
 /**
  * memory.js : kernel memory for the bindings of a WebAssembly instance: the
- * methods that place inputs and read outputs, and onGrid, which places a
- * wavelength grid in the layout the grid exports take.
+ * methods that place inputs and read outputs, the writers of a call's layers
+ * at one wavelength, and onGrid, which places a wavelength grid in the layout
+ * the grid exports take.
  *
  * Memory growth detaches every view of the old buffer, so a view is made after
- * the allocations, and after the export call, that could grow it.
+ * the allocations, and after the export call, that could grow it. Inputs are
+ * read while they are written into such a view, so a getter in them that calls
+ * the same instance, or an input that is itself a view of this memory, gives
+ * wrong values.
  */
 
 import { writeJet } from './jet.js';
+import { valueAt } from '../js/stack.js';
 
 export const memoryMethods = {
     _alloc(nDoubles) {
@@ -36,15 +41,47 @@ export const memoryMethods = {
     },
 };
 
+/**
+ * The layers of a call at one wavelength as the kernels take them, n, k and d
+ * per layer from view[0]. The methods of 0.4 carry ñ as [re, im] in n
+ * (writePairLayers); a stack's layers carry n and k, a missing k read as 0
+ * (writeStackLayers, stack.js).
+ */
+export function writePairLayers(view, layers) {
+    for (let i = 0; i < layers.length; i++) {
+        view[3 * i] = layers[i].n[0];
+        view[3 * i + 1] = layers[i].n[1];
+        view[3 * i + 2] = layers[i].d;
+    }
+}
+
+export function writeStackLayers(view, layers) {
+    for (let i = 0; i < layers.length; i++) {
+        view[3 * i] = layers[i].n;
+        view[3 * i + 1] = layers[i].k ?? 0;
+        view[3 * i + 2] = layers[i].d;
+    }
+}
+
 const writePair = (view, at, pair) => {
     view[at] = pair[0];
     view[at + 1] = pair[1];
 };
 
-// Where a grid keeps its indices, and how one is written: ñ as [re, im] in 2
-// doubles, a jet as 4 × [re, im] in 8.
-export const PAIRS = { incident: 'n0List', substrate: 'nsList', layers: 'layerNK', width: 2, write: writePair };
-export const JETS = { incident: 'n0Jets', substrate: 'nsJets', layers: 'layerJets', width: 8, write: writeJet };
+// Where a grid keeps its indices, and how row `row` of them is written at
+// wavelength i: ñ as [re, im] in 2 doubles, a jet as 4 × [re, im] in 8. A
+// PAIRS or JETS row holds one entry per wavelength. A STACK row is a medium or
+// layer of a checked stack (stack.js), whose n and k are each one value or one
+// per wavelength.
+export const PAIRS = { incident: 'n0List', substrate: 'nsList', layers: 'layerNK', width: 2,
+    write: (view, at, row, i) => writePair(view, at, row[i]) };
+export const JETS = { incident: 'n0Jets', substrate: 'nsJets', layers: 'layerJets', width: 8,
+    write: (view, at, row, i) => writeJet(view, at, row[i]) };
+export const STACK = { incident: 'incident', substrate: 'substrate', layers: 'layers', width: 2,
+    write: (view, at, index, i) => {
+        view[at] = valueAt(index.n, i);
+        view[at + 1] = index.k === undefined ? 0 : valueAt(index.k, i);
+    } };
 
 export const named = (keys, values) => Object.fromEntries(keys.map((key, i) => [key, values[i]]));
 
@@ -57,9 +94,9 @@ export const named = (keys, values) => Object.fromEntries(keys.map((key, i) => [
  * they are placed, which a later allocation cannot undo, and `read` makes a
  * fresh view, since memory growth detaches older ones.
  *
- * putTable(table, nRows, kind) places table[r][i] for r < nRows and every
- * wavelength i, row-major, each entry an index of `kind`. Entries are read by
- * index, so a row may be any list, typed or not, and longer than the grid.
+ * putTable(table, nRows, kind) places row table[r] for r < nRows at every
+ * wavelength i, row-major, as `kind` writes it. A PAIRS or JETS row is read by
+ * index, so it may be any list, typed or not, and longer than the grid.
  */
 export function onGrid(wasm, grid, indices, body) {
     const blocks = [];
@@ -81,7 +118,7 @@ export function onGrid(wasm, grid, indices, body) {
             const ptr = out(nRows * nLam * kind.width);
             const view = wasm._view(ptr, nRows * nLam * kind.width);
             for (let r = 0; r < nRows; r++) {
-                for (let i = 0; i < nLam; i++) kind.write(view, (r * nLam + i) * kind.width, table[r][i]);
+                for (let i = 0; i < nLam; i++) kind.write(view, (r * nLam + i) * kind.width, table[r], i);
             }
             return ptr;
         };

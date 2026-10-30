@@ -17,7 +17,8 @@
  */
 
 import { stackCalls } from '../js/calls.js';
-import { memoryMethods } from './memory.js';
+import { checkedStack } from '../js/stack.js';
+import { memoryMethods, writeStackLayers, STACK } from './memory.js';
 import { wasmJetCalls } from './jet.js';
 import { rtaMethods, rtaSpectrumWasm } from './rta.js';
 import { derivativeMethods, jacobianSpectrumWasm, hessianSpectrumWasm } from './derivatives.js';
@@ -38,17 +39,34 @@ function wasmImports() {
     };
 }
 
+// A stack of an R/T call at one wavelength as the instance takes it: the media
+// as [re, im], the layers as given, which writeStackLayers puts in kernel
+// memory.
+function instancePointStack(stack) {
+    const { incident, substrate, layers } = checkedStack(stack, null);
+    return { n0: [incident.n, incident.k ?? 0], ns: [substrate.n, substrate.k ?? 0], layers };
+}
+
+// A stack of an R/T call over a grid as the instance takes it, the indices as
+// given (memory.js, STACK).
+function instanceGridStack(stack, nLam) {
+    const checked = checkedStack(stack, nLam);
+    return { ...checked, thick: checked.layers.map(layer => layer.d) };
+}
+
 // The instance's kernels in the form calls.js builds on: pol 's' or 'p', the
-// stack at one wavelength as an object, a grid as stack.js lays it out.
+// stack of an R/T call read as above, the phase stacks as stack.js lays them out.
 function wasmKernels(wasm) {
     const code = pol => (pol === 'p' ? 1 : 0);
     return {
-        rta: (lambda, theta, pol, media) => wasm._rta(lambda, theta, code(pol), media),
-        jacobian: (lambda, theta, pol, media) => wasm._jacobian(lambda, theta, code(pol), media),
-        hessian: (lambda, theta, pol, media) => wasm._hessian(lambda, theta, code(pol), media),
+        pointStack: instancePointStack,
+        gridStack: instanceGridStack,
+        rta: (lambda, theta, pol, media) => wasm._rta(lambda, theta, code(pol), media, writeStackLayers),
+        jacobian: (lambda, theta, pol, media) => wasm._jacobian(lambda, theta, code(pol), media, writeStackLayers),
+        hessian: (lambda, theta, pol, media) => wasm._hessian(lambda, theta, code(pol), media, writeStackLayers),
         phase: (lambda, theta, pol, media) => wasm._phase(lambda, theta, code(pol), media),
         phaseJacobian: (lambda, theta, pol, media) => wasm._phaseJacobian(lambda, theta, code(pol), media),
-        rtaSpectrum: grid => rtaSpectrumWasm(wasm, grid),
+        rtaSpectrum: grid => rtaSpectrumWasm(wasm, grid, STACK),
         jacobianSpectrum: (grid, pol) => jacobianSpectrumWasm(wasm, grid, code(pol)),
         hessianSpectrum: (grid, pol) => hessianSpectrumWasm(wasm, grid, code(pol)),
         phaseSpectrum: (grid, pol) => phaseSpectrumWasm(wasm, grid, code(pol)),
