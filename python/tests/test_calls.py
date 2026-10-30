@@ -1,7 +1,8 @@
 """
 What test_reference.py cannot show: the arguments the package refuses, the
 shapes it returns, complex n against n and k, arrays in another memory order
-or type than the C reads, the order the layers are deposited in, and the
+or type than the C reads, plain numbers read without numpy against the same
+numbers read through it, the order the layers are deposited in, and the
 growing stack's lifetime.
 
     python -m unittest discover -s python/tests
@@ -12,6 +13,7 @@ import unittest
 import numpy as np
 
 import tmmcore
+from tmmcore import _stack
 
 # A high and a low index layer, each a quarter wave at 550 nm.
 PAIR = {"incident": 1.0, "substrate": 1.52,
@@ -22,6 +24,14 @@ GRID = np.linspace(450.0, 650.0, 5)
 
 def with_layers(stack, *layers):
     return {**stack, "layers": list(layers)}
+
+
+class Real(float):
+    """A float the stack reader does not know by its type, so it reads it through numpy scalars."""
+
+
+class Complex(complex):
+    """A complex number the stack reader does not know by its type, so it reads it through numpy scalars."""
 
 
 class Arguments(unittest.TestCase):
@@ -178,6 +188,26 @@ class Buffers(unittest.TestCase):
         for dtype in (np.float32, np.longdouble):
             np.testing.assert_array_equal(tmmcore.jet_constant(np.array([1.5, 2.0], dtype=dtype), 0.25),
                                           expected, np.dtype(dtype).name)
+
+    def test_plain_numbers(self):
+        """
+        Floats, ints and complex numbers are read without numpy scalars; the
+        kernels get the arrays of the same numbers read through numpy.
+        """
+        def through_numpy(value):
+            return Complex(value) if isinstance(value, complex) else Real(value)
+
+        values = [1.46, 2, 0.0, -0.0, -1.5, 1e-310, 1e308]
+        layers = [{"n": n, "d": 50.0} for n in values + [0.13 + 3.0j, complex(1.5, -0.0)]]
+        layers += [{"n": n, "k": k, "d": 50.0} for n in values for k in values]
+        plain = {"incident": 1.0, "substrate": {"n": 1.52, "k": -0.0}, "layers": layers}
+        subclassed = {"incident": Real(1.0), "substrate": {"n": Real(1.52), "k": Real(-0.0)},
+                      "layers": [{key: through_numpy(value) for key, value in layer.items()} for layer in layers]}
+        readers = {"point": _stack.point_stack, "grid": lambda stack: _stack.grid_stack(stack, 3),
+                   "point jet": _stack.point_jet_stack, "grid jet": lambda stack: _stack.grid_jet_stack(stack, 3)}
+        for name, read in readers.items():
+            for part, (a, b) in enumerate(zip(read(plain), read(subclassed))):
+                self.assertEqual(np.asarray(a).tobytes(), np.asarray(b).tobytes(), f"{name}, part {part}")
 
 
 class Monitoring(unittest.TestCase):

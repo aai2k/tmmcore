@@ -26,7 +26,16 @@ NO_DISPERSION = ("has no derivatives, so GD would miss the material's dispersion
 
 _STACK_KEYS = ("incident", "substrate", "layers")
 _LAYER_KEYS = ("n", "k", "d")
+_LAYER_KEY_SET = frozenset(_LAYER_KEYS)
 _MEDIUM_KEYS = ("n", "k")
+
+# The types most values come as, checked by exact type before the `numbers`
+# ABCs, which give the same answer for them at several times the cost.
+_REALS = frozenset((float, int, np.float64))
+_NUMBERS = _REALS | {complex, np.complex128}
+# The types of n and k whose ñ _index works out in Python's complex arithmetic:
+# a number with k left out, or two real numbers.
+_PLAIN_TYPES = frozenset([(t, type(None)) for t in _NUMBERS] + [(t, u) for t in _REALS for u in _REALS])
 
 
 def address(array):
@@ -35,11 +44,11 @@ def address(array):
 
 
 def is_real(value):
-    return isinstance(value, numbers.Real) and not isinstance(value, bool)
+    return type(value) in _REALS or (isinstance(value, numbers.Real) and not isinstance(value, bool))
 
 
 def is_number(value):
-    return isinstance(value, numbers.Complex) and not isinstance(value, bool)
+    return type(value) in _NUMBERS or (isinstance(value, numbers.Complex) and not isinstance(value, bool))
 
 
 def as_array(value):
@@ -87,7 +96,8 @@ def _layer_keys(layer, i):
 
 def _thickness(layer, i):
     """d of layer i in nm, after the layer's other keys."""
-    _check_keys(layer, _LAYER_KEYS, f"layer {i}", "a layer")
+    if not layer.keys() <= _LAYER_KEY_SET:  # a set test first, so the layer's name is built only for a message
+        _check_keys(layer, _LAYER_KEYS, f"layer {i}", "a layer")
     if not is_real(layer["d"]):
         raise TypeError(f"layer {i} d must be a number (nm)")
     return float(layer["d"])
@@ -126,6 +136,16 @@ def _values(value, n_lam, where, complex_allowed):
 
 def _index(n, k, n_lam, where):
     """ñ = n + ik, one value or one per wavelength."""
+    if (type(n), type(k)) not in _PLAIN_TYPES:
+        return _numpy_index(n, k, n_lam, where)
+    # Python's complex arithmetic gives the bits of _numpy_index without its
+    # numpy scalars, which cost more than the kernel's work on a layer.
+    index = complex(n) if k is None else complex(n) + 1j * k
+    return index if n_lam is None else np.full(n_lam, index, dtype=np.complex128)
+
+
+def _numpy_index(n, k, n_lam, where):
+    """ñ of any n and k through numpy scalars or arrays; a value no call takes raises."""
     index = _values(n, n_lam, f"{where} n", complex_allowed=True)
     if k is None:
         return index
@@ -141,9 +161,8 @@ def point_stack(stack):
     """
     indices, thick = _read_stack(stack)
     n0, ns, *layer_indices = [_index(n, k, None, where) for where, n, k in indices]
-    layers = np.array([[index.real, index.imag, d] for index, d in zip(layer_indices, thick)],
-                      dtype=np.float64).reshape(len(thick), 3)
-    return n0, ns, layers
+    index = np.array(layer_indices, dtype=np.complex128)
+    return n0, ns, np.column_stack((index.real, index.imag, thick))
 
 
 def grid_stack(stack, n_lam):
@@ -186,8 +205,9 @@ def _jet_index(n, k, n_lam, where):
     if is_number(n):
         if k is not None and not is_real(k):
             raise TypeError(f"{where} k per wavelength {NO_DISPERSION}")
-        jet = np.array([_index(n, k, None, where), 0, 0, 0], dtype=np.complex128)
-        return jet if n_lam is None else np.tile(jet, (n_lam, 1))
+        jet = np.zeros(4 if n_lam is None else (n_lam, 4), dtype=np.complex128)
+        jet[..., 0] = _index(n, k, None, where)
+        return jet
     if k is not None:
         raise TypeError(f"{where} k goes inside the jet when n is a jet")
     jets = numeric_array(n, (4,) if n_lam is None else (n_lam, 4), complex_allowed=True)
