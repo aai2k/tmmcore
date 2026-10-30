@@ -3,15 +3,16 @@
  *
  *   • each gives the same bits as the call of 0.5 that replaces it, on the
  *     module and on a WebAssembly instance, the phase names also with the
- *     incident sine as jets
+ *     incident sine as jets; an instance's monitorCurve and depositionSpectra
+ *     give the same bits for their arguments of 0.4 as for those of 0.5
  *   • the coefficient-jet calls, which have no replacement, give what the
  *     functions of src/js/phase.js give
  *   • on the module each keeps the name and parameter count of the function
  *     it calls; on an instance the methods are not enumerable, as the methods
  *     of a class are
  *   • each prints one warning, on first use, naming its replacement, one for
- *     a name the module and an instance share; the growing-layer calls of an
- *     instance print none
+ *     a name the module and an instance share; monitorCurve and
+ *     depositionSpectra print one for their arguments of 0.4
  *
  * Skips cleanly if tmm_kernel.wasm has not been built.
  *
@@ -99,6 +100,33 @@ for (const [name, current, previous] of PAIRS) {
     for (const [pol, code] of [['s', 0], ['p', 1]]) sameBits(current(pol), previous(pol, code), `${name} ${pol}`);
 }
 
+// The monitoring calls, s and p together: the first layer of the design grows
+// on the other three. depositionSpectra takes its layers of 0.4 in deposition
+// order, the stack's reversed.
+const reversed = rows => [...rows].reverse();
+const finished = stack => ({ ...stack, layers: stack.layers.slice(1) });
+const topOf = ({ layers: [{ n, k }] }) => ({ n, k });
+const sampled = (growing, top) => {
+    growing.setTop(top);
+    const sample = growing.sample(37.5);
+    growing.free();
+    return sample;
+};
+const MONITOR = { angle, top: topOf(pointStack(i)), thicknesses: [0, 50] };
+const GROWING_PAIRS = [
+    ['monitorCurve',
+        () => wasm.monitorCurve(finished(pointStack(i)), lambda, MONITOR),
+        () => wasm.monitorCurve(lambda, angle, old.n0, old.ns, old.layers.slice(1), old.layers[0].n, [0, 50])],
+    ['depositionSpectra',
+        () => wasm.depositionSpectra(GRID_STACK, LAMBDAS, { angle }),
+        () => wasm.depositionSpectra(LAMBDAS, G.n0List, G.nsList, reversed(G.layerNK), reversed(G.thick), angle)],
+    ['growingEval',
+        () => sampled(wasm.growingStack(finished(GRID_STACK), LAMBDAS, { angle }), topOf(GRID_STACK)),
+        () => sampled(wasm.growingEval(LAMBDAS, G.n0List, G.nsList, G.layerNK.slice(1), G.thick.slice(1), angle),
+            G.layerNK[0])],
+];
+for (const [name, current, previous] of GROWING_PAIRS) sameBits(current(), previous(), name);
+
 // The grid names of 0.4 read their lists entry by entry, as 0.4 did: typed
 // arrays serve as lists, an angle given as text reads as its number, entries
 // past the last wavelength go unread, and no layers need no layer list.
@@ -163,11 +191,6 @@ for (const [name, args] of COEFFICIENT_CALLS) {
     for (let twice = 0; twice < 2; twice++) sameBits(tmmcore[name](...args), phaseKernels[name](...args), name);
 }
 
-// The growing-layer calls have no call of 0.5 in their place, and print nothing.
-wasm.monitorCurve(lambda, angle, old.n0, old.ns, old.layers, [1.38, 0], [0, 50]);
-wasm.depositionSpectra(LAMBDAS, G.n0List, G.nsList, G.layerNK, G.thick, angle);
-wasm.growingEval(LAMBDAS, G.n0List, G.nsList, G.layerNK, G.thick, angle).free();
-
 const REPLACED = {
     tmm: 'rta', tmmThicknessJacobian: 'jacobian', tmmThicknessHessian: 'hessian', tmmNeedleScan: 'needleScan',
     tmmPhaseDispersion: 'phase', tmmPhaseThicknessJacobian: 'phaseJacobian',
@@ -176,6 +199,11 @@ const REPLACED = {
     tmmPhaseSpectrum: 'phaseSpectrum', tmmPhaseJacobianSpectrum: 'phaseJacobianSpectrum',
     tmmCoefficientJets: null, tmmCoefficientThicknessJets: null,
     coefficientPhaseDispersion: null, coefficientPhaseThicknessDerivatives: null,
+    'monitorCurve(lambda_nm, theta_deg, n0, ns, baseLayers, ngNK, dArr)':
+        'monitorCurve(stack, wavelength, { angle, top, thicknesses })',
+    'depositionSpectra(lambdas, n0List, nsList, layerNK, thick, theta_deg)':
+        'depositionSpectra(stack, wavelengths, { angle })',
+    growingEval: 'growingStack',
 };
 const expected = Object.entries(REPLACED).map(([name, replacement]) =>
     `tmmcore: ${name} is deprecated and will be removed in 0.6.0${replacement ? `; use ${replacement}` : ''}`);

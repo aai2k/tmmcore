@@ -227,37 +227,23 @@ jetCall('wavelength_omega_jet', [PHASE_GRID.slice(0, 6), PHASE_GRID.slice(0, 6).
 add('jet_is_finite', [complex([JETS[0], [[NaN, 0], ...JETS[1].slice(1)], JETS[2]])], {},
     [true, false, true]);
 
-// ── The growing stack, on the kernel's own arrays ───────────────────────────
-
-// One wavelength: (λ, θ, ñ0, ñs, layers as rows [n, k, d]).
-const pointArgs = (lambda, angle, rows) =>
-    [lambda, angle, complex(n0), complex(ns), rows.map(([[n, k], d]) => [n, k, d])];
-const layersOf = rows => rows.map(([n, d]) => ({ n, d }));
-
-// A grid in the kernel's layout: ñ per wavelength of each medium, [layer][λ]
-// of the layers, with the stack's thicknesses; in Python the tuple
-// (λs, θs, ñ0s, ñss, layer table, d).
-const gridOf = rows => ({
-    lambdas: LAMBDAS, theta_deg: [30],
-    n0List: LAMBDAS.map(() => n0), nsList: LAMBDAS.map(() => ns),
-    layerNK: rows.map(([nk]) => LAMBDAS.map(() => nk)), thick: rows.map(([, d]) => d),
-});
-const gridArgs = grid => [grid.lambdas, grid.theta_deg, complex(grid.n0List), complex(grid.nsList),
-    complex(grid.layerNK), grid.thick];
+// ── Monitoring calls ─────────────────────────────────────────────────────────
+// A layer of the stack's first material grows on the stack; the growing stack
+// takes the first candidate.
 
 const THICKNESSES = [0, 12.5, 40, 133.7];
 for (const rows of Object.values(STACKS)) {
-    const grid = gridOf(rows);
-    add('growing._monitor_curve_kernel', [pointArgs(632.8, 30, rows), complex(rows[0][0]), THICKNESSES], {},
-        kernel.monitorCurve(632.8, 30, n0, ns, layersOf(rows), rows[0][0], THICKNESSES));
-    add('growing._deposition_spectra_kernel', [gridArgs(grid)], {},
-        kernel.depositionSpectra(grid.lambdas, grid.n0List, grid.nsList, grid.layerNK, grid.thick, 30));
+    const stack = stackOf(rows);
+    const [[n, k]] = rows[0];
+    const kwargs = { angle: 30, top: { n, k }, thicknesses: THICKNESSES };
+    add('monitor_curve', [stack, 632.8], kwargs, kernel.monitorCurve(stack, 632.8, kwargs));
+    add('deposition_spectra', [stack, LAMBDAS], { angle: 30 }, kernel.depositionSpectra(stack, LAMBDAS, { angle: 30 }));
 
-    const growing = kernel.growingEval(grid.lambdas, grid.n0List, grid.nsList, grid.layerNK, grid.thick, 30);
-    const top = LAMBDAS.map(() => CANDIDATES[0]);
+    const growing = kernel.growingStack(stack, LAMBDAS, { angle: 30 });
+    const top = NEEDLE_CANDIDATES[0];
     growing.setTop(top);
     calls.push({
-        call: 'growing._GrowingStack', args: [gridArgs(grid)], top: complex(top), samples: THICKNESSES,
+        call: 'growing_stack', args: [stack, LAMBDAS], kwargs: { angle: 30 }, top, samples: THICKNESSES,
         expected: plain(THICKNESSES.map(d => growing.sample(d))),
     });
     growing.free();

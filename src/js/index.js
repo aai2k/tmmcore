@@ -47,6 +47,7 @@ import {
     coefficientPhaseThicknessDerivatives as coefficientPhaseDerivativesKernel,
     phaseSpectrumKernel, phaseJacobianSpectrumKernel,
 } from './phase.js';
+import { monitorCurveKernel, depositionSpectraKernel, growingStackKernel } from './growing.js';
 import { stackCalls } from './calls.js';
 import { pointStack, gridStack, pairOf, pairsOver } from './stack.js';
 import { deprecated } from './deprecated.js';
@@ -58,6 +59,7 @@ export const {
     needleScan, needleScanSpectrum,
     phase, phaseSpectrum,
     phaseJacobian, phaseJacobianSpectrum,
+    monitorCurve, depositionSpectra, growingStack,
 } = stackCalls({
     pointStack,
     gridStack,
@@ -78,6 +80,11 @@ export const {
     }),
     phaseSpectrum: phaseSpectrumKernel,
     phaseJacobianSpectrum: phaseJacobianSpectrumKernel,
+    monitorCurve: (lambda, theta, { n0, ns, layers }, { top, thicknesses }) =>
+        monitorCurveKernel({ lambda_nm: lambda, theta_deg: theta, n0, ns, base: layers, top, thicknesses }),
+    depositionSpectra: ({ layerNK, thick, ...grid }) =>
+        depositionSpectraKernel({ ...grid, layerNK: [...layerNK].reverse(), thick: [...thick].reverse() }),
+    growingStack: growingStackKernel,
 });
 
 // The names of 0.4, with their old arguments: (λ, θ, pol, n0, ns, layers),

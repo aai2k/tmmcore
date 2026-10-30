@@ -162,18 +162,21 @@ export function gridStack(stack, nLam) {
 }
 
 /**
- * The materials a needle scan tries: a list of indices, each a number or
- * { n, k } as a medium is, and checked as one, returned as { n, k } with k
- * undefined when it was left out. nLam is the grid size of a Spectrum call,
- * null at one wavelength.
+ * An index given as a medium is, a number or { n, k }, checked as one and
+ * returned as { n, k } with k undefined when it was left out. nLam is the grid
+ * size of a Spectrum call, null at one wavelength; `where` names the index in
+ * a message.
  */
+export function readIndex(value, nLam, where) {
+    const index = readMedium(value, where);
+    checkIndex(index, nLam, where);
+    return index;
+}
+
+/** The materials a needle scan tries: a list of indices, each read by readIndex. */
 export function readCandidates(candidates, nLam) {
     if (!isList(candidates)) throw new TypeError('candidates must be a list of indices, each a number or { n, k }');
-    return Array.from(candidates, (value, c) => {
-        const index = readMedium(value, `candidate ${c}`);
-        checkIndex(index, nLam, `candidate ${c}`);
-        return index;
-    });
+    return Array.from(candidates, (value, c) => readIndex(value, nLam, `candidate ${c}`));
 }
 
 // ── Phase calls: ñ as a jet ──────────────────────────────────────────────────

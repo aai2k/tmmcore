@@ -21,9 +21,9 @@ import { needleScanSpectrumKernel } from '../src/js/derivatives.js';
 import { omegaFromLambdaNm, phaseSpectrumKernel, phaseJacobianSpectrumKernel } from '../src/js/phase.js';
 import { monitorCurveKernel, depositionSpectraKernel, growingStackKernel } from '../src/js/growing.js';
 import { needleScanSpectrumWasm } from '../src/wasm/derivatives.js';
-import { PAIRS } from '../src/wasm/memory.js';
+import { PAIRS, writePairLayers } from '../src/wasm/memory.js';
 import { phaseSpectrumWasm, phaseJacobianSpectrumWasm } from '../src/wasm/phase.js';
-import { depositionSpectraWasm, growingStackWasm } from '../src/wasm/growing.js';
+import { monitorCurveWasm, depositionSpectraWasm, growingStackWasm } from '../src/wasm/growing.js';
 import { instantiateTmmWasm } from '../src/wasm/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -151,29 +151,31 @@ for (const lambda of [400, 550, 1064]) {
                 base: LAYERS.map(([m, d]) => ({ n: nkAt(m, lambda), d })), top: nkAt(top, lambda),
                 thicknesses: SAMPLES,
             };
-            nearAll(monitorCurveKernel(args),
-                wasm.monitorCurve(lambda, theta, args.n0, args.ns, args.base, args.top, SAMPLES), true,
+            nearAll(monitorCurveKernel(args), monitorCurveWasm(wasm, args, writePairLayers), true,
                 `monitor curve λ ${lambda} θ ${theta} top ${top.A}`);
         }
     }
 }
-nearAll(monitorCurveKernel({
+const bareGlass = {
     lambda_nm: 550, theta_deg: 30, n0: [1, 0], ns: [1.52, 0], base: [], top: [2.35, 0], thicknesses: SAMPLES,
-}), wasm.monitorCurve(550, 30, [1, 0], [1.52, 0], [], [2.35, 0], SAMPLES), true, 'monitor curve on bare glass');
+};
+nearAll(monitorCurveKernel(bareGlass), monitorCurveWasm(wasm, bareGlass, writePairLayers), true,
+    'monitor curve on bare glass');
 
 // ── Spectra after each deposited layer ───────────────────────────────────────
 for (const theta of THETAS) {
-    nearAll(depositionSpectraKernel(gridOf(theta)), depositionSpectraWasm(wasm, gridOf(theta)), true,
+    nearAll(depositionSpectraKernel(gridOf(theta)), depositionSpectraWasm(wasm, gridOf(theta), PAIRS), true,
         `deposition spectra ${thetaTag(theta)}`);
 }
 const empty = { ...gridOf(30), layerNK: [], thick: [] };
-nearAll(depositionSpectraKernel(empty), depositionSpectraWasm(wasm, empty), true, 'deposition spectra, no layers');
+nearAll(depositionSpectraKernel(empty), depositionSpectraWasm(wasm, empty, PAIRS), true,
+    'deposition spectra, no layers');
 
 // ── Growing top layer ────────────────────────────────────────────────────────
 for (const theta of THETAS) {
     const tag = `growing stack ${thetaTag(theta)}`;
     const js = growingStackKernel(gridOf(theta));
-    const wa = growingStackWasm(wasm, gridOf(theta));
+    const wa = growingStackWasm(wasm, gridOf(theta), PAIRS);
     nearAll(js.sample(0), wa.sample(0), true, `${tag} d 0 before setTop`);
     assert.throws(() => js.sample(10), /sampled before setTop/, `${tag} JS sample before setTop`);
     assert.throws(() => wa.sample(10), /sampled before setTop/, `${tag} WASM sample before setTop`);

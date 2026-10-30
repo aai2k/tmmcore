@@ -1,7 +1,8 @@
 """
 What test_reference.py cannot show: the arguments the package refuses, the
 shapes it returns, complex n against n and k, arrays in another memory order
-or type than the C reads, and the growing stack's lifetime.
+or type than the C reads, the order the layers are deposited in, and the
+growing stack's lifetime.
 
     python -m unittest discover -s python/tests
 """
@@ -11,8 +12,6 @@ import unittest
 import numpy as np
 
 import tmmcore
-from tmmcore._stack import grid_stack
-from tmmcore.growing import _GrowingStack
 
 # A high and a low index layer, each a quarter wave at 550 nm.
 PAIR = {"incident": 1.0, "substrate": 1.52,
@@ -173,18 +172,57 @@ class Buffers(unittest.TestCase):
                                           expected, np.dtype(dtype).name)
 
 
-class GrowingStack(unittest.TestCase):
+class Monitoring(unittest.TestCase):
+    """The H layer of PAIR grows on the L layer."""
+
     def setUp(self):
-        self.grid = (GRID, np.array([30.0]), *grid_stack(PAIR, len(GRID)))
+        self.top = PAIR["layers"][0]
+        self.finished = with_layers(PAIR, PAIR["layers"][1])
+
+    def test_options(self):
+        with self.assertRaisesRegex(TypeError, "thicknesses"):
+            tmmcore.monitor_curve(self.finished, 550, top=2.35)
+        with self.assertRaisesRegex(TypeError, r"top must be a number or \{ n, k \}"):
+            tmmcore.monitor_curve(self.finished, 550, top=[2.35, 0], thicknesses=[0])
+        with self.assertRaisesRegex(TypeError, r"thicknesses must be a list of numbers \(nm\)"):
+            tmmcore.monitor_curve(self.finished, 550, top=2.35, thicknesses=50)
+        with self.assertRaisesRegex(TypeError, r"stack must be \{ incident, substrate, layers"):
+            tmmcore.deposition_spectra(PAIR["layers"], GRID)
+        with tmmcore.growing_stack(self.finished, GRID) as stack:
+            with self.assertRaisesRegex(TypeError, "top n must be a number or 5 numbers, one per wavelength"):
+                stack.set_top({"n": [2.35, 2.3]})
+            with self.assertRaisesRegex(TypeError, r"d must be a number \(nm\)"):
+                stack.sample("10")
+
+    def test_the_grown_stack(self):
+        curve = tmmcore.monitor_curve(self.finished, 550, top=self.top["n"], thicknesses=[0, self.top["d"]])
+        self.assertEqual(curve["Rs"].shape, (2,))
+        self.assertAlmostEqual(curve["Rs"][1], tmmcore.rta(PAIR, 550, pol="s")["R"], delta=1e-12)
+        with tmmcore.growing_stack(self.finished, GRID) as stack:
+            stack.set_top({"n": np.full(5, self.top["n"])})
+            np.testing.assert_allclose(stack.sample(self.top["d"])["Rp"], tmmcore.rta_spectrum(PAIR, GRID, pol="p")["R"],
+                                       rtol=0, atol=1e-12)
+
+    def test_deposition_order(self):
+        """Row k has the last k + 1 layers of the stack deposited."""
+        N = len(PAIR["layers"])
+        steps = tmmcore.deposition_spectra(PAIR, GRID, angle=30)
+        self.assertEqual(steps["Rrs"].shape, (N, 5))
+        for k in range(N):
+            deposited = with_layers(PAIR, *PAIR["layers"][N - 1 - k:])
+            for pol in ("s", "p"):
+                rt = tmmcore.rta_spectrum(deposited, GRID, angle=30, pol=pol)
+                for key in ("R", "T"):
+                    np.testing.assert_allclose(steps[key + pol][k], rt[key], rtol=0, atol=1e-12, err_msg=f"{k} {key}{pol}")
 
     def test_top_layer_before_a_thickness(self):
-        with _GrowingStack(self.grid) as stack:
+        with tmmcore.growing_stack(PAIR, GRID, angle=30) as stack:
             self.assertEqual(stack.sample(0)["Rs"].shape, (5,))
             with self.assertRaisesRegex(ValueError, "set_top"):
                 stack.sample(10)
 
     def test_closed(self):
-        with _GrowingStack(self.grid) as stack:
+        with tmmcore.growing_stack(PAIR, GRID, angle=30) as stack:
             stack.set_top(2.35)
             stack.sample(10)
         with self.assertRaisesRegex(ValueError, "closed"):

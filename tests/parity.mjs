@@ -5,12 +5,13 @@
  * rtaSpectrum).
  *
  *   • each export's call is on the module and on an instance, with the same
- *     parameter names, except the exports in NOT_CALLS; calls.js builds the
- *     stack calls of both, so the names compared are those of the jet calls
+ *     parameter names, except the exports of the growing stack, which make
+ *     one call, growingStack; calls.js builds the stack calls of both, so the
+ *     names compared are those of the jet calls and of the instance's
+ *     monitorCurve and depositionSpectra, which also take the arguments of 0.4
  *   • each call an instance holds as its own has its export; the methods it
  *     inherits, the names of 0.4 among them, are in old_names.mjs
- *   • an export in NOT_CALLS that the module starts to offer must leave the
- *     list
+ *   • the module offers none of the growing stack's exports under its own name
  *
  * Skips cleanly if tmm_kernel.wasm has not been built.
  *
@@ -31,13 +32,10 @@ if (!existsSync(WASM)) {
 }
 const wasm = await tmmcore.instantiateTmmWasm(readFileSync(WASM));
 
-// Exports the module does not offer under their own names: the growing-layer
-// kernels, reached through an instance's monitorCurve, depositionSpectra and
-// growingEval.
-const NOT_CALLS = [
-    'monitorCurve', 'depositionSpectra',
-    'growingStackCreate', 'growingStackSetTop', 'growingStackSample', 'growingStackFree',
-];
+// The exports of the growing stack: growingStack runs the first, and the
+// setTop, sample and free of the handle it returns the other three.
+const NOT_CALLS = ['growingStackCreate', 'growingStackSetTop', 'growingStackSample', 'growingStackFree'];
+const COMPOUND = ['growingStack'];
 
 const C = join(HERE, '..', 'src', 'c');
 const source = readdirSync(C).filter(file => file.endsWith('.c'))
@@ -55,9 +53,9 @@ function parameters(fn) {
 }
 
 let compared = 0;
-for (const name of exports.map(camel)) {
+for (const name of [...exports.map(camel), ...COMPOUND]) {
     if (NOT_CALLS.includes(name)) {
-        assert.equal(typeof tmmcore[name], 'undefined', `${name} is on the module now: take it off NOT_CALLS`);
+        assert.equal(typeof tmmcore[name], 'undefined', `${name} is on the module`);
         continue;
     }
     assert.equal(typeof tmmcore[name], 'function', `${name} on the module`);
@@ -66,11 +64,11 @@ for (const name of exports.map(camel)) {
     compared++;
 }
 
-const calls = new Set(exports.map(camel));
+const calls = new Set([...exports.map(camel), ...COMPOUND]);
 const ownCalls = Object.keys(wasm).filter(key =>
     typeof wasm[key] === 'function' && !key.startsWith('_') && key !== 'malloc' && key !== 'free');
 for (const name of ownCalls) assert.ok(calls.has(name), `${name} on an instance has no kernel export`);
 
 console.log(`${exports.length} kernel exports; ${compared} calls the same on module and instance, `
-    + `${NOT_CALLS.length} not offered under their own names`);
+    + `${NOT_CALLS.length} exports run through ${COMPOUND.join(', ')}`);
 console.log('PASS : parity');

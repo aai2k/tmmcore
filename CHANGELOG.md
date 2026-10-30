@@ -3,8 +3,9 @@
 ## [0.5.0] - unreleased
 
 ### Added
-- A Python package, `pip install tmmcore`, on the same C kernel: the R/T, derivative, needle, phase and jet calls under snake_case names, taking numpy arrays.
+- A Python package, `pip install tmmcore`, on the same C kernel: the R/T, derivative, needle, phase, monitoring and jet calls under snake_case names, taking numpy arrays.
 - One call shape for the R/T, derivative, needle and phase calls: `name(stack, wavelength or wavelengths, { angle, pol })`, with the stack given once as `{ incident, substrate, layers: [{ n, k, d }] }`. The needle scan takes its candidate materials and split fractions as the options `candidates` and `fractions`.
+- The monitoring calls take the stack the same way: `monitorCurve(stack, wavelength, { angle, top, thicknesses })`, `depositionSpectra(stack, wavelengths, { angle })` and `growingStack(stack, wavelengths, { angle })`, in JavaScript as well as on the WebAssembly instance. `depositionSpectra` deposits the layers from the substrate outward.
 - Grid calls in JavaScript for R/T, phase and the phase Jacobian, which only the WebAssembly instance had.
 - Grid versions of the Jacobian and the Hessian, in JavaScript, on the WebAssembly instance and in C.
 - `needleScanSpectrum`, the needle scan over a grid, in JavaScript and on the WebAssembly instance.
@@ -19,6 +20,7 @@
 ### Changed
 - The calls have one set of names, the same in JavaScript and on the WebAssembly instance. The 0.4 names keep their arguments and results through 0.5.x, warn once on first use, and are removed in 0.6.0. [The names of 0.4](docs/api.md#the-names-of-04) maps each to its 0.5 name.
 - `tmmCoefficientJets`, `tmmCoefficientThicknessJets`, `coefficientPhaseDispersion` and `coefficientPhaseThicknessDerivatives` warn once and are removed in 0.6.0, with no replacement.
+- `growingEval` is replaced by `growingStack`, which takes the stack, and whose `setTop` takes the growing layer's index given as a medium is. The instance's `monitorCurve` and `depositionSpectra` still take their 0.4 arguments through 0.5.x and warn once when they do.
 - The 0.5 phase calls take the incident sine as `sine`, which the 0.4 phase names take as `sinTheta0Jet` and `sinJets`. They take no `omega`; the 0.4 phase names still do.
 - A layer missing its index or its thickness throws a `TypeError` naming the layer. 0.4 skipped a layer without a thickness as if it were absent, and failed with an unrelated error on one without an index.
 - C: `tmm_one`, `tmm_spectrum`, `tmm_phase_one` and `tmm_growing_eval_*` are renamed `tmm_rta`, `tmm_rta_spectrum`, `tmm_phase` and `tmm_growing_stack_*`, and the 0.4 names are gone.

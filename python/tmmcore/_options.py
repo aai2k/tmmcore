@@ -19,13 +19,18 @@ def read_wavelength(wavelength):
     return float(wavelength)
 
 
+def _number_list(value, message):
+    """value as a float64 array if it is a list of real numbers, else TypeError(message)."""
+    array = as_array(value)
+    values = None if array is None or array.ndim != 1 else numeric_array(array, array.shape)
+    if values is None:
+        raise TypeError(message)
+    return np.ascontiguousarray(values, dtype=np.float64)
+
+
 def read_wavelengths(wavelengths):
     """The wavelengths of a Spectrum call, in nm."""
-    array = as_array(wavelengths)
-    lambdas = None if array is None or array.ndim != 1 else numeric_array(array, array.shape)
-    if lambdas is None:
-        raise TypeError("wavelengths must be a list of numbers (nm)")
-    return np.ascontiguousarray(lambdas, dtype=np.float64)
+    return _number_list(wavelengths, "wavelengths must be a list of numbers (nm)")
 
 
 def read_angle(angle, n_lam=None):
@@ -89,11 +94,19 @@ def read_phase_options(angle, sine, pol, n_lam=None):
 
 def read_fractions(fractions):
     """Where a needle scan also opens each layer, as fractions of its thickness from the incident side."""
-    array = as_array(fractions)
-    values = None if array is None or array.ndim != 1 else numeric_array(array, array.shape)
-    if values is None:
-        raise TypeError("fractions must be a list of numbers")
-    return np.ascontiguousarray(values, dtype=np.float64)
+    return _number_list(fractions, "fractions must be a list of numbers")
+
+
+def read_thicknesses(thicknesses):
+    """The thicknesses of the growing layer a monitoring curve samples, in nm."""
+    return _number_list(thicknesses, "thicknesses must be a list of numbers (nm)")
+
+
+def read_thickness(d):
+    """The thickness of the growing layer a growing stack samples, in nm."""
+    if not is_real(d):
+        raise TypeError("d must be a number (nm)")
+    return float(d)
 
 
 def mean(s, p):

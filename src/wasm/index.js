@@ -4,7 +4,8 @@
  * the same names, with the same arguments and results: rta, rtaSpectrum,
  * jacobian, jacobianSpectrum, hessian, hessianSpectrum, needleScan,
  * needleScanSpectrum, phase, phaseSpectrum, phaseJacobian,
- * phaseJacobianSpectrum (src/js/calls.js), and the jet arithmetic of
+ * phaseJacobianSpectrum, monitorCurve, depositionSpectra, growingStack
+ * (src/js/calls.js), and the jet arithmetic of
  * src/js/jet.js with omegaFromLambdaNm. The methods of 0.4 keep their
  * arguments through 0.5.x.
  *

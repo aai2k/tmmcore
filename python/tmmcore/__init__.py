@@ -11,6 +11,9 @@ keyword options:
     needle_scan, needle_scan_spectrum           their derivatives for a thin layer inserted
     phase, phase_spectrum                       phase, GD, GDD and TOD of r and t
     phase_jacobian, phase_jacobian_spectrum     with their thickness derivatives
+    monitor_curve                               a layer growing on the stack, at one wavelength
+    deposition_spectra                          the spectra after each layer is deposited
+    growing_stack                               a layer growing on the stack, over a grid
 
     stack = {"incident": 1.0, "substrate": 1.52,
              "layers": [{"n": 2.35, "d": 58.5}, {"n": 1.46, "d": 94.2}]}
@@ -27,6 +30,13 @@ inserting, each an index given as a medium is, and `fractions`, where inside
 each layer they also try them. The jet calls (jet.py) build the dispersive
 index jets the phase calls take.
 
+The monitoring calls (growing.py) take `angle` only, and return s and p
+together, with the reflectance of the coated surface seen from the substrate
+side: {"Rs", "Ts", "Rp", "Tp", "Rrs", "Rrp"}. monitor_curve also takes `top`,
+the growing layer's index, and `thicknesses`, the thicknesses of it to
+sample. deposition_spectra deposits the layers from the substrate outward,
+the last one listed first.
+
 The numbers come from the same C kernel as the npm package; they agree with
 it to round-off, the last digits differing where the platform's math library
 does.
@@ -35,6 +45,7 @@ does.
 from .derivatives import (
     hessian, hessian_spectrum, jacobian, jacobian_spectrum, needle_scan, needle_scan_spectrum,
 )
+from .growing import deposition_spectra, growing_stack, monitor_curve
 from .jet import (
     jet_add, jet_clamp_imaginary, jet_clamp_real_minimum, jet_compose, jet_constant, jet_cos,
     jet_derivatives, jet_divide, jet_exp, jet_from_derivatives, jet_is_finite, jet_log, jet_multiply,
@@ -48,6 +59,7 @@ __all__ = [
     "rta", "rta_spectrum", "jacobian", "jacobian_spectrum", "hessian", "hessian_spectrum",
     "needle_scan", "needle_scan_spectrum",
     "phase", "phase_spectrum", "phase_jacobian", "phase_jacobian_spectrum", "omega_from_lambda_nm",
+    "monitor_curve", "deposition_spectra", "growing_stack",
     "jet_constant", "jet_from_derivatives", "jet_derivatives", "jet_add", "jet_subtract", "jet_scale",
     "jet_multiply", "jet_reciprocal", "jet_divide", "jet_sqrt", "jet_exp", "jet_log", "jet_power",
     "jet_sin_cos", "jet_sin", "jet_cos", "jet_compose", "wavelength_omega_jet", "jet_with_imaginary_part",

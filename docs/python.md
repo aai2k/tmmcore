@@ -20,9 +20,10 @@ Wheels are built for Windows (x86-64), macOS (Intel and Apple silicon) and Linux
 | `needleScan`, `needleScanSpectrum` | `needle_scan`, `needle_scan_spectrum` |
 | `phase`, `phaseSpectrum` | `phase`, `phase_spectrum` |
 | `phaseJacobian`, `phaseJacobianSpectrum` | `phase_jacobian`, `phase_jacobian_spectrum` |
+| `monitorCurve`, `depositionSpectra`, `growingStack` | `monitor_curve`, `deposition_spectra`, `growing_stack` |
 | `jetConstant` … `jetIsFinite`, `wavelengthOmegaJet`, `omegaFromLambdaNm` | `jet_constant` … `jet_is_finite`, `wavelength_omega_jet`, `omega_from_lambda_nm` |
 
-Each call takes the stack, then a wavelength in nm or, in a `_spectrum` call, an array of them, and `angle` and `pol` as keyword arguments:
+Each call takes the stack, then a wavelength in nm or, in a `_spectrum` call, `deposition_spectra` and `growing_stack`, an array of them, and `angle` and `pol` as keyword arguments:
 
 ```python
 import numpy as np
@@ -35,9 +36,9 @@ tmmcore.rta(stack, 550)["R"]                                              # natu
 tmmcore.rta_spectrum(stack, np.linspace(400, 800, 401), angle=45, pol="s")["R"]
 ```
 
-The phase calls also take `sine` in place of `angle`: a jet, or in a `_spectrum` call an array of shape (nLam, 4), for [an angle fixed outside the incident medium](api.md#an-angle-fixed-outside-the-incident-medium). The needle scans take `candidates` and `fractions`, as in the [needle scan](api.md#needle-scan).
+The phase calls also take `sine` in place of `angle`: a jet, or in a `_spectrum` call an array of shape (nLam, 4), for [an angle fixed outside the incident medium](api.md#an-angle-fixed-outside-the-incident-medium). The needle scans take `candidates` and `fractions`, as in the [needle scan](api.md#needle-scan). The [monitoring calls](api.md#monitoring-and-deposition) take `angle` and no `pol`, and `monitor_curve` takes `top` and `thicknesses`.
 
-Not in the Python package yet: the monitoring calls (monitoring curve, deposition spectra, growing stack), the low-level primitives, and the constants `C_NM_PER_FS` and `JET_ORDER`.
+Not in the Python package yet: the low-level primitives, and the constants `C_NM_PER_FS` and `JET_ORDER`.
 
 ## The stack
 
@@ -84,6 +85,16 @@ A needle scan's `gaps` and `intra` are each a dict of `dR`, `dT` and `dA`, array
 | `intra` of `needle_scan_spectrum` | `intra.dR[((i * N + k) * nFrac + f) * nCand + c]` | `intra["dR"]`, shape (nLam, N, nFrac, nCand), `[i, k, f, c]` |
 
 `phase` and `phase_jacobian` return `None` for a coefficient that is exactly zero, where the JavaScript returns `null`.
+
+The monitoring calls return arrays at one wavelength too. `monitor_curve` returns `Rs` … `Rrp` with one value per thickness, and `deposition_spectra` each of shape (N, nLam), row `k` after `k + 1` layers, where the JavaScript returns them flat, `[k * nLam + i]`. `growing_stack` returns a `GrowingStack` with `set_top(top)`, `sample(d)` and `close()`. It is a context manager that closes it, and `sample` returns new arrays each time, with no `out`:
+
+```python
+finished = {"incident": 1.0, "substrate": 1.52, "layers": [{"n": 1.46, "d": 94.2}]}
+
+with tmmcore.growing_stack(finished, np.linspace(400, 800, 401), angle=45) as growing:
+    growing.set_top(2.35)
+    scans = [growing.sample(d)["Rs"] for d in np.arange(0, 60, 5)]
+```
 
 ## Jets
 

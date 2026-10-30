@@ -294,13 +294,13 @@ node tests/macleod.mjs
 ```
 
 ```
-Essential Macleod 11.09.0605: 10 designs, 68714 comparisons
+Essential Macleod 11.09.0605: 10 designs, 71142 comparisons
   worst R, T, A            1.4e-14  (js grazing 89° p 690 nm R)
   worst substrate-side R   2.1e-14  (js metal-mirror 70° p 510 nm Rback)
   worst phase              3.4e-12  (js frustrated-tir 30° p 530 nm r phase)
   worst Psi, Delta         2.8e-12  (js frustrated-tir 30° 530 nm Delta of r)
   worst GD, GDD, TOD       3.6e-11  (js frustrated-tir 30° p 530 nm r tod (closed form), fs^3 over 1)
-  worst locus R            8.9e-16  (wasm dielectric-stack locus 560 nm 0° s at depth 62.25 nm, monitorCurve)
+  worst locus R            1.0e-15  (js metal-mirror locus 560 nm 45° s at depth 42.5 nm, monitorCurve)
 PASS : Essential Macleod
 ```
 
@@ -318,7 +318,7 @@ Each design is scanned across the visible at two or three angles, in s and p:
 | 1 µm of metal | the opaque-layer clamp |
 | a 20 µm layer, 500 to 600 nm in 2.5 nm steps | a phase that turns fast with wavelength, and long group delay |
 
-In each scan the test compares $R$, $T$ and $A$, and for natural light too; the phase of $r$ and of $t$, with the GD, GDD and TOD of each; Psi and Delta of $r$ and of $t$; and the reflectance from the substrate side. For five of the designs Essential Macleod also gives monitoring curves, the reflectance at one wavelength with the coating cut at each depth, which `monitorCurve`, `growingEval` and `depositionSpectra` must reproduce. Everything runs on the JavaScript and the WebAssembly kernel, except the monitoring calls, which only the WebAssembly kernel has, and the delays under an absorbing incident medium, which only the JavaScript kernel gives.
+In each scan the test compares $R$, $T$ and $A$, and for natural light too; the phase of $r$ and of $t$, with the GD, GDD and TOD of each; Psi and Delta of $r$ and of $t$; and the reflectance from the substrate side. For five of the designs Essential Macleod also gives monitoring curves, the reflectance at one wavelength with the coating cut at each depth, which `monitorCurve`, `growingStack` and `depositionSpectra` must reproduce. Everything runs on the JavaScript and the WebAssembly kernel, except the delays under an absorbing incident medium, which only the JavaScript kernel gives.
 
 | Quantity | As Essential Macleod reports it | Compared with |
 |---|---|---|
@@ -334,7 +334,7 @@ $R$, $T$ and $A$ are held to $10^{-12}$, phases, Psi and Delta to $10^{-10}$ deg
 
 Two places take another reference. Essential Macleod's reflection GDD and TOD lose digits where $r$ nears zero: the air gap at 30° passes through $r = 0$ near 529 nm, and at 530 nm its TOD is off by $2\times10^{-6}$ fs³. The reflection delays of that scan are held instead to the closed form for one film between identical media, from the characteristic matrix of Macleod's Eq. 2.113. Under an absorbing incident medium the two programs define $R$ and $T$ differently, as described [above](#an-absorbing-incident-medium): tmmcore's $r$ and $t$ are carried to Essential Macleod's through the surface admittance, and their GD, GDD and TOD through the frequency jets of $r$ and $t$.
 
-The Python package runs the same comparison in `python/tests/test_macleod.py`, except the monitoring calls and the delays under an absorbing incident medium, which need calls the package does not expose.
+The Python package runs the same comparison in `python/tests/test_macleod.py`, except the delays under an absorbing incident medium, which need calls the package does not expose.
 
 ## What is not tested
 

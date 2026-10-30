@@ -15,10 +15,9 @@
  *     defines at the angle θ0 taken in the substrate: rtaSpectrum of the
  *     reversed stack, and at normal incidence monitorCurve's Rrs and Rrp.
  *  5. The admittance loci, the reflectance with the coating cut at a depth:
- *     monitorCurve, growingEval and depositionSpectra of the cut coating.
+ *     monitorCurve, growingStack and depositionSpectra of the cut coating.
  *
- * Items 1 to 4 run on the JavaScript and on the WebAssembly kernel, item 5 on
- * the WebAssembly kernel, which alone carries the growing-layer calls; the
+ * Every item runs on the JavaScript and on the WebAssembly kernel; the
  * WebAssembly checks are skipped when the kernel has not been built.
  *
  * The exports write indices as n − ik with k ≥ 0, the numbers tmmcore takes
@@ -287,26 +286,28 @@ function cutAt(layers, z) {
     return { j: layers.length - 1, grown: 0 };
 }
 
-function compareLoci(wasm, c) {
-    const n0 = c.incident.n, ns = c.substrate.n;
-    const layers = c.layers.map(l => ({ n: l.n, d: l.d }));
+const indexOf = ({ n, k }) => ({ n, k });
+
+function compareLoci(api, backend, c) {
+    const stack = stackOf(c);
     for (const locus of c.loci) {
         const { wavelength: lambda, angle, pol } = locus;
         const key = FORWARD[pol];
         locus.depth.forEach((z, k) => {
-            const at = `wasm ${c.case} locus ${lambda} nm ${angle}° ${pol} at depth ${z} nm`;
+            const at = `${backend} ${c.case} locus ${lambda} nm ${angle}° ${pol} at depth ${z} nm`;
             const expected = locus.Rpct[k] / 100;
-            const { j, grown } = cutAt(layers, z);
-            const finished = layers.slice(j + 1);
-            const curve = wasm.monitorCurve(lambda, angle, n0, ns, finished, layers[j].n, [grown]);
+            const { j, grown } = cutAt(stack.layers, z);
+            const finished = { ...stack, layers: stack.layers.slice(j + 1) };
+            const top = indexOf(stack.layers[j]);
+            const curve = api.monitorCurve(finished, lambda, { angle, top, thicknesses: [grown] });
             check('locus R', curve[key][0] - expected, TOL.fraction, `${at}, monitorCurve`);
-            const handle = wasm.growingEval([lambda], [n0], [ns], finished.map(l => [l.n]), finished.map(l => l.d), angle);
-            handle.setTop([layers[j].n]);
-            check('locus R', handle.sample(grown)[key][0] - expected, TOL.fraction, `${at}, growingEval`);
-            handle.free();
-            const deposited = [...finished].reverse().concat([{ n: layers[j].n, d: grown }]);
-            const steps = wasm.depositionSpectra([lambda], [n0], [ns], deposited.map(l => [l.n]), deposited.map(l => l.d), angle);
-            check('locus R', steps[key][deposited.length - 1] - expected, TOL.fraction, `${at}, depositionSpectra`);
+            const growing = api.growingStack(finished, [lambda], { angle });
+            growing.setTop(top);
+            check('locus R', growing.sample(grown)[key][0] - expected, TOL.fraction, `${at}, growingStack`);
+            growing.free();
+            const cut = { ...stack, layers: [{ ...top, d: grown }, ...finished.layers] };
+            const steps = api.depositionSpectra(cut, [lambda], { angle });
+            check('locus R', steps[key][cut.layers.length - 1] - expected, TOL.fraction, `${at}, depositionSpectra`);
         });
     }
 }
@@ -315,15 +316,17 @@ function compareLoci(wasm, c) {
 // which is the one Essential Macleod reports when θ0 = 0. An absorbing
 // substrate is the incident medium of that pass, where the two programs take
 // different admittances (above), so it is left to the reversed stack.
-function compareReverseAtNormalIncidence(wasm, c) {
+function compareReverseAtNormalIncidence(api, backend, c) {
     if (c.substrate.n[1] !== 0) return;
-    const layers = c.layers.map(l => ({ n: l.n, d: l.d }));
+    const stack = stackOf(c);
+    const [outer, ...below] = stack.layers;
+    const options = { top: indexOf(outer), thicknesses: [outer.d] };
     for (const scan of c.scans.filter(s => s.angle === 0)) {
         scan.wavelengths.forEach((lambda, i) => {
-            const curve = wasm.monitorCurve(lambda, 0, c.incident.n, c.substrate.n, layers.slice(1), layers[0].n, [layers[0].d]);
+            const curve = api.monitorCurve({ ...stack, layers: below }, lambda, options);
             for (const pol of POLS) {
                 check('substrate-side R', curve[REVERSE[pol]][0] - scan[pol].Rback[i], TOL.fraction,
-                    `wasm ${c.case} 0° ${pol} ${lambda} nm, monitorCurve Rr`);
+                    `${backend} ${c.case} 0° ${pol} ${lambda} nm, monitorCurve Rr`);
             }
         });
     }
@@ -332,10 +335,8 @@ function compareReverseAtNormalIncidence(wasm, c) {
 // ── Run ──────────────────────────────────────────────────────────────────────
 
 const backends = [['js', tmmcore]];
-let wasm = null;
 if (existsSync(WASM)) {
-    wasm = await tmmcore.instantiateTmmWasm(readFileSync(WASM));
-    backends.push(['wasm', wasm]);
+    backends.push(['wasm', await tmmcore.instantiateTmmWasm(readFileSync(WASM))]);
 } else {
     console.log('NOTE : src/wasm/tmm_kernel.wasm not built; the WebAssembly checks were skipped.');
 }
@@ -343,10 +344,8 @@ if (existsSync(WASM)) {
 for (const c of CASES) {
     for (const [backend, api] of backends) {
         for (const scan of c.scans) compareScan(api, backend, c, scan);
-    }
-    if (wasm) {
-        compareLoci(wasm, c);
-        compareReverseAtNormalIncidence(wasm, c);
+        compareLoci(api, backend, c);
+        compareReverseAtNormalIncidence(api, backend, c);
     }
 }
 CASES.filter(c => c.incident.n[1] !== 0).forEach(compareAbsorbingIncidentDelays);

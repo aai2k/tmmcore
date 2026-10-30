@@ -24,7 +24,9 @@ import { rtaMethods, rtaSpectrumWasm } from './rta.js';
 import {
     derivativeMethods, jacobianSpectrumWasm, hessianSpectrumWasm, needleScanSpectrumWasm,
 } from './derivatives.js';
-import { growingMethods } from './growing.js';
+import {
+    growingMethods, growingCalls, monitorCurveWasm, depositionSpectraWasm, growingStackWasm,
+} from './growing.js';
 import { phaseMethods, phaseSpectrumWasm, phaseJacobianSpectrumWasm } from './phase.js';
 
 let _instance = null;     // TmmWasmInstance | null
@@ -57,8 +59,10 @@ function instanceGridStack(stack, nLam) {
 }
 
 // The instance's kernels in the form calls.js builds on: pol 's' or 'p', the
-// stack of an R/T call and of a needle scan read as above, the candidates as
-// checked media, the phase stacks as stack.js lays them out.
+// stack of an R/T call, a needle scan and a monitoring call read as above, the
+// candidates as checked media, the phase stacks as stack.js lays them out. The
+// deposition spectra take the layers in deposition order, the stack's
+// reversed.
 function wasmKernels(wasm) {
     const code = pol => (pol === 'p' ? 1 : 0);
     return {
@@ -80,6 +84,11 @@ function wasmKernels(wasm) {
             needleScanSpectrumWasm(wasm, grid, code(pol), { candNK: candidates, fracs: fractions }, STACK),
         phaseSpectrum: (grid, pol) => phaseSpectrumWasm(wasm, grid, code(pol)),
         phaseJacobianSpectrum: (grid, pol) => phaseJacobianSpectrumWasm(wasm, grid, code(pol)),
+        monitorCurve: (lambda, theta, { n0, ns, layers }, { top, thicknesses }) => monitorCurveWasm(wasm,
+            { lambda_nm: lambda, theta_deg: theta, n0, ns, base: layers, top, thicknesses }, writeStackLayers),
+        depositionSpectra: ({ layers, thick, ...grid }) =>
+            depositionSpectraWasm(wasm, { ...grid, layers: [...layers].reverse(), thick: [...thick].reverse() }, STACK),
+        growingStack: grid => growingStackWasm(wasm, grid, STACK),
     };
 }
 
@@ -123,7 +132,8 @@ export class TmmWasmInstance {
         for (const name of KERNEL_EXPORTS) this[`_${name}`] = ex[name];
         this._scratchPtr = 0;   // persistent per-call scratch arena (lazy)
         this._scratchN = 0;
-        Object.assign(this, wasmJetCalls(this), stackCalls(wasmKernels(this)));
+        const calls = stackCalls(wasmKernels(this));
+        Object.assign(this, wasmJetCalls(this), calls, growingCalls(this, calls));
     }
 }
 

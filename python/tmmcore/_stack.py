@@ -140,17 +140,24 @@ def grid_stack(stack, n_lam):
     return n0, ns, table, thick
 
 
+def read_index(value, where, n_lam=None):
+    """
+    An index given as a medium is, a number or {"n", "k"}: ñ, or with n_lam
+    one per wavelength. `where` names it in a message.
+    """
+    return _index(*_read_medium(value, where), n_lam, where)
+
+
 def read_candidates(candidates, n_lam=None):
     """
-    The materials a needle scan tries: a list of indices, each a number or
-    {"n", "k"} as a medium is. ñ of each, or with n_lam an (nCand, nLam) array.
+    The materials a needle scan tries: a list of indices, each read by
+    read_index. ñ of each, or with n_lam an (nCand, nLam) array.
     """
     if isinstance(candidates, np.ndarray) and candidates.ndim == 1:
         candidates = list(candidates)
     if not isinstance(candidates, (list, tuple)):
         raise TypeError("candidates must be a list of indices, each a number or { n, k }")
-    indices = [_index(*_read_medium(value, f"candidate {c}"), n_lam, f"candidate {c}")
-               for c, value in enumerate(candidates)]
+    indices = [read_index(value, f"candidate {c}", n_lam) for c, value in enumerate(candidates)]
     shape = (len(indices),) if n_lam is None else (len(indices), n_lam)
     return np.array(indices, dtype=np.complex128).reshape(shape)
 

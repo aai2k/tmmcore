@@ -4,13 +4,14 @@ The package against Essential Macleod, on the fixtures of tests/macleod.mjs.
 tests/macleod/*.json hold Essential Macleod's results for ten designs of
 constant-index materials, written by tests/macleod/export.ps1. Each is run
 through the package: R, T and A in s, p and natural light, the phase of r
-and t, their GD, GDD and TOD, Psi and Delta, and the reflectance from the
-substrate side. The conventions, the tolerances and the two places that take
-another reference (the reflection delays of the air gap at 30°, and an
-absorbing incident medium) are those of tests/macleod.mjs, which gives the
-reasons. Two things that file checks are left to it: the monitoring calls,
-and the delays under an absorbing incident medium, which it reads from
-frequency jets. The package exposes neither.
+and t, their GD, GDD and TOD, Psi and Delta, the reflectance from the
+substrate side, and the admittance loci through the monitoring calls. The
+conventions, the tolerances and the two places that take another reference
+(the reflection delays of the air gap at 30°, and an absorbing incident
+medium) are those of tests/macleod.mjs, which gives the reasons. One thing
+that file checks is left to it: the delays under an absorbing incident
+medium, which it reads from frequency jets. The package does not expose
+them.
 
     python -m unittest discover -s python/tests
 """
@@ -49,6 +50,20 @@ def stack_of(case):
 
 def reversed_stack(stack):
     return {"incident": stack["substrate"], "substrate": stack["incident"], "layers": stack["layers"][::-1]}
+
+
+def index_of(layer):
+    return {"n": layer["n"], "k": layer["k"]}
+
+
+def cut_at(layers, z):
+    """The layer that depth z from the outer surface falls in, and how much of it is left above z (nm)."""
+    top = 0.0
+    for j, layer in enumerate(layers):
+        if z < top + layer["d"]:
+            return j, top + layer["d"] - z
+        top += layer["d"]
+    return len(layers) - 1, 0.0
 
 
 def wrap(degrees):
@@ -146,6 +161,38 @@ class AgainstEssentialMacleod(unittest.TestCase):
                 mean = (np.asarray(scan["s"][key]) + np.asarray(scan["p"][key])) / 2
                 self.within(natural[key], mean, FRACTION, f"{where} {key} of natural light")
 
+    def loci(self, case):
+        """The reflectance with the coating cut at a depth: the finished layers below it, and the cut one grown."""
+        stack = stack_of(case)
+        for locus in case["loci"]:
+            wavelength, angle, key = locus["wavelength"], locus["angle"], "R" + locus["pol"]
+            for z, percent in zip(locus["depth"], locus["Rpct"]):
+                where = f"{case['case']} locus {wavelength} nm {angle}° {locus['pol']} at depth {z} nm"
+                j, grown = cut_at(stack["layers"], z)
+                finished = {**stack, "layers": stack["layers"][j + 1:]}
+                top = index_of(stack["layers"][j])
+                curve = tmmcore.monitor_curve(finished, wavelength, top=top, thicknesses=[grown], angle=angle)
+                self.within(curve[key], [percent / 100], FRACTION, f"{where}, monitor_curve")
+                with tmmcore.growing_stack(finished, [wavelength], angle=angle) as growing:
+                    growing.set_top(top)
+                    self.within(growing.sample(grown)[key], [percent / 100], FRACTION, f"{where}, growing_stack")
+                cut = {**stack, "layers": [{**top, "d": grown}, *finished["layers"]]}
+                steps = tmmcore.deposition_spectra(cut, [wavelength], angle=angle)
+                self.within(steps[key][-1], [percent / 100], FRACTION, f"{where}, deposition_spectra")
+
+    def reverse_at_normal_incidence(self, case):
+        """monitor_curve's reflectance from the substrate side at 0°, where Essential Macleod's is at the same invariant."""
+        if case["substrate"]["n"][1] != 0:
+            return
+        stack = stack_of(case)
+        outer, below = stack["layers"][0], {**stack, "layers": stack["layers"][1:]}
+        for scan in (scan for scan in case["scans"] if scan["angle"] == 0):
+            for i, wavelength in enumerate(scan["wavelengths"]):
+                curve = tmmcore.monitor_curve(below, wavelength, top=index_of(outer), thicknesses=[outer["d"]])
+                for pol in ("s", "p"):
+                    self.within(curve["Rr" + pol], [scan[pol]["Rback"][i]], FRACTION,
+                                f"{case['case']} 0° {pol} {wavelength} nm, monitor_curve Rr")
+
     def test_every_design(self):
         paths = sorted(glob.glob(os.path.join(FIXTURES, "*.json")))
         self.assertTrue(paths, "tests/macleod/*.json are missing")
@@ -155,6 +202,9 @@ class AgainstEssentialMacleod(unittest.TestCase):
             for scan in case["scans"]:
                 with self.subTest(design=case["case"], angle=scan["angle"]):
                     self.scan(case, scan)
+            with self.subTest(design=case["case"], loci=True):
+                self.loci(case)
+                self.reverse_at_normal_incidence(case)
         print(f"\n{len(paths)} designs against Essential Macleod")
 
 

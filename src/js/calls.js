@@ -8,6 +8,9 @@
  *   needleScan, needleScanSpectrum         their derivatives for a thin layer inserted
  *   phase, phaseSpectrum                   phase, GD, GDD and TOD of r and t
  *   phaseJacobian, phaseJacobianSpectrum   with their thickness derivatives
+ *   monitorCurve                           a layer growing on the stack, at one wavelength
+ *   depositionSpectra                      the spectra after each layer is deposited
+ *   growingStack                           a layer growing on the stack, over a grid
  *
  * The stack is { incident, substrate, layers: [{ n, k, d }] } (stack.js).
  * `angle` is the angle of incidence in degrees, 0 when left out; a Spectrum
@@ -22,6 +25,13 @@
  * given as a medium is, a number or { n, k }, and `fractions`, where inside each
  * layer it also tries them. An option a call does not take throws.
  *
+ * The monitoring calls take `angle` only, and return s and p together, with
+ * the reflectance of the coated surface seen from the substrate side:
+ * { Rs, Ts, Rp, Tp, Rrs, Rrp }. monitorCurve also takes `top`, the growing
+ * layer's index, given as a medium is, and `thicknesses`, the thicknesses of
+ * it to sample. depositionSpectra deposits the layers from the substrate
+ * outward, the last one listed first.
+ *
  * stackCalls() builds the calls on a set of kernels: the package index on the
  * JavaScript ones, each WebAssembly instance on its own. The two take the same
  * arguments and return the same shapes, every list of numbers a Float64Array.
@@ -29,15 +39,19 @@
 
 import {
     readWavelength, readWavelengths, readAngle, readRtaPol, readPhasePol, readSine, atNormalIncidence, readFractions,
+    readThicknesses, readThickness,
 } from './options.js';
-import { readCandidates, pointJetStack, gridJetStack } from './stack.js';
+import { readIndex, readCandidates, pairOf, pairsOver, pointJetStack, gridJetStack } from './stack.js';
 
 const RTA_OPTIONS = ['angle', 'pol'];
 const PHASE_OPTIONS = ['angle', 'sine', 'pol'];
 const NEEDLE_OPTIONS = ['angle', 'pol', 'candidates', 'fractions'];
+const MONITOR_OPTIONS = ['angle', 'top', 'thicknesses'];
+const GROWING_OPTIONS = ['angle'];
 const FIRST = ['dRdd', 'dTdd', 'dAdd'];
 const SECOND = ['d2Rdd', 'd2Tdd', 'd2Add'];
 const PHASE_DERIVATIVES = ['dPhaseDeg', 'dGd', 'dGdd', 'dTod', 'dLogMagnitudeSquared'];
+const GROWING = ['Rs', 'Ts', 'Rp', 'Tp', 'Rrs', 'Rrp'];
 
 // 'a and b', 'a, b and c'.
 const listed = keys => `${keys.slice(0, -1).join(', ')} and ${keys[keys.length - 1]}`;
@@ -45,7 +59,9 @@ const listed = keys => `${keys.slice(0, -1).join(', ')} and ${keys[keys.length -
 function checkOptions(options, keys) {
     if (options === null || typeof options !== 'object') throw new TypeError(`options must be { ${keys.join(', ')} }`);
     const unknown = Object.keys(options).find(key => !keys.includes(key));
-    if (unknown !== undefined) throw new TypeError(`unknown option '${unknown}'; the options are ${listed(keys)}`);
+    if (unknown === undefined) return;
+    const known = keys.length === 1 ? `the only option is ${keys[0]}` : `the options are ${listed(keys)}`;
+    throw new TypeError(`unknown option '${unknown}'; ${known}`);
 }
 
 // The options of a call as its kernels take them: the angle, the polarization,
@@ -80,6 +96,49 @@ function readNeedleOptions(options, nLam) {
         angle: readAngle(options.angle, nLam),
         pol: readRtaPol(options.pol),
         extra: { candidates: readCandidates(options.candidates, nLam), fractions: readFractions(options.fractions) },
+    };
+}
+
+// The angle of a monitoring curve, with the growing layer's ñ as [re, im] and
+// the thicknesses to sample in `extra`.
+function readMonitorOptions(options) {
+    checkOptions(options, MONITOR_OPTIONS);
+    return {
+        angle: readAngle(options.angle),
+        extra: { top: pairOf(readIndex(options.top, null, 'top')), thicknesses: readThicknesses(options.thicknesses) },
+    };
+}
+
+// The angle of the spectra after each deposited layer, or of a growing stack.
+function readGrowingOptions(options, nLam) {
+    checkOptions(options, GROWING_OPTIONS);
+    return { angle: readAngle(options.angle, nLam) };
+}
+
+// What a growing stack's sample() writes into when given `out`: the result of
+// an earlier sample of the same stack.
+function checkOut(out, nLam) {
+    const fits = key => out[key] instanceof Float64Array && out[key].length === nLam;
+    if (out !== null && (typeof out !== 'object' || !GROWING.every(fits))) {
+        throw new TypeError(`out must be { ${GROWING.join(', ')} }, each a Float64Array of ${nLam}`);
+    }
+}
+
+// A growing stack's handle, the growing layer given as a medium is and the
+// thickness checked before they reach the kernel's.
+function growingHandle(handle, nLam) {
+    return {
+        setTop(top) {
+            handle.setTop(pairsOver(readIndex(top, nLam, 'top'), nLam));
+        },
+        sample(d, out = null) {
+            const thickness = readThickness(d);
+            checkOut(out, nLam);
+            return handle.sample(thickness, out);
+        },
+        free() {
+            handle.free();
+        },
     };
 }
 
@@ -150,6 +209,10 @@ function needleGrid({ base, gaps, intra }, N) {
  *   rtaSpectrum                (grid), s and p together
  *   jacobianSpectrum, hessianSpectrum, phaseSpectrum, phaseJacobianSpectrum   (grid, pol)
  *   needleScanSpectrum         (grid, pol, { candidates, fractions })
+ *   monitorCurve               (λ, θ, kernels.pointStack(stack), { top, thicknesses }), top as [re, im]
+ *   depositionSpectra          (grid), the layers in the stack's order, for the kernel to reverse
+ *   growingStack               (grid), returning { setTop, sample, free }, setTop given ñ per
+ *                              wavelength as [re, im]
  * kernels.pointStack(stack) and kernels.gridStack(stack, nLam) read the stack
  * of an R/T call the way those kernels take it: stack.js's pointStack and
  * gridStack for the JavaScript ones. The needle scans read theirs the same
@@ -208,5 +271,16 @@ export function stackCalls(kernels) {
             return { r: typedPhaseSide(r), t: typedPhaseSide(t) };
         }),
         phaseJacobianSpectrum: overGrid(readPhaseOptions, gridJetStack, phaseGrid(kernels.phaseJacobianSpectrum)),
+        monitorCurve: (stack, wavelength, options = {}) => {
+            const lambda = readWavelength(wavelength);
+            const { angle, extra } = readMonitorOptions(options);
+            return kernels.monitorCurve(lambda, angle, kernels.pointStack(stack), extra);
+        },
+        depositionSpectra: (stack, wavelengths, options = {}) =>
+            kernels.depositionSpectra(gridOf(stack, wavelengths, options, readGrowingOptions, kernels.gridStack).grid),
+        growingStack: (stack, wavelengths, options = {}) => {
+            const { grid } = gridOf(stack, wavelengths, options, readGrowingOptions, kernels.gridStack);
+            return growingHandle(kernels.growingStack(grid), grid.lambdas.length);
+        },
     };
 }

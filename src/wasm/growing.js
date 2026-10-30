@@ -1,12 +1,13 @@
 /**
  * growing.js : a growing top layer on a WebAssembly instance: the monitoring
  * curve of one layer, the spectra after each deposited layer, and a growing
- * stack over a wavelength grid. The JavaScript ports of the same kernels are
- * in src/js/growing.js.
+ * stack over a wavelength grid, with the forms of 0.4 that run them. The
+ * JavaScript ports of the same kernels are in src/js/growing.js.
  */
 
-import { checkLayerKeys } from '../js/stack.js';
-import { onGrid, named, PAIRS } from './memory.js';
+import { checkLayerKeys, isNumbers } from '../js/stack.js';
+import { warnOnce } from '../js/deprecated.js';
+import { onGrid, named, PAIRS, writePairLayers } from './memory.js';
 
 const GROWING_KEYS = ['Rs', 'Ts', 'Rp', 'Tp', 'Rrs', 'Rrp'];
 
@@ -18,109 +19,53 @@ export const growingMethods = {
     hasGrowingEval() { return true; },
 
     /**
-     * Monitor curve of one growing layer at one wavelength: the completed
-     * stack's matrix is built once, then every sample thickness costs one 2×2
-     * multiply. Returns the forward and substrate-side passes of the coated
-     * surface, both polarizations; the caller does the incoherent slab
-     * combination (or forms A = 1−R−T for a semi-infinite substrate).
-     * @param {[number,number]} n0   incident ñ
-     * @param {[number,number]} ns   substrate ñ
-     * @param {{n:[number,number],d:number}[]} baseLayers  completed stack,
-     *        outermost first
-     * @param {[number,number]} ngNK growing layer ñ
-     * @param {ArrayLike<number>} dArr  sample thicknesses (nm)
-     * @returns {{Rs,Ts,Rp,Tp,Rrs,Rrp}} each a Float64Array(dArr.length)
-     */
-    monitorCurve(lambda_nm, theta_deg, n0, ns, baseLayers, ngNK, dArr) {
-        checkLayerKeys(baseLayers, 'n', 'd');
-        const NB = baseLayers.length;
-        const nD = dArr.length;
-        // arena: base[3NB] | d[nD] | Rs,Ts,Rp,Tp,Rrs,Rrp [6·nD]
-        const oBase = 0, oD = 3 * NB, oOut = oD + nD;
-        const need = oOut + 6 * nD;
-        const ptr = this._scratch(need);
-        const buf = this._view(ptr, need);
-        for (let i = 0; i < NB; i++) {
-            buf[3 * i + 0] = baseLayers[i].n[0];
-            buf[3 * i + 1] = baseLayers[i].n[1];
-            buf[3 * i + 2] = baseLayers[i].d;
-        }
-        for (let k = 0; k < nD; k++) buf[oD + k] = dArr[k];
-        const P = (off) => ptr + off * 8;
-        this._tmm_monitor_curve(lambda_nm, theta_deg,
-            n0[0], n0[1], ns[0], ns[1], P(oBase), NB, ngNK[0], ngNK[1],
-            P(oD), nD,
-            P(oOut), P(oOut + nD), P(oOut + 2 * nD), P(oOut + 3 * nD),
-            P(oOut + 4 * nD), P(oOut + 5 * nD));
-        // Fresh view after the call: memory growth detaches the old buffer.
-        const out = this._view(ptr, need);
-        return {
-            Rs:  out.slice(oOut, oOut + nD),
-            Ts:  out.slice(oOut + nD, oOut + 2 * nD),
-            Rp:  out.slice(oOut + 2 * nD, oOut + 3 * nD),
-            Tp:  out.slice(oOut + 3 * nD, oOut + 4 * nD),
-            Rrs: out.slice(oOut + 4 * nD, oOut + 5 * nD),
-            Rrp: out.slice(oOut + 5 * nD, oOut + 6 * nD),
-        };
-    },
-
-    /**
-     * Per-step spectra of a growing stack: one call returns the forward and
-     * substrate-side passes of the coated surface after every deposited layer,
-     * so all N step spectra cost about what the final one costs alone. Layers
-     * in DEPOSITION order (first deposited first).
-     * @param {number[]} lambdas
-     * @param {[number,number][]} n0List  incident ñ per λ
-     * @param {[number,number][]} nsList  substrate ñ per λ
-     * @param {[number,number][][]} layerNK  [layer][λ] = ñ, deposition order
-     * @param {number[]} thick   thicknesses (nm); 0 repeats the previous step
-     * @param {number}   theta_deg
-     * @returns {{Rs,Ts,Rp,Tp,Rrs,Rrp}} each a Float64Array(N · nLam),
-     *          step-major: value for step k at wavelength i is at [k·nLam + i]
-     */
-    depositionSpectra(lambdas, n0List, nsList, layerNK, thick, theta_deg) {
-        return depositionSpectraWasm(this, { lambdas, n0List, nsList, layerNK, thick, theta_deg: [Number(theta_deg)] });
-    },
-
-    /**
-     * Persistent growing-layer evaluator: the completed stack's products for
-     * the whole wavelength grid are folded once and kept in kernel memory;
-     * each sample() then answers one thickness of the growing layer across
-     * the grid. This is the shape a broadband monitor scan needs (a spectrum
-     * per scan while the layers beneath stay fixed), where monitorCurve is
-     * the single-λ, many-thicknesses shape.
-     *
-     * The completed stack arrives OUTERMOST FIRST, layer-major like
-     * depositionSpectra's layerNK; zero-thickness entries are skipped.
-     *
-     * The returned handle owns kernel memory: call free() when the layer is
-     * done. A dropped handle is reclaimed by a finalizer eventually, but
-     * deterministic free() is what keeps a long run's footprint flat.
-     *
-     * @param {number[]} lambdas
-     * @param {[number,number][]} n0List  incident ñ per λ
-     * @param {[number,number][]} nsList  substrate ñ per λ
-     * @param {[number,number][][]} layerNK  [layer][λ] = ñ, outermost first
-     * @param {number[]} thick   completed thicknesses (nm)
-     * @param {number}   theta_deg
-     * @returns {{setTop, sample, free}} setTop(ngList) declares the growing
-     *          layer's ñ per λ; sample(d, out?) returns {Rs,Ts,Rp,Tp,Rrs,Rrp}
-     *          (each Float64Array(nLam), written into `out` when given, so a
-     *          scan loop can reuse one set of buffers).
+     * Deprecated, removed in 0.6.0: use growingStack(stack, wavelengths,
+     * { angle }). The arguments of depositionSpectra in 0.4, with layerNK and
+     * thick the finished stack, the layer facing the incident medium first.
+     * Returns the handle of growingStackWasm, whose setTop takes the growing
+     * layer's ñ per wavelength as [re, im].
      */
     growingEval(lambdas, n0List, nsList, layerNK, thick, theta_deg) {
-        return growingStackWasm(this, { lambdas, n0List, nsList, layerNK, thick, theta_deg: [Number(theta_deg)] });
+        warnOnce('growingEval', 'growingStack');
+        return growingStackWasm(this, { lambdas, n0List, nsList, layerNK, thick, theta_deg: [Number(theta_deg)] },
+            PAIRS);
     },
 };
 
 /**
+ * The monitoring curve at one wavelength, as monitorCurveKernel: { Rs, Ts, Rp,
+ * Tp, Rrs, Rrp }, one value per sample thickness. The finished layers `base`,
+ * outermost first, are written by `writeLayers` (memory.js) and their keys are
+ * checked by the caller; the media and the growing layer `top` are [re, im].
+ */
+export function monitorCurveWasm(wasm, { lambda_nm, theta_deg, n0, ns, base, top, thicknesses }, writeLayers) {
+    const NB = base.length;
+    const nD = thicknesses.length;
+    // arena: base[3NB] | d[nD] | Rs,Ts,Rp,Tp,Rrs,Rrp [6·nD]
+    const oD = 3 * NB, oOut = oD + nD;
+    const need = oOut + 6 * nD;
+    const ptr = wasm._scratch(need);
+    const buf = wasm._view(ptr, need);
+    writeLayers(buf, base);
+    for (let k = 0; k < nD; k++) buf[oD + k] = thicknesses[k];
+    const P = (off) => ptr + off * 8;
+    const outs = GROWING_KEYS.map((_, q) => oOut + q * nD);
+    wasm._tmm_monitor_curve(lambda_nm, theta_deg, n0[0], n0[1], ns[0], ns[1], P(0), NB, top[0], top[1],
+        P(oD), nD, ...outs.map(P));
+    // Fresh view after the call: memory growth detaches the old buffer.
+    const out = wasm._view(ptr, need);
+    return named(GROWING_KEYS, outs.map(at => out.slice(at, at + nD)));
+}
+
+/**
  * The coated surface after each deposited layer, as depositionSpectraKernel:
  * { Rs, Ts, Rp, Tp, Rrs, Rrp }, each N × nLam, step-major. The layers arrive
- * in deposition order, first deposited first.
+ * in deposition order, first deposited first. `indices` says how the grid
+ * holds its indices (memory.js), PAIRS or STACK.
  */
-export function depositionSpectraWasm(wasm, grid) {
+export function depositionSpectraWasm(wasm, grid, indices) {
     const size = grid.thick.length * grid.lambdas.length;
-    return onGrid(wasm, grid, PAIRS, ({ lead, out, read }) => {
+    return onGrid(wasm, grid, indices, ({ lead, out, read }) => {
         const outs = GROWING_KEYS.map(() => out(size));
         if (!wasm._tmm_deposition_spectra(...lead(), ...outs)) {
             // The outputs were never written; returning them would hand the
@@ -142,20 +87,22 @@ const growingStackFinalizer = typeof FinalizationRegistry !== 'undefined'
 
 /**
  * A growing top layer over the grid, as growingStackKernel: the finished
- * stack, outermost first, is folded once and kept in kernel memory.
- * setTop(ngList) declares the growing layer's ñ per wavelength; sample(d, out?)
- * returns { Rs, Ts, Rp, Tp, Rrs, Rrp }, each Float64Array(nLam), written into
- * `out` when given; free() releases the kernel memory.
+ * stack, outermost first, is folded once and kept in kernel memory. `indices`
+ * says how the grid holds its indices (memory.js), PAIRS or STACK.
+ * setTop(ngList) declares the growing layer's ñ per wavelength as [re, im];
+ * sample(d, out?) returns { Rs, Ts, Rp, Tp, Rrs, Rrp }, each
+ * Float64Array(nLam), written into `out` when given; free() releases the
+ * kernel memory.
  */
-export function growingStackWasm(wasm, grid) {
+export function growingStackWasm(wasm, grid, indices) {
     const nLam = grid.lambdas.length;
-    const handlePtr = onGrid(wasm, grid, PAIRS, ({ lead }) => wasm._tmm_growing_stack_create(...lead()));
-    if (!handlePtr) throw new Error('tmmWasm: growing evaluator allocation failed');
+    const handlePtr = onGrid(wasm, grid, indices, ({ lead }) => wasm._tmm_growing_stack_create(...lead()));
+    if (!handlePtr) throw new Error('tmmWasm: growing-stack state allocation failed');
 
     const handle = {
         ptr: handlePtr,
         setTop(ngList) {
-            if (!this.ptr) throw new Error('tmmWasm: growing evaluator already freed');
+            if (!this.ptr) throw new Error('tmmcore: growing stack already freed');
             const p = wasm._scratch(2 * nLam);
             const buf = wasm._view(p, 2 * nLam);
             for (let i = 0; i < nLam; i++) {
@@ -164,14 +111,14 @@ export function growingStackWasm(wasm, grid) {
             wasm._tmm_growing_stack_set_top(this.ptr, p);
         },
         sample(d, out = null) {
-            if (!this.ptr) throw new Error('tmmWasm: growing evaluator already freed');
+            if (!this.ptr) throw new Error('tmmcore: growing stack already freed');
             const p = wasm._scratch(6 * nLam);
             const P = (block) => p + block * nLam * 8;
             const ok = wasm._tmm_growing_stack_sample(this.ptr, d,
                 P(0), P(1), P(2), P(3), P(4), P(5));
             // The kernel writes nothing without a declared growing layer;
             // copying the arena anyway would hand back stale memory.
-            if (!ok) throw new Error('tmmWasm: growing evaluator sampled before setTop');
+            if (!ok) throw new Error('tmmcore: growing stack sampled before setTop');
             // Fresh view AFTER the call (memory may have grown → detach).
             const buf = wasm._view(p, 6 * nLam);
             const result = out || named(GROWING_KEYS, GROWING_KEYS.map(() => new Float64Array(nLam)));
@@ -187,4 +134,43 @@ export function growingStackWasm(wasm, grid) {
     };
     growingStackFinalizer?.register(handle, { wasm, ptr: handlePtr }, handle);
     return handle;
+}
+
+// monitorCurve with its arguments of 0.4: the media and the growing layer as
+// [re, im], the finished layers as { n: [re, im], d }, outermost first.
+function monitorCurveOld(wasm, [lambda_nm, theta_deg, n0, ns, baseLayers, ngNK, dArr]) {
+    checkLayerKeys(baseLayers, 'n', 'd');
+    return monitorCurveWasm(wasm,
+        { lambda_nm, theta_deg, n0, ns, base: baseLayers, top: ngNK, thicknesses: dArr }, writePairLayers);
+}
+
+// depositionSpectra with its arguments of 0.4: the lists of the grid one by
+// one, each ñ as [re, im], the layers in deposition order, and one angle.
+function depositionSpectraOld(wasm, [lambdas, n0List, nsList, layerNK, thick, theta_deg]) {
+    const grid = { lambdas, n0List, nsList, layerNK, thick, theta_deg: [Number(theta_deg)] };
+    return depositionSpectraWasm(wasm, grid, PAIRS);
+}
+
+/**
+ * monitorCurve and depositionSpectra of an instance, built on its calls of
+ * 0.5, `calls`. Through 0.5.x each also takes its arguments of 0.4, told apart
+ * by the first: a wavelength or a list of them in 0.4, and anything else read
+ * as the stack of 0.5, which refuses what is not one. The 0.4 form prints one
+ * warning on its first use.
+ */
+export function growingCalls(wasm, calls) {
+    return {
+        monitorCurve(stack, wavelength, options = {}) {
+            if (typeof stack !== 'number') return calls.monitorCurve(stack, wavelength, options);
+            warnOnce('monitorCurve(lambda_nm, theta_deg, n0, ns, baseLayers, ngNK, dArr)',
+                'monitorCurve(stack, wavelength, { angle, top, thicknesses })');
+            return monitorCurveOld(wasm, arguments);
+        },
+        depositionSpectra(stack, wavelengths, options = {}) {
+            if (!isNumbers(stack, stack?.length)) return calls.depositionSpectra(stack, wavelengths, options);
+            warnOnce('depositionSpectra(lambdas, n0List, nsList, layerNK, thick, theta_deg)',
+                'depositionSpectra(stack, wavelengths, { angle })');
+            return depositionSpectraOld(wasm, arguments);
+        },
+    };
 }

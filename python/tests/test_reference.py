@@ -16,7 +16,6 @@ JavaScript kernels to against the same WebAssembly, for the same reason.
     python -m unittest discover -s python/tests
 """
 
-import importlib
 import json
 import os
 import unittest
@@ -57,14 +56,14 @@ def decode(value):
 
 
 def run(case):
-    module, _, name = case["call"].rpartition(".")
-    function = getattr(importlib.import_module("tmmcore." + module) if module else tmmcore, name)
+    function = getattr(tmmcore, case["call"])
     args = [decode(arg) for arg in case["args"]]
-    if name == "_GrowingStack":
-        with function(*args) as stack:
+    kwargs = {key: decode(value) for key, value in case["kwargs"].items()}
+    if case["call"] == "growing_stack":
+        with function(*args, **kwargs) as stack:
             stack.set_top(decode(case["top"]))
             return [stack.sample(d) for d in case["samples"]]
-    return function(*args, **{key: decode(value) for key, value in case["kwargs"].items()})
+    return function(*args, **kwargs)
 
 
 class Worst:

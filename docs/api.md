@@ -1,6 +1,6 @@
 # API reference
 
-The R/T, derivative, needle and phase calls take a stack, a wavelength in nm or, in a `Spectrum` call, a list of them, and an options object:
+The R/T, derivative, needle, phase and monitoring calls take a stack, a wavelength in nm or, in a `Spectrum` call, `depositionSpectra` and `growingStack`, a list of them, and an options object:
 
 ```js
 import { rta, rtaSpectrum } from 'tmmcore';
@@ -27,7 +27,7 @@ The [WebAssembly instance](#webassembly) has the same calls, and the [Python pac
 | [`phase`, `phaseSpectrum`](#phase-gd-gdd-and-tod) | phase, GD, GDD and TOD of r and t |
 | [`phaseJacobian`, `phaseJacobianSpectrum`](#phase-gd-gdd-and-tod) | the same, and their thickness derivatives |
 | [`jetConstant` … `jetIsFinite`](#jet-arithmetic) | Taylor-jet arithmetic, which builds the dispersive indices the phase calls take |
-| [`monitorCurve`, `depositionSpectra`, `growingEval`](#monitoring-and-deposition) | spectra during deposition, on the WebAssembly instance |
+| [`monitorCurve`, `depositionSpectra`, `growingStack`](#monitoring-and-deposition) | R and T in s and p while the layers are deposited |
 
 ## Arguments
 
@@ -51,9 +51,11 @@ In the phase calls an index is a number, which is a constant index with no dispe
 |---|---|
 | `angle` | Angle of incidence in degrees from the normal, 0 when left out. A `Spectrum` call also takes a list with one angle per wavelength. |
 | `sine` | Phase calls only, in place of `angle`: the sine of the angle of incidence as a [jet](#indices-as-jets), a list with one jet per wavelength in a `Spectrum` call. For [an angle fixed outside the incident medium](#an-angle-fixed-outside-the-incident-medium). |
-| `pol` | In the R/T, derivative and needle calls `'s'`, `'p'` or `'avg'`, the mean of the two, which is the default. In the phase calls `'s'` or `'p'`; it may be left out at normal incidence, where the two are the same. |
+| `pol` | In the R/T, derivative and needle calls `'s'`, `'p'` or `'avg'`, the mean of the two, which is the default. In the phase calls `'s'` or `'p'`; it may be left out at normal incidence, where the two are the same. The monitoring calls take none and return both. |
 | `candidates` | Needle calls only, and required there: the materials that could be inserted, a list of indices, each a number or `{ n, k }` as a medium is. |
 | `fractions` | Needle calls only: positions inside each layer, as fractions of its thickness from the incident side, where the needle is also tried. None when left out. |
+| `top` | `monitorCurve` only, and required there: the index of the growing layer, a number or `{ n, k }` as a medium is. |
+| `thicknesses` | `monitorCurve` only, and required there: the thicknesses of the growing layer to sample, in nm. |
 
 ### Results over a grid
 
@@ -61,7 +63,7 @@ Each value is a `Float64Array` with one entry per wavelength. `N`, where a resul
 
 ### Errors
 
-A wrong argument throws a `TypeError` that names it, such as `layer 0 needs {n, d}`, `pol must be 's', 'p' or 'avg'` or `unknown option 'polarization'; the options are angle and pol`. The monitoring calls check their layers the same way.
+A wrong argument throws a `TypeError` that names it, such as `layer 0 needs {n, d}`, `pol must be 's', 'p' or 'avg'` or `unknown option 'polarization'; the options are angle and pol`.
 
 ## R, T and A
 
@@ -269,6 +271,41 @@ Jets are arrays of four complex `[re, im]` pairs. These calls are lower level th
 
 `wavelengthOmegaJet` needs no value of $c$: given λ and ω, every derivative follows from $\lambda' = -\lambda/\omega$, in the unit λ was given in.
 
+## Monitoring and deposition
+
+What an optical monitor reads while a coating is deposited. These calls take `angle` and no `pol`, and return s and p together: `{ Rs, Ts, Rp, Tp, Rrs, Rrp }`, the reflectance and transmittance of the coated surface, and its reflectance seen from the substrate side. A caller that treats the substrate as a thick slab combines all three itself; for a semi-infinite substrate, $A = 1 - R - T$.
+
+### `monitorCurve(stack, wavelength, options)`
+
+The signal of one layer growing on a finished stack, at one wavelength, for each thickness of it in `thicknesses`. `stack` is what is already deposited, and `top` the index of the growing layer.
+
+```js
+import { monitorCurve } from 'tmmcore';
+
+const finished = { incident: 1, substrate: 1.52, layers: [{ n: 1.46, d: 94.2 }] };
+const { Rs } = monitorCurve(finished, 550, { top: 2.35, thicknesses: [0, 20, 40, 58.5] });
+```
+
+The finished stack's matrix is built once, and each thickness then costs one 2×2 product, so a whole monitoring curve is one call: the incremental control algorithm of Tikhonravov and Trubetskov, *Appl. Opt.* **44**, 6877 (2005).
+
+**Returns** `{ Rs, Ts, Rp, Tp, Rrs, Rrp }`, each a `Float64Array` with one value per thickness.
+
+### `depositionSpectra(stack, wavelengths, options?)`
+
+The spectrum after each layer of a deposition run, in one call. The layers are deposited from the substrate outward, the last one listed first. Each is added to the running product and the grid evaluated after it, so all N spectra together cost about what the last one costs alone. `n`, `k` and `angle` may be one per wavelength, as in a `Spectrum` call.
+
+**Returns** `{ Rs, Ts, Rp, Tp, Rrs, Rrp }`, each a `Float64Array` of N × nLam values: after `k + 1` layers, the last `k + 1` of `stack.layers`, wavelength `i` at `[k * nLam + i]`. A layer of zero thickness repeats the spectrum before it.
+
+### `growingStack(stack, wavelengths, options?)`
+
+A layer growing on a finished stack over a whole wavelength grid, one thickness per call: what a broadband monitor reads at each scan. The finished stack is multiplied out once for every wavelength and polarization and kept, so each sample costs one layer matrix and one 2×2 product per wavelength and polarization. `n`, `k` and `angle` may be one per wavelength, as in a `Spectrum` call. **Returns a handle**:
+
+| | |
+|---|---|
+| `setTop(top)` | sets the growing layer's index, given as a medium is, `n` and `k` each a number or one per wavelength. Call it before the first `sample` with `d > 0`, and again to change the material |
+| `sample(d, out?)` | `{ Rs, Ts, Rp, Tp, Rrs, Rrp }` over the grid for the growing layer at thickness `d` nm; `d <= 0` gives the finished stack. Pass the previous result as `out` to reuse its arrays. Throws if called with `d > 0` before `setTop` |
+| `free()` | releases what the handle holds. On the WebAssembly instance that is kernel memory: a dropped handle is reclaimed by a finalizer in time, but calling `free()` keeps a long run's memory flat. `setTop` and `sample` throw after it |
+
 ## WebAssembly
 
 The C kernel compiled to WebAssembly, with the same calls. [Getting started](getting-started.md#turning-on-webassembly) shows how to load it in Node and in a browser.
@@ -288,12 +325,11 @@ An instance is not shared between threads, since there is no shared memory. Each
 
 | Method | |
 |---|---|
-| `rta`, `rtaSpectrum`, `jacobian`, `jacobianSpectrum`, `hessian`, `hessianSpectrum`, `needleScan`, `needleScanSpectrum`, `phase`, `phaseSpectrum`, `phaseJacobian`, `phaseJacobianSpectrum` | the calls above, with the same arguments and results |
+| `rta`, `rtaSpectrum`, `jacobian`, `jacobianSpectrum`, `hessian`, `hessianSpectrum`, `needleScan`, `needleScanSpectrum`, `phase`, `phaseSpectrum`, `phaseJacobian`, `phaseJacobianSpectrum`, `monitorCurve`, `depositionSpectra`, `growingStack` | the calls above, with the same arguments and results |
 | `jetConstant` … `jetIsFinite`, `wavelengthOmegaJet`, `omegaFromLambdaNm` | the jet arithmetic |
-| `monitorCurve`, `depositionSpectra`, `growingEval` | [below](#monitoring-and-deposition) |
 | `hasHessian()`, `hasPhase()`, `hasPhaseJacobianSpectrum()`, `hasGrowingKernels()`, `hasGrowingEval()` | always `true`: a module missing a kernel is refused when it loads |
 
-If the WebAssembly heap is exhausted, a call that cannot allocate memory for its arguments and results throws `Error('tmmWasm: malloc failed')`; the one-wavelength calls reuse theirs from call to call and need more only for a larger stack. A kernel that cannot allocate its own working state writes `NaN` to every output instead: numbers and arrays come back `NaN`, and `phase` and `phaseJacobian` return `null` for both coefficients. `depositionSpectra` and `growingEval` throw.
+If the WebAssembly heap is exhausted, a call that cannot allocate memory for its arguments and results throws `Error('tmmWasm: malloc failed')`; the one-wavelength calls reuse theirs from call to call and need more only for a larger stack. A kernel that cannot allocate its own working state writes `NaN` to every output instead: numbers and arrays come back `NaN`, and `phase` and `phaseJacobian` return `null` for both coefficients. `depositionSpectra` and `growingStack` throw.
 
 ### Loading
 
@@ -315,48 +351,6 @@ For workers that cannot fetch the file themselves, the main thread hands them it
 | `getTmmWasmBytesForWorker()` | main thread: the bytes to send a worker, or `null` while the flag is off |
 | `noteTmmWasmBytes(bytes)` | worker: starts instantiating from the bytes it was sent and turns its flag on; does nothing once an instance is loaded |
 | `awaitTmmWasmReady()` | worker: resolves when that instantiation ends, `true` if an instance is loaded |
-
-### Monitoring and deposition
-
-Methods of the instance, with their arguments one by one, each index as `[re, im]`, and results in both polarizations.
-
-#### `monitorCurve(lambda_nm, theta_deg, n0, ns, baseLayers, ngNK, dArr)`
-
-The signal of one layer growing on a completed stack, at one wavelength. The completed stack's matrix is built once, and each sample thickness then costs one 2×2 product, so a whole monitoring curve is one call: the incremental control algorithm of Tikhonravov and Trubetskov, *Appl. Opt.* **44**, 6877 (2005).
-
-| Argument | |
-|---|---|
-| `n0`, `ns` | `[re, im]` |
-| `baseLayers` | `{ n: [re, im], d }[]`, the completed stack, the layer facing the incident medium first |
-| `ngNK` | `[re, im]`, the growing layer |
-| `dArr` | `number[]`, thicknesses of the growing layer in nm |
-
-**Returns** `{ Rs, Ts, Rp, Tp, Rrs, Rrp }`, each a `Float64Array` over `dArr`: the reflectance and transmittance of the coated surface, and its reflectance seen from the substrate side. A caller that treats the substrate as a thick slab combines all three itself; for a semi-infinite substrate, $A = 1 - R - T$.
-
-#### `depositionSpectra(lambdas, n0List, nsList, layerNK, thick, theta_deg)`
-
-The spectrum after every layer of a deposition run, in one call. Each layer is added to the running product and the grid evaluated after it, so all N spectra together cost about what the last one costs alone.
-
-| Argument | |
-|---|---|
-| `lambdas` | `number[]` |
-| `n0List`, `nsList` | `[re, im][]`, one per wavelength |
-| `layerNK` | `[re, im][][]`, indexed `[layer][wavelength]`, the first layer deposited first |
-| `thick` | `number[]` of length N, in the same order; a zero thickness repeats the previous spectrum |
-
-**Returns** `{ Rs, Ts, Rp, Tp, Rrs, Rrp }`, each a `Float64Array` of N × nLam values, layer `k` and wavelength `i` at `[k * nLam + i]`.
-
-#### `growingEval(lambdas, n0List, nsList, layerNK, thick, theta_deg)`
-
-A layer growing on a completed stack over a whole wavelength grid, one thickness per call: what a broadband monitor reads at each scan. The completed stack is multiplied out once for every wavelength and polarization and kept in kernel memory, so each sample costs one layer matrix and one 2×2 product per wavelength and polarization.
-
-The arguments are those of `depositionSpectra`, with `layerNK` and `thick` the completed stack, the layer facing the incident medium first; layers of zero thickness are skipped. **Returns a handle** that owns kernel memory:
-
-| | |
-|---|---|
-| `setTop(ngList)` | sets the growing layer's `[re, im]` at each wavelength. Call it before the first `sample` with `d > 0`, and again to change the material |
-| `sample(d, out?)` | `{ Rs, Ts, Rp, Tp, Rrs, Rrp }` over the grid for the growing layer at thickness `d` nm; `d <= 0` gives the completed stack. Pass the previous result as `out` to reuse its arrays. Throws if called with `d > 0` before `setTop` |
-| `free()` | releases the kernel memory. A dropped handle is reclaimed by a finalizer in time, but calling `free()` keeps a long run's memory flat. `setTop` and `sample` throw after it |
 
 ## Edge cases
 
@@ -389,9 +383,13 @@ The derivatives include the factor, so $T$ falls with an opaque layer's thicknes
 | | `tmmPhaseSpectrum` | `phaseSpectrum` |
 | `tmmPhaseThicknessJacobian` | `tmmPhaseJacobian` | `phaseJacobian` |
 | | `tmmPhaseJacobianSpectrum` | `phaseJacobianSpectrum` |
+| | `monitorCurve`, `depositionSpectra`, with the arguments of 0.4 | `monitorCurve`, `depositionSpectra` |
+| | `growingEval` | `growingStack` |
 | `tmmCoefficientJets`, `tmmCoefficientThicknessJets`, `coefficientPhaseDispersion`, `coefficientPhaseThicknessDerivatives` | | none |
 
 The one-wavelength names take `(lambda_nm, theta_deg, pol, n0, ns, layers)`, each index as `[re, im]` and the layers as `{ n, d }[]`, or in the phase names `{ nJet, d }[]` with the media as jets; the instance takes `pol` as `0` or `1`. `tmmNeedleScan` takes after them the candidates, each as `[re, im]`, and the fractions. The [0.4.2 API reference](https://github.com/aai2k/tmmcore/blob/0a432b7/docs/api.md) has them in full.
+
+The instance's `monitorCurve` and `depositionSpectra` tell the two forms apart by the first argument: a stack in 0.5, a wavelength or a list of them in 0.4. `depositionSpectra` and `growingEval` in 0.4 take the wavelengths, the media and the layers as lists of `[re, im]`; `depositionSpectra` takes the layers in the order they are deposited, the first deposited first, where the 0.5 call takes the stack's order.
 
 The 0.4 phase names take the incident sine as the option `sinTheta0Jet`, and over a grid `sinJets`, where the 0.5 calls take `sine`. The 0.5 calls take no `omega`, which sets the time unit; the 0.4 phase names still do.
 

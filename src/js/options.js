@@ -12,13 +12,14 @@ export function readWavelength(wavelength) {
     return wavelength;
 }
 
-/** The wavelengths of a grid call, in nm. */
-export function readWavelengths(wavelengths) {
-    if (!isList(wavelengths) || !isNumbers(wavelengths, wavelengths.length)) {
-        throw new TypeError('wavelengths must be a list of numbers (nm)');
-    }
-    return wavelengths;
+// A list of numbers as it was given, or a TypeError with `message`.
+function numberList(value, message) {
+    if (!isList(value) || !isNumbers(value, value.length)) throw new TypeError(message);
+    return value;
 }
+
+/** The wavelengths of a grid call, in nm. */
+export const readWavelengths = wavelengths => numberList(wavelengths, 'wavelengths must be a list of numbers (nm)');
 
 /**
  * The angle of incidence in degrees, 0 when left out: a number, or in a grid
@@ -73,9 +74,13 @@ export function atNormalIncidence(angle, sine, nLam = null) {
  * Where a needle scan also opens each layer, as fractions of its thickness from
  * the incident side: none when left out.
  */
-export function readFractions(fractions = []) {
-    if (!isList(fractions) || !isNumbers(fractions, fractions.length)) {
-        throw new TypeError('fractions must be a list of numbers');
-    }
-    return fractions;
+export const readFractions = (fractions = []) => numberList(fractions, 'fractions must be a list of numbers');
+
+/** The thicknesses of the growing layer a monitoring curve samples, in nm. */
+export const readThicknesses = thicknesses => numberList(thicknesses, 'thicknesses must be a list of numbers (nm)');
+
+/** The thickness of the growing layer a growing stack samples, in nm. */
+export function readThickness(d) {
+    if (typeof d !== 'number') throw new TypeError('d must be a number (nm)');
+    return d;
 }

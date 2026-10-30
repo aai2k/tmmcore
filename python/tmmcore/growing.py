@@ -7,45 +7,56 @@ Each returns, per polarization, the forward R and T of the coated surface and
 its reflectance from the substrate side, for a monitoring simulation that
 treats the witness as an incoherent slab with a bare back face:
 {"Rs", "Ts", "Rp", "Tp", "Rrs", "Rrp"}.
-
-The calls here take the kernel's own arrays. At one wavelength, point is
-(λ in nm, θ in degrees, ñ0, ñs, layers as N rows [n, k, d]). Over a grid,
-grid is (λs in nm, θs in degrees, then the media, the layer table and the
-thicknesses as _stack.grid_stack gives them).
 """
 
 import numpy as np
 
+from . import _options, _stack
 from ._library import lib
 from ._stack import address
 
 _KEYS = ["Rs", "Ts", "Rp", "Tp", "Rrs", "Rrp"]
 
 
-def _monitor_curve_kernel(point, top, thicknesses):
+def monitor_curve(stack, wavelength, *, top, thicknesses, angle=0.0):
     """
-    The signal of a layer of index `top` as it grows to each of `thicknesses`
-    (nm) on the finished layers, ordered from the incident medium. Each output
-    has one value per thickness; 0 gives the finished layers alone.
+    The signal of a layer as it grows on the stack, at one wavelength.
+
+    stack        the finished layers, {"incident", "substrate", "layers"}
+    wavelength   in nm
+    top          the growing layer's index, given as a medium is: a number or {"n", "k"}
+    thicknesses  of the growing layer to sample, in nm; 0 gives the stack alone
+    angle        angle of incidence in degrees from the normal
+
+    Returns {"Rs", "Ts", "Rp", "Tp", "Rrs", "Rrp"}, each an array with one
+    value per thickness.
     """
-    lambda_nm, theta_deg, n0, ns, layers = point
-    layers = np.ascontiguousarray(layers, dtype=np.float64)
-    thicknesses = np.ascontiguousarray(thicknesses, dtype=np.float64)
+    lam = _options.read_wavelength(wavelength)
+    theta = _options.read_angle(angle)
+    top = _stack.read_index(top, "top")
+    thicknesses = _options.read_thicknesses(thicknesses)
+    n0, ns, layers = _stack.point_stack(stack)
     outs = [np.empty(len(thicknesses)) for _ in _KEYS]
-    lib.tmm_monitor_curve(float(lambda_nm), float(theta_deg), n0.real, n0.imag, ns.real, ns.imag,
-                          address(layers), len(layers), top.real, top.imag,
-                          address(thicknesses), len(thicknesses), *map(address, outs))
+    lib.tmm_monitor_curve(lam, theta, n0.real, n0.imag, ns.real, ns.imag, address(layers), len(layers),
+                          top.real, top.imag, address(thicknesses), len(thicknesses), *map(address, outs))
     return dict(zip(_KEYS, outs))
 
 
-def _deposition_spectra_kernel(grid):
+def deposition_spectra(stack, wavelengths, *, angle=0.0):
     """
-    The spectrum after each layer is deposited, the layers in deposition
-    order, first deposited (next to the substrate) first. Each output is
-    (N, nLam), one spectrum per step.
+    The spectrum after each layer of the stack is deposited, from the
+    substrate outward: the last layer listed first, the first layer last.
+
+    Takes the arguments of rta_spectrum but pol. Returns {"Rs", "Ts", "Rp",
+    "Tp", "Rrs", "Rrp"}, each (N, nLam): row k with k + 1 layers deposited,
+    the last row the whole stack.
     """
-    lambdas, angles, n0, ns, table, thick = grid
-    n_lam, N = len(lambdas), len(thick)
+    lambdas = _options.read_wavelengths(wavelengths)
+    n_lam = len(lambdas)
+    angles = _options.read_angle(angle, n_lam)
+    n0, ns, table, thick = _stack.grid_stack(stack, n_lam)
+    table, thick = np.ascontiguousarray(table[::-1]), np.ascontiguousarray(thick[::-1])
+    N = len(thick)
     outs = [np.empty((N, n_lam)) for _ in _KEYS]
     done = lib.tmm_deposition_spectra(address(lambdas), n_lam, address(angles), len(angles), address(n0),
                                       address(ns), address(table), address(thick), N, *map(address, outs))
@@ -54,16 +65,31 @@ def _deposition_spectra_kernel(grid):
     return dict(zip(_KEYS, outs))
 
 
-class _GrowingStack:
+def growing_stack(stack, wavelengths, *, angle=0.0):
     """
-    A finished stack, folded once over a wavelength grid, under a growing top
-    layer: set_top() gives the top layer's index, sample(d) the outputs at
-    thickness d (nm) over the whole grid. Frees its kernel memory on close(),
-    or at the end of a with block.
+    A layer growing on the stack, over a wavelength grid. The stack is
+    multiplied out once, so each sample of the growing layer costs one layer
+    matrix per wavelength and polarization.
+
+    Takes the arguments of rta_spectrum but pol, the stack the finished
+    layers. Returns a GrowingStack.
+    """
+    return GrowingStack(stack, wavelengths, angle=angle)
+
+
+class GrowingStack:
+    """
+    A finished stack, multiplied out once over a wavelength grid, under a
+    growing top layer: set_top() gives the growing layer's index, sample(d)
+    the outputs with it at thickness d (nm) over the whole grid. Frees its
+    kernel memory on close(), or at the end of a with block. Takes the
+    arguments of growing_stack.
     """
 
-    def __init__(self, grid):
-        lambdas, angles, n0, ns, table, thick = grid
+    def __init__(self, stack, wavelengths, *, angle=0.0):
+        lambdas = _options.read_wavelengths(wavelengths)
+        angles = _options.read_angle(angle, len(lambdas))
+        n0, ns, table, thick = _stack.grid_stack(stack, len(lambdas))
         self._n_lam = len(lambdas)
         self._handle = lib.tmm_growing_stack_create(address(lambdas), self._n_lam, address(angles), len(angles),
                                                     address(n0), address(ns), address(table), address(thick),
@@ -77,14 +103,15 @@ class _GrowingStack:
         return self._handle
 
     def set_top(self, top):
-        """The growing layer's index, one complex value per wavelength."""
-        top = np.ascontiguousarray(np.broadcast_to(top, (self._n_lam,)), dtype=np.complex128)
+        """The growing layer's index, given as a medium is: a number or {"n", "k"}, each value or one per wavelength."""
+        top = _stack.read_index(top, "top", self._n_lam)
         lib.tmm_growing_stack_set_top(self._live(), address(top))
 
     def sample(self, d):
-        """The outputs with the top layer at thickness d (nm), each over the grid."""
+        """The outputs with the top layer at thickness d (nm), each over the grid; d <= 0 gives the stack alone."""
+        d = _options.read_thickness(d)
         outs = [np.empty(self._n_lam) for _ in _KEYS]
-        if not lib.tmm_growing_stack_sample(self._live(), float(d), *map(address, outs)):
+        if not lib.tmm_growing_stack_sample(self._live(), d, *map(address, outs)):
             raise ValueError("tmmcore: set_top() must give the growing layer before a sample with d > 0")
         return dict(zip(_KEYS, outs))
 

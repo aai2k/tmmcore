@@ -1,15 +1,20 @@
 /**
  * The calls of 0.5 on the package index and on a WebAssembly instance: rta,
  * rtaSpectrum, jacobian, jacobianSpectrum, hessian, hessianSpectrum,
- * needleScan, needleScanSpectrum, phase, phaseSpectrum, phaseJacobian and
- * phaseJacobianSpectrum.
+ * needleScan, needleScanSpectrum, phase, phaseSpectrum, phaseJacobian,
+ * phaseJacobianSpectrum, monitorCurve, depositionSpectra and growingStack.
  *
  *   • module and instance agree on every call, at one wavelength and over a
  *     grid, with one angle and one per wavelength, in s, p and avg, to the
  *     tolerances of equivalence.mjs, and return the same shapes with their
  *     keys in the same order
  *   • within each, a grid call gives at every wavelength exactly what the
- *     one-wavelength call gives there
+ *     one-wavelength call gives there, and a growing stack what monitorCurve
+ *     gives there
+ *   • depositionSpectra deposits the layers from the substrate outward: each
+ *     step is the spectrum of the stack's last layers, as many as deposited
+ *   • a growing stack writes into the result it is given, and refuses a
+ *     sample after free() with the same message on both
  *   • the short forms of a stack read as the long ones, and lists of numbers
  *     and the terms of a jet may be typed arrays
  *   • the phase calls may leave pol out at normal incidence, where s and p
@@ -18,9 +23,10 @@
  *     incident medium gives the GD and GDD of differences of the phase in ω
  *   • a misspelled option, a malformed stack, a wavelength list holding
  *     anything but numbers, missing or malformed needle candidates, malformed
- *     fractions, and an index per wavelength with no derivatives in a phase
- *     call are refused; two index values read as two wavelengths in a grid
- *     call and are refused at one wavelength
+ *     fractions, a missing or malformed growing layer or list of thicknesses,
+ *     and an index per wavelength with no derivatives in a phase call are
+ *     refused; two index values read as two wavelengths in a grid call and are
+ *     refused at one wavelength
  *
  * The names of 0.4 are in old_names.mjs. Skips cleanly if tmm_kernel.wasm has
  * not been built.
@@ -48,7 +54,7 @@ const BACKENDS = [['module', tmmcore], ['instance', wasm]];
 
 let compared = 0, differing = 0;
 const worst = { rta: 0, rel: 0 };
-const RTA_KEYS = new Set(['R', 'T', 'A', 'Rs', 'Ts', 'As', 'Rp', 'Tp', 'Ap']);
+const RTA_KEYS = new Set(['R', 'T', 'A', 'Rs', 'Ts', 'As', 'Rp', 'Tp', 'Ap', 'Rrs', 'Rrp']);
 
 function closeNumber(js, wa, what, key) {
     compared++;
@@ -308,10 +314,74 @@ for (const [name, b] of BACKENDS) {
     }
 }
 
-assert.deepEqual(warnings, [], 'the calls of 0.5 print nothing');
+// ── Monitoring calls ─────────────────────────────────────────────────────────
+// The first layer of the design grows on the other three: a monitoring curve
+// at each wavelength, and a growing stack over the grid.
+const GROWN = [0, 12.5, 41];
+const finished = stack => ({ ...stack, layers: stack.layers.slice(1) });
+const topOf = ({ layers: [{ n, k }] }) => ({ n, k });
+
+for (const angle of [0, 45, ANGLES]) {
+    const tag = `θ ${typeof angle === 'number' ? angle : 'per λ'}`;
+    const steps = BACKENDS.map(([, b]) => b.depositionSpectra(GRID_STACK, LAMBDAS, { angle }));
+    close(steps[0], steps[1], `depositionSpectra ${tag}`);
+    const grown = BACKENDS.map(([, b]) => {
+        const growing = b.growingStack(finished(GRID_STACK), LAMBDAS, { angle });
+        growing.setTop(topOf(GRID_STACK));
+        const samples = GROWN.map(d => growing.sample(d));
+        growing.free();
+        return samples;
+    });
+    close(grown[0], grown[1], `growingStack ${tag}`);
+    LAMBDAS.forEach((lambda, i) => {
+        const options = { angle: angleAt(angle, i), top: topOf(pointStack(i)), thicknesses: GROWN };
+        const curves = BACKENDS.map(([, b]) => b.monitorCurve(finished(pointStack(i)), lambda, options));
+        close(curves[0], curves[1], `monitorCurve λ ${lambda} ${tag}`);
+        BACKENDS.forEach(([name], b) => GROWN.forEach((d, s) => {
+            const sampled = Object.fromEntries(Object.entries(grown[b][s]).map(([key, values]) => [key, values[i]]));
+            const curve = Object.fromEntries(Object.entries(curves[b]).map(([key, values]) => [key, values[s]]));
+            sameBits(curve, sampled, `${name} monitorCurve λ ${lambda} d ${d} against growingStack ${tag}`);
+        }));
+    });
+}
+
+// Step k of the deposition, k + 1 layers deposited, is the spectrum of the
+// stack's last k + 1 layers.
+const lastLayers = count => ({ ...GRID_STACK, layers: GRID_STACK.layers.slice(N - count) });
+for (const [name, b] of BACKENDS) {
+    const steps = b.depositionSpectra(GRID_STACK, LAMBDAS, { angle: ANGLES });
+    const spectra = Array.from({ length: N }, (_, k) => b.rtaSpectrum(lastLayers(k + 1), LAMBDAS, { angle: ANGLES }));
+    for (const key of ['Rs', 'Ts', 'Rp', 'Tp']) {
+        const expected = spectra.flatMap(spectrum => [...spectrum[key]]);
+        steps[key].forEach((step, at) => assert.ok(Math.abs(step - expected[at]) <= ABS_RTA,
+            `${name} depositionSpectra ${key} step ${Math.floor(at / LAMBDAS.length)}: ${step} against ${expected[at]}`));
+    }
+}
+
+// A growing stack's handle, on both with the same messages.
+const ONE = { incident: 1, substrate: 1.52, layers: [{ n: 2.35, d: 58.5 }] };
+for (const [name, b] of BACKENDS) {
+    const growing = b.growingStack(ONE, [500, 550]);
+    assert.throws(() => growing.sample(10), /^Error: tmmcore: growing stack sampled before setTop$/,
+        `${name} sample before setTop`);
+    assert.throws(() => growing.setTop({ n: [1.38, 1.37, 1.36] }),
+        /top n must be a number or 2 numbers, one per wavelength/, `${name} setTop`);
+    assert.throws(() => growing.sample('10'), /d must be a number \(nm\)/, `${name} sample of text`);
+    growing.setTop(1.38);
+    const out = growing.sample(10);
+    assert.equal(growing.sample(20, out), out, `${name} writes into out`);
+    sameBits(out, growing.sample(20), `${name} written into out`);
+    for (const bad of [{ Rs: new Float64Array(2) }, { ...out, Rrp: new Float64Array(3) }, { ...out, Ts: [0, 0] }]) {
+        assert.throws(() => growing.sample(10, bad), /out must be \{ Rs, Ts, Rp, Tp, Rrs, Rrp \}, each a Float64Array of 2/,
+            `${name} sample into a wrong out`);
+    }
+    growing.free();
+    assert.throws(() => growing.sample(10), /^Error: tmmcore: growing stack already freed$/, `${name} sample after free`);
+    assert.throws(() => growing.setTop(1.38), /^Error: tmmcore: growing stack already freed$/, `${name} setTop after free`);
+    growing.free();
+}
 
 // ── Refused ──────────────────────────────────────────────────────────────────
-const ONE = { incident: 1, substrate: 1.52, layers: [{ n: 2.35, d: 58.5 }] };
 const withLayer = layer => ({ ...ONE, layers: [layer] });
 const REFUSED = [
     [b => b.rta(ONE, 550, { angel: 30 }), /unknown option 'angel'; the options are angle and pol/],
@@ -341,6 +411,20 @@ const REFUSED = [
     [b => b.needleScan(ONE, 550, { candidates: [1.38], pol: 'x' }), /pol must be 's', 'p' or 'avg'/],
     [b => b.needleScan(ONE, 550, { candidates: [1.38], sine: J.jetConstant(0) }),
         /unknown option 'sine'; the options are angle, pol, candidates and fractions/],
+    [b => b.monitorCurve(ONE, 550), /top must be a number or \{ n, k \}/],
+    [b => b.monitorCurve(ONE, 550, { top: [1.38, 0], thicknesses: [0] }), /top must be a number or \{ n, k \}/],
+    [b => b.monitorCurve(ONE, 550, { top: { n: [1.38, 1.37] }, thicknesses: [0] }),
+        /top n must be a number at one wavelength/],
+    [b => b.monitorCurve(ONE, 550, { top: 1.38 }), /thicknesses must be a list of numbers \(nm\)/],
+    [b => b.monitorCurve(ONE, 550, { top: 1.38, thicknesses: 50 }), /thicknesses must be a list of numbers \(nm\)/],
+    [b => b.monitorCurve(ONE, [550], { top: 1.38, thicknesses: [0] }), /wavelength must be a number \(nm\)/],
+    [b => b.monitorCurve(ONE, 550, { top: 1.38, thicknesses: [0], pol: 's' }),
+        /unknown option 'pol'; the options are angle, top and thicknesses/],
+    [b => b.depositionSpectra(ONE, [500, 550], { pol: 's' }), /unknown option 'pol'; the only option is angle/],
+    [b => b.depositionSpectra(ONE, [500, 550], { angle: [0, 10, 20] }), /angle must be a number or 2 numbers/],
+    [b => b.depositionSpectra(ONE.layers, [500, 550]), /stack must be \{ incident, substrate, layers/],
+    [b => b.growingStack(ONE, [500, 550], { pol: 's' }), /unknown option 'pol'; the only option is angle/],
+    [b => b.growingStack(withLayer({ n: 2.35, d: '58.5' }), [500, 550]), /layer 0 d must be a number \(nm\)/],
     [b => b.rta(ONE, [550]), /wavelength must be a number \(nm\)/],
     [b => b.rtaSpectrum(ONE, 550), /wavelengths must be a list of numbers \(nm\)/],
     [b => b.rtaSpectrum(ONE, [{}, 550]), /wavelengths must be a list of numbers \(nm\)/],
@@ -378,6 +462,7 @@ const REFUSED = [
 for (const [name, b] of BACKENDS) {
     REFUSED.forEach(([run, message], i) => assert.throws(() => run(b), message, `${name} refusal ${i}`));
 }
+assert.deepEqual(warnings, [], 'the calls of 0.5 print nothing, refused or not');
 
 console.log(`${counts.values} values the same bit for bit. Module against instance: ${differing} of ${compared} `
     + `differ in the last bits; worst R/T/A ${worst.rta.toExponential(2)}, worst relative ${worst.rel.toExponential(2)}`);
