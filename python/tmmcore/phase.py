@@ -37,39 +37,40 @@ def _side(values):
     return {"phase_rad": side["phase_rad"], "phase_deg": side["phase_rad"] * 180 / math.pi, **side}
 
 
-def phase(stack, wavelength, *, pol, angle=0.0):
+def phase(stack, wavelength, *, pol=None, angle=None, sine=None):
     """
     Phase, GD, GDD and TOD of r and t at one wavelength.
 
-    Takes the arguments of rta, with pol "s" or "p", and each index as a
-    number or a jet (jet.py). Returns {"r", "t"}, each {"phase_rad",
-    "phase_deg", "gd", "gdd", "tod", "magnitude_squared"}, or None where the
-    coefficient is exactly zero.
+    Takes the arguments of rta, with pol "s" or "p", which may be left out at
+    normal incidence, and each index as a number or a jet (jet.py). In place
+    of angle it takes sine, the sine of the angle of incidence as a jet, for
+    an angle held fixed outside a dispersive incident medium. Returns
+    {"r", "t"}, each {"phase_rad", "phase_deg", "gd", "gdd", "tod",
+    "magnitude_squared"}, or None where the coefficient is exactly zero.
     """
     lam = _stack.read_wavelength(wavelength)
-    theta = _stack.read_angle(angle)
-    code = _stack.POL_CODE[_stack.read_phase_pol(pol)]
+    theta, sine, code = _stack.read_phase_options(angle, sine, pol)
     n0, ns, layers, thick = _stack.point_jet_stack(stack)
     out = np.empty(10)
     lib.tmm_phase(lam, theta, code, address(n0), address(ns), address(layers), address(thick), len(thick),
-                  omega_from_lambda_nm(lam), None, address(out))
+                  omega_from_lambda_nm(lam), _stack.optional_address(sine), address(out))
     return {"r": _side(out[:5]), "t": _side(out[5:])}
 
 
-def phase_jacobian(stack, wavelength, *, pol, angle=0.0):
+def phase_jacobian(stack, wavelength, *, pol=None, angle=None, sine=None):
     """
     The phase quantities of phase() at one wavelength with their thickness
     derivatives: "d_phase_deg", "d_gd", "d_gdd", "d_tod" and
     "d_log_magnitude_squared", each an array of N, one per layer.
     """
     lam = _stack.read_wavelength(wavelength)
-    theta = _stack.read_angle(angle)
-    code = _stack.POL_CODE[_stack.read_phase_pol(pol)]
+    theta, sine, code = _stack.read_phase_options(angle, sine, pol)
     n0, ns, layers, thick = _stack.point_jet_stack(stack)
     out = np.empty((2, 5))
     deriv = np.empty((2, 5, len(thick)))
     lib.tmm_phase_jacobian(lam, theta, code, address(n0), address(ns), address(layers), address(thick),
-                           len(thick), omega_from_lambda_nm(lam), None, address(out), address(deriv))
+                           len(thick), omega_from_lambda_nm(lam), _stack.optional_address(sine), address(out),
+                           address(deriv))
 
     def side(index):
         base = _side(out[index])
@@ -80,19 +81,19 @@ def phase_jacobian(stack, wavelength, *, pol, angle=0.0):
     return {"r": side(0), "t": side(1)}
 
 
-def _phase_grid(stack, wavelengths, angle, pol, with_derivatives):
+def _phase_grid(stack, wavelengths, options, with_derivatives):
     kernel = lib.tmm_phase_jacobian_spectrum if with_derivatives else lib.tmm_phase_spectrum
     lambdas = _stack.read_wavelengths(wavelengths)
     n_lam = len(lambdas)
-    angles = _stack.read_angle(angle, n_lam)
-    code = _stack.POL_CODE[_stack.read_phase_pol(pol)]
+    angles, sines, code = _stack.read_phase_options(*options, n_lam)
     n0, ns, table, thick = _stack.grid_jet_stack(stack, n_lam)
     omegas = omega_from_lambda_nm(lambdas)
     # Per wavelength the kernel writes the five quantities of r, then of t,
     # and the derivatives as [side][quantity][layer].
     outs = [np.empty((n_lam, 2, 5))] + ([np.empty((n_lam, 2, 5, len(thick)))] if with_derivatives else [])
     kernel(address(lambdas), n_lam, address(angles), len(angles), code, address(n0), address(ns),
-           address(table), address(thick), len(thick), address(omegas), None, *map(address, outs))
+           address(table), address(thick), len(thick), address(omegas), _stack.optional_address(sines),
+           *map(address, outs))
     values = outs[0]
 
     def side(index):
@@ -104,20 +105,20 @@ def _phase_grid(stack, wavelengths, angle, pol, with_derivatives):
     return {"r": side(0), "t": side(1)}
 
 
-def phase_spectrum(stack, wavelengths, *, pol, angle=0.0):
+def phase_spectrum(stack, wavelengths, *, pol=None, angle=None, sine=None):
     """
     Phase, GD, GDD and TOD over a wavelength grid. Takes the arguments of
-    rta_spectrum, with pol "s" or "p" and each index as a number or one jet
-    per wavelength. Returns {"r", "t"}, each {"phase_rad", "gd", "gdd", "tod",
-    "magnitude_squared"} as arrays over the grid, NaN where the coefficient is
-    exactly zero.
+    rta_spectrum, with pol as in phase(), each index as a number or one jet
+    per wavelength, and sine, if given, as one jet per wavelength. Returns
+    {"r", "t"}, each {"phase_rad", "gd", "gdd", "tod", "magnitude_squared"} as
+    arrays over the grid, NaN where the coefficient is exactly zero.
     """
-    return _phase_grid(stack, wavelengths, angle, pol, with_derivatives=False)
+    return _phase_grid(stack, wavelengths, (angle, sine, pol), with_derivatives=False)
 
 
-def phase_jacobian_spectrum(stack, wavelengths, *, pol, angle=0.0):
+def phase_jacobian_spectrum(stack, wavelengths, *, pol=None, angle=None, sine=None):
     """
     The phase grid of phase_spectrum with the thickness derivatives of
     phase_jacobian, each derivative a (nLam, N) array.
     """
-    return _phase_grid(stack, wavelengths, angle, pol, with_derivatives=True)
+    return _phase_grid(stack, wavelengths, (angle, sine, pol), with_derivatives=True)

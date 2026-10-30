@@ -76,7 +76,7 @@ rta(stack, 550, { angle: 45, pol: 's' }).R;
 
 `rtaSpectrum` returns `Rs` and `Rp` beside `R`, so one call gives all three.
 
-The phase calls take `'s'` or `'p'`, and `pol` must be given.
+The phase calls take `'s'` or `'p'`. At normal incidence, where the two are the same, `pol` may be left out.
 
 ## Turning on WebAssembly
 

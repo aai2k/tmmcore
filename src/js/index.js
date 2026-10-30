@@ -11,7 +11,7 @@
  * Results agree to float64 round-off either way : see `tests/equivalence.mjs`.
  *
  * Every call takes a stack, a wavelength in nm or a list of them, and options
- * { angle, pol } (calls.js):
+ * such as { angle, pol } (calls.js):
  *
  *   const stack = { incident: 1, substrate: 1.52,
  *                   layers: [{ n: 2.35, d: 58.5 }, { n: 1.46, d: 94.2 }] };
@@ -62,10 +62,10 @@ export const {
     rta: (lambda, theta, pol, { n0, ns, layers }) => tmmKernel(lambda, theta, pol, n0, ns, layers),
     jacobian: (lambda, theta, pol, { n0, ns, layers }) => jacobianKernel(lambda, theta, pol, n0, ns, layers),
     hessian: (lambda, theta, pol, { n0, ns, layers }) => hessianKernel(lambda, theta, pol, n0, ns, layers),
-    phase: (lambda, theta, pol, { n0Jet, nsJet, layers }) =>
-        phaseKernel(lambda, theta, pol, n0Jet, nsJet, layers),
-    phaseJacobian: (lambda, theta, pol, { n0Jet, nsJet, layers }) =>
-        phaseJacobianKernel(lambda, theta, pol, n0Jet, nsJet, layers),
+    phase: (lambda, theta, pol, { n0Jet, nsJet, layers }, sine) =>
+        phaseKernel(lambda, theta, pol, n0Jet, nsJet, layers, { sinTheta0Jet: sine }),
+    phaseJacobian: (lambda, theta, pol, { n0Jet, nsJet, layers }, sine) =>
+        phaseJacobianKernel(lambda, theta, pol, n0Jet, nsJet, layers, { sinTheta0Jet: sine }),
     rtaSpectrum: rtaSpectrumKernel,
     jacobianSpectrum: jacobianSpectrumKernel,
     hessianSpectrum: hessianSpectrumKernel,

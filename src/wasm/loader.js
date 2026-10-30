@@ -64,8 +64,10 @@ function wasmKernels(wasm) {
         rta: (lambda, theta, pol, media) => wasm._rta(lambda, theta, code(pol), media, writeStackLayers),
         jacobian: (lambda, theta, pol, media) => wasm._jacobian(lambda, theta, code(pol), media, writeStackLayers),
         hessian: (lambda, theta, pol, media) => wasm._hessian(lambda, theta, code(pol), media, writeStackLayers),
-        phase: (lambda, theta, pol, media) => wasm._phase(lambda, theta, code(pol), media),
-        phaseJacobian: (lambda, theta, pol, media) => wasm._phaseJacobian(lambda, theta, code(pol), media),
+        phase: (lambda, theta, pol, media, sine) =>
+            wasm._phase(lambda, theta, code(pol), media, { sinTheta0Jet: sine }),
+        phaseJacobian: (lambda, theta, pol, media, sine) =>
+            wasm._phaseJacobian(lambda, theta, code(pol), media, { sinTheta0Jet: sine }),
         rtaSpectrum: grid => rtaSpectrumWasm(wasm, grid, STACK),
         jacobianSpectrum: (grid, pol) => jacobianSpectrumWasm(wasm, grid, code(pol)),
         hessianSpectrum: (grid, pol) => hessianSpectrumWasm(wasm, grid, code(pol)),

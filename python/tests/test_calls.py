@@ -31,8 +31,34 @@ class Arguments(unittest.TestCase):
             tmmcore.rta(PAIR, 550, pol="x")
         with self.assertRaisesRegex(TypeError, "pol must be 's' or 'p'"):
             tmmcore.phase(PAIR, 550, pol="avg")
-        with self.assertRaisesRegex(TypeError, "pol"):
-            tmmcore.phase_spectrum(PAIR, GRID)
+        with self.assertRaisesRegex(TypeError, "pol must be 's' or 'p'; it may be left out at normal incidence"):
+            tmmcore.phase_spectrum(PAIR, GRID, angle=30)
+        # s and p are the same at normal incidence, where pol may be left out:
+        # no angle, an angle of 0 at every wavelength, or a sine of 0.
+        s, p, left_out = (tmmcore.phase(PAIR, 550, **kwargs) for kwargs in ({"pol": "s"}, {"pol": "p"}, {}))
+        self.assertEqual(p, s)
+        self.assertEqual(left_out, s)
+        expected = tmmcore.phase_spectrum(PAIR, GRID, pol="p")
+        for kwargs in ({"angle": np.zeros(5)}, {"sine": np.zeros((5, 4))}):
+            result = tmmcore.phase_spectrum(PAIR, GRID, **kwargs)
+            for side in ("r", "t"):
+                for key, values in expected[side].items():
+                    np.testing.assert_array_equal(result[side][key], values, f"{kwargs} {side} {key}")
+        sine = np.zeros((5, 4))
+        sine[2, 0] = 0.5
+        with self.assertRaisesRegex(TypeError, "pol must be 's' or 'p'"):
+            tmmcore.phase_spectrum(PAIR, GRID, sine=sine)
+
+    def test_sine(self):
+        sine = tmmcore.jet_constant(0.5)
+        with self.assertRaisesRegex(TypeError, "a phase call takes angle or sine, not both"):
+            tmmcore.phase(PAIR, 550, pol="s", angle=0, sine=sine)
+        with self.assertRaisesRegex(TypeError, "sine must be a jet"):
+            tmmcore.phase(PAIR, 550, pol="s", sine=0.5)
+        with self.assertRaisesRegex(TypeError, "sine must be 5 jets, one per wavelength"):
+            tmmcore.phase_spectrum(PAIR, GRID, pol="s", sine=sine)
+        with self.assertRaisesRegex(TypeError, "pol must be 's' or 'p'"):
+            tmmcore.phase(PAIR, 550, sine=sine)
 
     def test_wavelengths(self):
         for bad in (550, [[450, 550]], [450, [550, 650]], ["450", "550"], [550 + 0j]):

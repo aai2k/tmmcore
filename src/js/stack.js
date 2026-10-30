@@ -42,6 +42,9 @@ function isNumbers(value, length) {
 export const isJet = value => Array.isArray(value) && value.length === JET_ORDER + 1
     && value.every(term => isList(term) && term.length === 2);
 
+// A list of `length` jets. Array.from reads a hole in a sparse list as undefined, which is not a jet.
+const isJets = (value, length) => Array.isArray(value) && value.length === length && Array.from(value).every(isJet);
+
 // A medium as { n, k }; k undefined when it was left out.
 function readMedium(value, where) {
     if (typeof value === 'number') return { n: value, k: undefined };
@@ -124,10 +127,32 @@ export function readRtaPol(pol = 'avg') {
     return pol;
 }
 
-/** Polarization of a phase call: 's' or 'p'. */
-export function readPhasePol(pol) {
-    if (pol !== 's' && pol !== 'p') throw new TypeError("pol must be 's' or 'p'");
+/**
+ * Polarization of a phase call: 's' or 'p'. It may be left out at normal
+ * incidence, where the two are the same, and is then 's'.
+ */
+export function readPhasePol(pol, normal) {
+    if (pol === undefined && normal) return 's';
+    if (pol !== 's' && pol !== 'p') throw new TypeError("pol must be 's' or 'p'; it may be left out at normal incidence");
     return pol;
+}
+
+/**
+ * The sine of the angle of incidence as a jet in ω, which a phase call takes in
+ * place of the angle: one jet at one wavelength, a jet per wavelength in a grid
+ * call (nLam given).
+ */
+export function readSine(sine, nLam = null) {
+    if (nLam === null ? isJet(sine) : isJets(sine, nLam)) return sine;
+    throw new TypeError(nLam === null ? 'sine must be a jet' : `sine must be ${nLam} jets, one per wavelength`);
+}
+
+const isZeroJet = jet => jet.every(term => term[0] === 0 && term[1] === 0);
+
+/** Light along the normal at every wavelength: every angle 0, or every term of the sine jets 0. */
+export function atNormalIncidence(angle, sine, nLam = null) {
+    if (sine) return nLam === null ? isZeroJet(sine) : sine.every(isZeroJet);
+    return typeof angle === 'number' ? angle === 0 : angle.every(value => value === 0);
 }
 
 // ── R/T calls: ñ as [re, im] ─────────────────────────────────────────────────

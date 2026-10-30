@@ -50,7 +50,8 @@ In the phase calls an index is a number, which is a constant index with no dispe
 | | |
 |---|---|
 | `angle` | Angle of incidence in degrees from the normal, 0 when left out. A `Spectrum` call also takes a list with one angle per wavelength. |
-| `pol` | In the R/T and derivative calls `'s'`, `'p'` or `'avg'`, the mean of the two, which is the default. In the phase calls `'s'` or `'p'`, and it must be given. |
+| `sine` | Phase calls only, in place of `angle`: the sine of the angle of incidence as a [jet](#indices-as-jets), a list with one jet per wavelength in a `Spectrum` call. For [an angle fixed outside the incident medium](#an-angle-fixed-outside-the-incident-medium). |
+| `pol` | In the R/T and derivative calls `'s'`, `'p'` or `'avg'`, the mean of the two, which is the default. In the phase calls `'s'` or `'p'`; it may be left out at normal incidence, where the two are the same. |
 
 ### Results over a grid
 
@@ -58,7 +59,7 @@ Each value is a `Float64Array` with one entry per wavelength. `N`, where a resul
 
 ### Errors
 
-A wrong argument throws a `TypeError` that names it, such as `layer 0 needs {n, d}`, `pol must be 's' or 'p'` or `unknown option 'polarization'; the options are angle and pol`. The needle scan and the monitoring calls check their layers the same way.
+A wrong argument throws a `TypeError` that names it, such as `layer 0 needs {n, d}`, `pol must be 's', 'p' or 'avg'` or `unknown option 'polarization'; the options are angle and pol`. The needle scan and the monitoring calls check their layers the same way.
 
 ## R, T and A
 
@@ -159,7 +160,7 @@ Phase, group delay, group delay dispersion and third-order dispersion of r and t
 
 GD, GDD and TOD are exact frequency derivatives at the wavelength asked, from the frequency derivatives of the characteristic matrix. No phase unwrapping and no wavelength stencil is involved, so a value does not depend on the grid around it.
 
-### `phase(stack, wavelength, { pol, angle? })`
+### `phase(stack, wavelength, options?)`
 
 ```js
 import { phase } from 'tmmcore';
@@ -171,11 +172,11 @@ const { r, t } = phase(stack, 800, { pol: 's' });   // r.gdd: GDD on reflection,
 
 Both are also `null` at the exact critical angle of a layer, and at the substrate's critical angle in p. At the substrate's critical angle in s the phase and `magnitudeSquared` come back, and `gd`, `gdd` and `tod` are `NaN`.
 
-### `phaseSpectrum(stack, wavelengths, { pol, angle? })`
+### `phaseSpectrum(stack, wavelengths, options?)`
 
 `phase` at every wavelength of a grid. **Returns** `{ r, t }`, each `{ phaseRad, gd, gdd, tod, magnitudeSquared }` with one value per wavelength, `NaN` where the coefficient vanishes.
 
-### `phaseJacobian(stack, wavelength, { pol, angle? })`
+### `phaseJacobian(stack, wavelength, options?)`
 
 The phase quantities and their exact derivatives in every layer's thickness.
 
@@ -187,7 +188,7 @@ const { r } = phaseJacobian(stack, 800, { pol: 's' });   // r.dGdd[j] = ∂GDD/�
 
 **Returns** `{ r, t }`, each the fields of `phase` and `dPhaseDeg`, `dGd`, `dGdd`, `dTod` and `dLogMagnitudeSquared`, `Float64Array`s of length `N`. `dLogMagnitudeSquared` is the derivative of ln |r|² or ln |t|², the relative change in intensity. The derivatives line up with `stack.layers` as in the [thickness derivatives](#thickness-derivatives), and a GDD fit costs one evaluation per step rather than $N + 1$.
 
-### `phaseJacobianSpectrum(stack, wavelengths, { pol, angle? })`
+### `phaseJacobianSpectrum(stack, wavelengths, options?)`
 
 `phaseJacobian` at every wavelength of a grid, for fitting measured phase quantities such as group delay or ellipsometric Ψ and Δ. **Returns** `{ r, t }`, each the five arrays of `phaseSpectrum` and the five derivatives with nLam × N values each.
 
@@ -219,6 +220,23 @@ const { r } = phaseSpectrum({ incident: 1, substrate: glass, layers }, grid, { p
 Nothing there is differentiated by hand: `wavelengthOmegaJet` carries the derivatives of λ(ω), and every operation after it carries them on. Sellmeier and Lorentz formulas work the same way.
 
 For tabulated data, interpolate with something at least three times differentiable and pass the value and its first three derivatives to `jetCompose`. A PCHIP interpolant is only $C^1$, and its GDD and TOD jump at every knot.
+
+### An angle fixed outside the incident medium
+
+Light that reaches a coating through its own substrate, at an angle fixed in air, meets the coating at an angle that changes with frequency: by Snell's law $\sin\theta_0 = \sin\theta_{\text{air}}/n_0(\omega)$ in the glass, $n_0$ the real part of its index. An `angle` set to the inside angle at each wavelength gets the phase right, but GD, GDD and TOD then leave out how that angle moves. Give the sine as a jet instead, with `cauchyJet` from above:
+
+```js
+import { jetDivide } from 'tmmcore';
+
+// The two-layer coating seen from inside the glass, air beyond it, 45° in air.
+const lams = [700, 750, 800, 850, 900];
+const n0 = lams.map(l => cauchyJet(l, 1.5, 4000, 0, 0));
+const sine = n0.map(n => jetDivide(jetConstant(Math.sin(Math.PI / 4)), n));
+const back = { incident: { n: n0 }, substrate: 1, layers: [{ n: 1.46, d: 94.2 }, { n: 2.35, d: 58.5 }] };
+const reflected = phaseSpectrum(back, lams, { pol: 'p', sine }).r;
+```
+
+At 800 nm this gives a GD of 1.3265 fs and a GDD of −0.132 fs² on reflection. The inside angle held at its 800 nm value gives 1.3247 fs and −0.136 fs².
 
 ### Units and signs
 
@@ -378,7 +396,7 @@ The derivatives include the factor, so $T$ falls with an opaque layer's thicknes
 
 The one-wavelength names take `(lambda_nm, theta_deg, pol, n0, ns, layers)`, each index as `[re, im]` and the layers as `{ n, d }[]`, or in the phase names `{ nJet, d }[]` with the media as jets; the instance takes `pol` as `0` or `1`. The [0.4.2 API reference](https://github.com/aai2k/tmmcore/blob/0a432b7/docs/api.md) has them in full.
 
-The 0.5 phase calls take neither `omega`, which sets the time unit, nor `sinTheta0Jet`, the incident sine as a jet, for a stack in a dispersive medium at a fixed angle in another one. The 0.4 phase names still do.
+The 0.4 phase names take the incident sine as the option `sinTheta0Jet`, and over a grid `sinJets`, where the 0.5 calls take `sine`. The 0.5 calls take no `omega`, which sets the time unit; the 0.4 phase names still do.
 
 ## Low-level primitives
 

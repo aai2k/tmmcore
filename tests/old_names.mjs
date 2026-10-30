@@ -2,7 +2,8 @@
  * The names of 0.4, kept through 0.5.x with their old arguments.
  *
  *   • each gives the same bits as the call of 0.5 that replaces it, on the
- *     module and on a WebAssembly instance
+ *     module and on a WebAssembly instance, the phase names also with the
+ *     incident sine as jets
  *   • the coefficient-jet calls, which have no replacement, give what the
  *     functions of src/js/phase.js give
  *   • on the module each keeps the name and parameter count of the function
@@ -64,6 +65,27 @@ const PAIRS = [
     ['tmmPhaseJacobianSpectrum', pol => wasm.phaseJacobianSpectrum(GRID_JET_STACK, LAMBDAS, { angle, pol }),
         (pol, code) => wasm.tmmPhaseJacobianSpectrum(LAMBDAS, G.n0Jets, G.nsJets, G.layerJets, G.thick, angle, code)],
 ];
+
+// The phase calls given the incident sine, against the names of 0.4 given it
+// as sinTheta0Jet or sinJets: a sine of 0.5 in a medium of the substrate's index.
+const sineOf = at => J.jetDivide(J.jetConstant(0.5), DESIGN.substrate.jet(at));
+const sine = sineOf(lambda), sinJets = LAMBDAS.map(sineOf);
+PAIRS.push(
+    ['tmmPhaseDispersion, sine', pol => tmmcore.phase(pointJetStack(i), lambda, { pol, sine }),
+        pol => tmmcore.tmmPhaseDispersion(lambda, 0, pol, old.n0Jet, old.nsJet, old.jetLayers, { sinTheta0Jet: sine })],
+    ['tmmPhaseThicknessJacobian, sine', pol => tmmcore.phaseJacobian(pointJetStack(i), lambda, { pol, sine }),
+        pol => tmmcore.tmmPhaseThicknessJacobian(lambda, 0, pol, old.n0Jet, old.nsJet, old.jetLayers,
+            { sinTheta0Jet: sine })],
+    ['tmmPhaseOne, sine', pol => wasm.phase(pointJetStack(i), lambda, { pol, sine }),
+        (pol, code) => wasm.tmmPhaseOne(lambda, 0, code, old.n0Jet, old.nsJet, old.jetLayers, { sinTheta0Jet: sine })],
+    ['tmmPhaseJacobian, sine', pol => wasm.phaseJacobian(pointJetStack(i), lambda, { pol, sine }),
+        (pol, code) => wasm.tmmPhaseJacobian(lambda, 0, code, old.n0Jet, old.nsJet, old.jetLayers, { sinTheta0Jet: sine })],
+    ['tmmPhaseSpectrum, sine', pol => wasm.phaseSpectrum(GRID_JET_STACK, LAMBDAS, { pol, sine: sinJets }),
+        (pol, code) => wasm.tmmPhaseSpectrum(LAMBDAS, G.n0Jets, G.nsJets, G.layerJets, G.thick, 0, code, { sinJets })],
+    ['tmmPhaseJacobianSpectrum, sine', pol => wasm.phaseJacobianSpectrum(GRID_JET_STACK, LAMBDAS, { pol, sine: sinJets }),
+        (pol, code) => wasm.tmmPhaseJacobianSpectrum(LAMBDAS, G.n0Jets, G.nsJets, G.layerJets, G.thick, 0, code,
+            { sinJets })],
+);
 for (const [name, current, previous] of PAIRS) {
     for (const [pol, code] of [['s', 0], ['p', 1]]) sameBits(current(pol), previous(pol, code), `${name} ${pol}`);
 }

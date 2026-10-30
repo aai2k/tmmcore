@@ -63,7 +63,7 @@ const mean = values => values.reduce((sum, v) => sum + v, 0) / values.length;
 console.log(`${(100 * mean(coated.R)).toFixed(2)} %`);   // 0.25 %, against 4.25 % for bare glass
 ```
 
-The R/T, derivative and phase calls all take a stack, a wavelength or a list of them, and `{ angle, pol }`: the angle of incidence in degrees, 0 when left out, and `'s'`, `'p'` or `'avg'`, the mean of the two. `'avg'` is the default in the R/T and derivative calls; the phase calls need `'s'` or `'p'`. The [API reference](https://aai2k.github.io/tmmcore/api/) lists them.
+The R/T, derivative and phase calls all take a stack, a wavelength or a list of them, and `{ angle, pol }`: the angle of incidence in degrees, 0 when left out, and `'s'`, `'p'` or `'avg'`, the mean of the two. `'avg'` is the default in the R/T and derivative calls; the phase calls take `'s'` or `'p'`, and may leave it out at normal incidence. The [API reference](https://aai2k.github.io/tmmcore/api/) lists them.
 
 ## Conventions
 

@@ -34,6 +34,8 @@ tmmcore.rta(stack, 550)["R"]                                              # natu
 tmmcore.rta_spectrum(stack, np.linspace(400, 800, 401), angle=45, pol="s")["R"]
 ```
 
+The phase calls also take `sine` in place of `angle`: a jet, or in a `_spectrum` call an array of shape (nLam, 4), for [an angle fixed outside the incident medium](api.md#an-angle-fixed-outside-the-incident-medium).
+
 Not in the Python package yet: the needle scan, the monitoring calls (monitoring curve, deposition spectra, growing stack), the low-level primitives, and the constants `C_NM_PER_FS` and `JET_ORDER`.
 
 ## The stack
@@ -51,7 +53,7 @@ stack = {"incident": 1.0,
 - `n` may also be complex, `n + ik`, with `k` left out: `{"n": 2.35 + 0.0005j, "d": 58.5}`.
 - In the phase calls an index is a number, which is a constant index with no dispersion, or a jet (below). An array of plain indices per wavelength is refused there, since group delay computed from it would leave out the material's dispersion.
 
-A wrong value raises `TypeError` with a message naming it, such as `layer 1 needs {n, d}`. A missing or unknown keyword raises Python's own `TypeError`.
+A wrong value raises `TypeError` with a message naming it, such as `layer 1 needs {n, d}`. An unknown keyword raises Python's own `TypeError`.
 
 ## Results
 

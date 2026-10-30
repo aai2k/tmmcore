@@ -11,6 +11,10 @@
  *     one-wavelength call gives there
  *   • the short forms of a stack read as the long ones, and lists of numbers
  *     and the terms of a jet may be typed arrays
+ *   • the phase calls may leave pol out at normal incidence, where s and p
+ *     are the same, and take the incident sine as jets in place of the angle:
+ *     a constant sine is the angle, and a sine that follows a dispersive
+ *     incident medium gives the GD and GDD of differences of the phase in ω
  *   • a misspelled option, a malformed stack, a wavelength list holding
  *     anything but numbers, and an index per wavelength with no derivatives
  *     in a phase call are refused; two index values read as two wavelengths
@@ -183,6 +187,99 @@ for (const [name, b] of BACKENDS) {
     assert.throws(() => b.rta(TWO, 550), /layer 0 n must be a number at one wavelength/, `${name} two values at one λ`);
 }
 
+// ── Polarization of the phase calls at normal incidence ─────────────────────
+// s and p are the same there, and pol may be left out.
+const PHASE_CALLS = CALLS.filter(([, , , jets]) => jets);
+for (const [name, b] of BACKENDS) {
+    for (const [point, spectrum] of PHASE_CALLS) {
+        const s = b[point](pointJetStack(2), LAMBDAS[2], { pol: 's' });
+        sameBits(b[point](pointJetStack(2), LAMBDAS[2], { pol: 'p' }), s, `${name} ${point} p at normal incidence`);
+        sameBits(b[point](pointJetStack(2), LAMBDAS[2]), s, `${name} ${point} without pol`);
+        sameBits(b[point](pointJetStack(2), LAMBDAS[2], { sine: J.jetConstant(0) }), s,
+            `${name} ${point} without pol, a sine of 0`);
+        const grid = b[spectrum](GRID_JET_STACK, LAMBDAS, { pol: 'p' });
+        sameBits(b[spectrum](GRID_JET_STACK, LAMBDAS, { angle: LAMBDAS.map(() => 0) }), grid,
+            `${name} ${spectrum} without pol`);
+        sameBits(b[spectrum](GRID_JET_STACK, LAMBDAS, { sine: LAMBDAS.map(() => J.jetConstant(0)) }), grid,
+            `${name} ${spectrum} without pol, sines of 0`);
+    }
+}
+
+// ── The incident sine ────────────────────────────────────────────────────────
+// A stack seen from inside Cauchy glass, air beyond it, lit at 45° in air: the
+// angle inside the glass follows the glass's index, and `sine` carries it as
+// a jet.
+const glassAt = lambda => 1.5 + 4000 / (lambda * lambda);
+const glassJet = lambda => {
+    const lambdaJet = J.wavelengthOmegaJet(lambda, tmmcore.omegaFromLambdaNm(lambda));
+    return J.jetAdd(J.jetConstant(1.5), J.jetScale(J.jetReciprocal(J.jetMultiply(lambdaJet, lambdaJet)), 4000));
+};
+const AIR_SINE = Math.sin(Math.PI / 4);
+const sineAt = lambda => J.jetDivide(J.jetConstant(AIR_SINE), glassJet(lambda));
+const fromGlass = (glass, layers) => ({ incident: { n: glass }, substrate: 1, layers: [...layers].reverse() });
+const SINES = LAMBDAS.map(sineAt);
+
+for (const [point, spectrum] of PHASE_CALLS) {
+    for (const pol of ['s', 'p']) {
+        const tag = `${spectrum} with the sine, pol ${pol}`;
+        const grids = BACKENDS.map(([, b]) =>
+            b[spectrum](fromGlass(LAMBDAS.map(glassJet), GRID_JET_STACK.layers), LAMBDAS, { pol, sine: SINES }));
+        close(grids[0], grids[1], tag);
+        LAMBDAS.forEach((lambda, i) => {
+            const stack = fromGlass(glassJet(lambda), pointJetStack(i).layers);
+            const points = BACKENDS.map(([, b]) => b[point](stack, lambda, { pol, sine: SINES[i] }));
+            close(points[0], points[1], `${point} λ ${lambda} ${tag}`);
+            BACKENDS.forEach(([name], b) =>
+                sameBits(points[b], sliceAt(grids[b], i), `${name} ${spectrum} λ ${lambda} against ${point} ${tag}`));
+        });
+    }
+}
+
+// GD and GDD with the sine are the frequency derivatives of the phase with the
+// angle inside set by Snell's law at each frequency. With the inside angle held
+// at its value at 800 nm, which is what a sine without its derivative terms
+// gives, they are not, by about 1e-3 in GD and 1e-2 in GDD. The two-layer
+// antireflection coating turned round, central differences in ω with step H
+// rad/fs: they agree to about 2e-9 in GD, the truncation error, and 5e-8 in
+// GDD, the round-off, about 1e-15/H² in fs². The checks allow 1e-6 and 1e-5,
+// far above the agreement and far below the gap.
+const AR = [{ n: 2.35, d: 58.5 }, { n: 1.46, d: 94.2 }];
+const H = 3e-4;
+const OMEGA = tmmcore.omegaFromLambdaNm(800);
+const insideDeg = lambda => Math.asin(AIR_SINE / glassAt(lambda)) * 180 / Math.PI;
+const atOmega = omega => 2 * Math.PI * tmmcore.C_NM_PER_FS / omega;
+const wrap = angle => angle - 2 * Math.PI * Math.round(angle / (2 * Math.PI));
+for (const [name, b] of BACKENDS) {
+    for (const pol of ['s', 'p']) {
+        const phi = omega => b.phase(fromGlass(glassAt(atOmega(omega)), AR), atOmega(omega),
+            { pol, angle: insideDeg(atOmega(omega)) }).r.phaseRad;
+        const [down, mid, up] = [OMEGA - H, OMEGA, OMEGA + H].map(phi);
+        const gd = -wrap(up - down) / (2 * H);
+        const gdd = -(wrap(up - mid) - wrap(mid - down)) / (H * H);
+        const { r } = b.phase(fromGlass(glassJet(800), AR), 800, { pol, sine: sineAt(800) });
+        const fixed = b.phase(fromGlass(glassJet(800), AR), 800, { pol, angle: insideDeg(800) }).r;
+        const tag = `${name} 800 nm ${pol}`;
+        assert.ok(Math.abs(r.gd - gd) < 1e-6 * Math.abs(gd), `${tag}: GD ${r.gd} against ${gd}`);
+        assert.ok(Math.abs(r.gdd - gdd) < 1e-5 * Math.abs(gdd), `${tag}: GDD ${r.gdd} against ${gdd}`);
+        assert.ok(Math.abs(fixed.gd - gd) > 1e-4 * Math.abs(gd), `${tag}: GD at a fixed inside angle`);
+    }
+}
+
+// A constant sine is the angle whose sine it is. The kernels take cosθ0 from
+// the angle but √(1 − sin²θ0) from a sine, which differ in the last bit, and
+// the results by about 1e-15 relative. A real difference between the two paths
+// is far larger than the 1e-12 allowed.
+for (const [name, b] of BACKENDS) {
+    const bySine = b.phase(pointJetStack(2), LAMBDAS[2], { pol: 'p', sine: J.jetConstant(Math.sin(30 * Math.PI / 180)) });
+    const byAngle = b.phase(pointJetStack(2), LAMBDAS[2], { pol: 'p', angle: 30 });
+    for (const side of ['r', 't']) {
+        for (const [key, value] of Object.entries(byAngle[side])) {
+            const tag = `${name} constant sine ${side}.${key}: ${bySine[side][key]} against ${value}`;
+            assert.ok(Math.abs(bySine[side][key] - value) <= 1e-12 * Math.abs(value), tag);
+        }
+    }
+}
+
 assert.deepEqual(warnings, [], 'the calls of 0.5 print nothing');
 
 // ── Refused ──────────────────────────────────────────────────────────────────
@@ -193,8 +290,19 @@ const REFUSED = [
     [b => b.rtaSpectrum(ONE, [550], { polarization: 's' }), /unknown option 'polarization'/],
     [b => b.rta(ONE, 550, null), /options must be \{ angle, pol \}/],
     [b => b.rta(ONE, 550, { pol: 'x' }), /pol must be 's', 'p' or 'avg'/],
-    [b => b.phase(ONE, 550), /pol must be 's' or 'p'/],
+    [b => b.phase(ONE, 550, { angle: 30 }), /pol must be 's' or 'p'; it may be left out at normal incidence/],
+    [b => b.phaseSpectrum(ONE, [500, 550], { angle: [0, 10] }), /pol must be 's' or 'p'/],
+    [b => b.phase(ONE, 550, { sine: J.jetConstant(0.5) }), /pol must be 's' or 'p'/],
+    [b => b.phaseSpectrum(ONE, [500, 550], { sine: [J.jetConstant(0), J.jetConstant(0.5)] }), /pol must be 's' or 'p'/],
     [b => b.phaseSpectrum(ONE, [550], { pol: 'avg' }), /pol must be 's' or 'p'/],
+    [b => b.phase(ONE, 550, { angel: 30 }), /unknown option 'angel'; the options are angle, sine and pol/],
+    [b => b.rta(ONE, 550, { sine: J.jetConstant(0.5) }), /unknown option 'sine'; the options are angle and pol/],
+    [b => b.phase(ONE, 550, { pol: 's', angle: 0, sine: J.jetConstant(0) }), /a phase call takes angle or sine, not both/],
+    [b => b.phase(ONE, 550, { pol: 's', sine: 0.5 }), /sine must be a jet/],
+    [b => b.phaseSpectrum(ONE, [500, 550], { pol: 's', sine: J.jetConstant(0.5) }),
+        /sine must be 2 jets, one per wavelength/],
+    [b => b.phaseSpectrum(ONE, [450, 550, 650], { pol: 's', sine: Object.assign(Array(3), { 0: J.jetConstant(0.5),
+        2: J.jetConstant(0.5) }) }), /sine must be 3 jets, one per wavelength/],
     [b => b.rta(ONE, [550]), /wavelength must be a number \(nm\)/],
     [b => b.rtaSpectrum(ONE, 550), /wavelengths must be a list of numbers \(nm\)/],
     [b => b.rtaSpectrum(ONE, [{}, 550]), /wavelengths must be a list of numbers \(nm\)/],

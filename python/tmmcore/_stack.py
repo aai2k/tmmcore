@@ -96,9 +96,43 @@ def read_rta_pol(pol):
     return _read_pol(pol, ("s", "p", "avg"))
 
 
-def read_phase_pol(pol):
-    """Polarization of a phase call: 's' or 'p'."""
-    return _read_pol(pol, ("s", "p"))
+def read_sine(sine, n_lam=None):
+    """
+    The sine of the angle of incidence as a jet, which a phase call takes in
+    place of the angle: one jet, or with n_lam a jet per wavelength.
+    """
+    jets = _numbers(sine, (4,) if n_lam is None else (n_lam, 4), complex_allowed=True)
+    if jets is None:
+        raise TypeError("sine must be a jet" if n_lam is None else f"sine must be {n_lam} jets, one per wavelength")
+    return np.ascontiguousarray(jets, dtype=np.complex128)
+
+
+def read_phase_options(angle, sine, pol, n_lam=None):
+    """
+    The angle, or the incident sine as jets and the angle 0 the kernel then
+    ignores, and the polarization code of a phase call. pol is "s" or "p"; it
+    may be left out at normal incidence, where the two are the same, and is
+    then "s".
+    """
+    if sine is None:
+        angle = read_angle(0.0 if angle is None else angle, n_lam)
+        normal = not np.any(angle)
+    elif angle is not None:
+        raise TypeError("a phase call takes angle or sine, not both")
+    else:
+        sine = read_sine(sine, n_lam)
+        angle = read_angle(0.0, n_lam)
+        normal = not np.any(sine)
+    if pol is None and normal:
+        pol = "s"
+    if pol not in ("s", "p"):
+        raise TypeError("pol must be 's' or 'p'; it may be left out at normal incidence")
+    return angle, sine, POL_CODE[pol]
+
+
+def optional_address(array):
+    """The address of an array, or None, a null pointer, for no array."""
+    return None if array is None else address(array)
 
 
 def mean(s, p):

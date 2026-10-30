@@ -18,9 +18,11 @@ keyword options:
 A layer is {"n", "k", "d"} with d in nm, ñ = n + ik, k optional; n may be
 complex instead. `angle` is the angle of incidence in degrees from the normal,
 0 when left out. `pol` is "s", "p" or "avg" (the default, the mean of the two)
-in the R/T and derivative calls, and "s" or "p" in the phase calls, where it
-must be given. The jet calls (jet.py) build the dispersive index jets the
-phase calls take.
+in the R/T and derivative calls, and "s" or "p" in the phase calls, which may
+leave it out at normal incidence, where the two are the same. In place of
+`angle` the phase calls take `sine`, the sine of the angle of incidence as a
+jet. The jet calls (jet.py) build the dispersive index jets the phase calls
+take.
 
 The numbers come from the same C kernel as the npm package; they agree with
 it to round-off, the last digits differing where the platform's math library

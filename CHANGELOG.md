@@ -10,6 +10,7 @@
 - `pol: 'avg'`, the mean of s and p, the default in the R/T and derivative calls.
 - Grid calls take one angle or one per wavelength.
 - The phase calls take a plain number as a constant index; a jet is needed only for dispersion.
+- The phase calls may leave out `pol` at normal incidence, where s and p are the same.
 - The jet arithmetic on the WebAssembly instance and in C, each C call over a whole grid of jets.
 - C exports `tmm_needle_scan_spectrum` and `tmm_omega_from_lambda_nm`.
 - `tmmcore/wasm`, the WebAssembly loader as its own entry point.
@@ -17,7 +18,7 @@
 ### Changed
 - The calls have one set of names, the same in JavaScript and on the WebAssembly instance. The 0.4 names keep their arguments and results through 0.5.x, warn once on first use, and are removed in 0.6.0. [The names of 0.4](docs/api.md#the-names-of-04) maps each to its 0.5 name.
 - `tmmCoefficientJets`, `tmmCoefficientThicknessJets`, `coefficientPhaseDispersion` and `coefficientPhaseThicknessDerivatives` warn once and are removed in 0.6.0, with no replacement.
-- The 0.5 phase calls take no `omega` or `sinTheta0Jet`; the 0.4 phase names still do.
+- The 0.5 phase calls take the incident sine as `sine`, which the 0.4 phase names take as `sinTheta0Jet` and `sinJets`. They take no `omega`; the 0.4 phase names still do.
 - A layer missing its index or its thickness throws a `TypeError` naming the layer. 0.4 skipped a layer without a thickness as if it were absent, and failed with an unrelated error on one without an index.
 - C: `tmm_one`, `tmm_spectrum`, `tmm_phase_one` and `tmm_growing_eval_*` are renamed `tmm_rta`, `tmm_rta_spectrum`, `tmm_phase` and `tmm_growing_stack_*`, and the 0.4 names are gone.
 - C: every call takes the angle after the wavelength, and the grid calls take it as an array of one or one per wavelength; the phase calls take ω after the stack.

@@ -17,6 +17,7 @@ import { dirname, join } from 'node:path';
 import { instantiateTmmWasm } from '../../src/wasm/index.js';
 import { needleScanSpectrumWasm } from '../../src/wasm/derivatives.js';
 import { omegaFromLambdaNm } from '../../src/js/phase.js';
+import { jetConstant, jetDivide } from '../../src/js/jet.js';
 import {
     STACKS, LAMBDAS, ANGLES, POLS, CANDIDATES, INTRA_FRACS, DISPERSIVE, PHASE_STACKS,
     PHASE_SUBSTRATE, PHASE_GRID, n0, ns, cauchyJet,
@@ -99,9 +100,10 @@ const jetStack = (rows, jetOf) => ({
     substrate: { n: jetOf(PHASE_SUBSTRATE) },
     layers: rows.map(([name, d]) => ({ n: jetOf(DISPERSIVE[name]), d })),
 });
+const encodeMedium = medium => (typeof medium === 'number' ? medium : { n: complex(medium.n) });
 const encodeJets = stack => ({
-    incident: stack.incident,
-    substrate: { n: complex(stack.substrate.n) },
+    incident: encodeMedium(stack.incident),
+    substrate: encodeMedium(stack.substrate),
     layers: stack.layers.map(({ n, d }) => ({ n: complex(n), d })),
 });
 const jetsOnGrid = coefficients => PHASE_GRID.map(lambda => cauchyJet(lambda, omegaFromLambdaNm(lambda), coefficients));
@@ -127,6 +129,36 @@ for (const [rows, [pol]] of product(Object.values(STACKS), POLS)) {
     add('phase', [stack, 550], kwargs, kernel.phase(stack, 550, kwargs));
     add('phase_spectrum', [stack, LAMBDAS], kwargs, kernel.phaseSpectrum(stack, LAMBDAS, kwargs));
 }
+// The phase stacks seen from inside the substrate glass, air beyond, lit at
+// 45° in air, with the incident sine as a jet; and at normal incidence with
+// pol left out.
+const fromGlass = (rows, jetOf) => ({
+    incident: { n: jetOf(PHASE_SUBSTRATE) }, substrate: 1,
+    layers: [...rows].reverse().map(([name, d]) => ({ n: jetOf(DISPERSIVE[name]), d })),
+});
+const sineIn = glass => jetDivide(jetConstant(Math.SQRT1_2), glass);
+for (const [rows, lambda, [pol]] of product(Object.values(PHASE_STACKS), LAMBDAS, POLS)) {
+    const stack = fromGlass(rows, coefficients => cauchyJet(lambda, omegaFromLambdaNm(lambda), coefficients));
+    const sine = sineIn(stack.incident.n);
+    add('phase', [encodeJets(stack), lambda], { pol, sine: complex(sine) }, kernel.phase(stack, lambda, { pol, sine }));
+    add('phase_jacobian', [encodeJets(stack), lambda], { pol, sine: complex(sine) },
+        kernel.phaseJacobian(stack, lambda, { pol, sine }));
+}
+for (const [pol] of POLS) {
+    const stack = fromGlass(PHASE_STACKS['chirped 12-layer'], jetsOnGrid);
+    const sine = stack.incident.n.map(sineIn);
+    add('phase_spectrum', [encodeJets(stack), PHASE_GRID], { pol, sine: complex(sine) },
+        kernel.phaseSpectrum(stack, PHASE_GRID, { pol, sine }));
+    add('phase_jacobian_spectrum', [encodeJets(stack), PHASE_GRID], { pol, sine: complex(sine) },
+        kernel.phaseJacobianSpectrum(stack, PHASE_GRID, { pol, sine }));
+}
+for (const rows of Object.values(PHASE_STACKS)) {
+    const stack = jetStack(rows, coefficients => cauchyJet(550, omegaFromLambdaNm(550), coefficients));
+    add('phase', [encodeJets(stack), 550], {}, kernel.phase(stack, 550));
+    add('phase_jacobian', [encodeJets(stack), 550], {}, kernel.phaseJacobian(stack, 550));
+}
+const normalGrid = jetStack(PHASE_STACKS['chirped 12-layer'], jetsOnGrid);
+add('phase_spectrum', [encodeJets(normalGrid), PHASE_GRID], {}, kernel.phaseSpectrum(normalGrid, PHASE_GRID));
 
 add('omega_from_lambda_nm', [LAMBDAS], {}, LAMBDAS.map(omegaFromLambdaNm));
 
