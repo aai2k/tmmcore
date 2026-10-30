@@ -24,7 +24,7 @@
  * References:
  *   • Macleod, Thin-Film Optical Filters 5th ed., §2.4, Eqs. 2.111, 2.123–2.125;
  *     Eq. 2.83 (transmittance out of an absorbing incident medium);
- *     §10.2, Eqs. 10.11–10.13 (tilted admittances from the real invariant n0 sinθ0)
+ *     §10.2, Eqs. 10.11-10.13 (tilted admittances)
  */
 
 // ── Complex number arithmetic ─────────────────────────────────────────────────
@@ -103,13 +103,14 @@ function rescaleMatrix(M) {
 // ── Snell's law ───────────────────────────────────────────────────────────────
 //
 // Every wave in the stack shares one transverse wavevector, n0 sinθ0 with n0
-// the REAL part of the incident index (Macleod 5th ed., §10.2, Eqs. 10.11 to
-// 10.13). An absorbing incident medium then carries an inhomogeneous wave whose
-// amplitude falls along the normal only, and each medium's cosθ follows from
-// that one real invariant. Putting the complex index into the invariant would
-// make the amplitude vary along the interface, so energy would flow sideways
-// inside lossless layers and R + T would be wrong by a term linear in the
-// incident k at oblique incidence.
+// the REAL part of the incident index. At oblique incidence Macleod keeps the
+// incident medium free of absorption (5th ed., §2.3.5 and §10.2); for an
+// absorbing one tmmcore takes the real part. That medium then carries an
+// inhomogeneous wave whose amplitude falls along the normal only, and each
+// medium's cosθ follows from that one real invariant. Putting the complex
+// index into the invariant would make the amplitude vary along the interface,
+// so energy would flow sideways inside lossless layers and R + T would be
+// wrong by a term linear in the incident k at oblique incidence.
 
 // sinθ0 and cosθ0 of the angle of incidence, each as [value, 0]. The cosine is
 // taken directly: near grazing incidence sqrt(1 − sin²θ0) keeps three correct

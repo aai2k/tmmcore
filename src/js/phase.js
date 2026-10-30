@@ -28,7 +28,8 @@
  * Refractive indices arrive as jets, `[ñ, dñ/dω, (d²ñ/dω²)/2, (d³ñ/dω³)/6]`.
  * The package deliberately owns no material models; build the jets with the
  * arithmetic in jet.js, from whatever dispersion formula or interpolant
- * you use. See the docs for a worked Sellmeier example.
+ * you use. The API reference builds one for a Cauchy index (docs/api.md,
+ * "Indices as jets").
  *
  * The C kernel in src/c is a port of this file and agrees with it to
  * float64 round-off (see tests/).
