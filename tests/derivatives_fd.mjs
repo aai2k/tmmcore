@@ -8,8 +8,10 @@
  *
  *   • the thickness Jacobian, dR/dd, dT/dd and dA/dd of every layer
  *   • the thickness Hessian, every d²R/dd_i dd_j and d²T/dd_i dd_j
- *   • the needle P-function at every gap and at positions inside each layer
- *   • the phase thickness Jacobian: phase, GD, GDD and ln|r|²
+ *   • the needle P-function at every gap and at positions inside each layer,
+ *     and its equality with the Jacobian where the needle is the material of
+ *     the layer beside or around it
+ *   • the phase thickness Jacobian: phase, GD, GDD, TOD and ln|r|²
  *
  * The stacks are chosen to reach the two overflow guards. An opaque metal, and
  * a lossless air gap past the critical angle, have a phase thickness whose
@@ -46,14 +48,25 @@ const FIRST = { abs: 1e-9, rel: 1e-6 };
 const SECOND = { abs: 1e-9, rel: 1e-6 };
 
 // GDD is a difference of nearly equal terms and its value carries noise near
-// 3e-10 fs² on the phase stacks below, so their differences take a wider step:
-// 0.25 nm leaves about 2e-9 of that noise in the derivative, and a truncation
-// error near 1e-11 against thickness oscillations of period λ/2n.
+// 3e-10 fs² on the clamped phase stacks below, so their differences take a
+// wider step: 0.25 nm leaves about 2e-9 of that noise in the derivative, and a
+// truncation error near 1e-11 against thickness oscillations of period λ/2n.
+// Their TOD, near 1 fs³, carries noise up to 1.2e-6 fs³, more than a
+// difference at any step resolves, so their dTod is not differenced:
+// tests/equivalence.mjs holds it to the port on an opaque stack of its own.
+// The dielectric stacks carry no such noise and take 0.01 nm, which the
+// resonance at 550 nm, 60°, s from the absorbing medium needs: its TOD is
+// near −1.1e5 fs³, and 0.25 nm would leave a truncation error of 4% in dTod.
 const PHASE_STEP_NM = 0.25;
+const DIELECTRIC_PHASE_STEP_NM = 0.01;
 const PHASE = { abs: 1e-8, rel: 1e-6 };
 
 // The port reproduces the same arithmetic up to libm round-off.
 const PORT = { abs: 1e-12, rel: 1e-7 };
+
+// The needle scan and the Jacobian are two analytic routes to one number
+// where the needle is a layer's own material.
+const IDENTITY = { abs: 1e-12, rel: 1e-9 };
 
 let checks = 0;
 let failures = 0;
@@ -195,7 +208,7 @@ const plainOf = run => (layers, q) => tmm(run.lambda, run.theta, run.pol, run.n0
 // T through a layer past the imaginary-phase bound is below 1e-43, where the
 // absolute tolerance sees nothing at all, so every derivative of T is held
 // relative to T as well.
-function agreeWithT(q, analytic, reference, T, tolerance, label) {
+function agreeWithT({ q, T }, analytic, reference, tolerance, label) {
     agree(analytic, reference, tolerance, label);
     if (q === 'T' && T > 0) agree(analytic / T, reference / T, tolerance, `${label} relative to T`);
 }
@@ -211,7 +224,7 @@ function checkJacobian(run) {
     for (const [k, which] of grid(run.layers.length, FIRST_KEYS.length)) {
         const [q, key] = FIRST_KEYS[which];
         const reference = central(h => plain(shifted(run.layers, k, -1, h, 0), q));
-        agreeWithT(q, jac[key][k], reference, jac.T, FIRST, `${run.at} ${key}[${k}]`);
+        agreeWithT({ q, T: jac.T }, jac[key][k], reference, FIRST, `${run.at} ${key}[${k}]`);
     }
 }
 
@@ -222,7 +235,7 @@ function checkHessian(run) {
     for (const [i, j, which] of grid(N, N, SECOND_KEYS.length).filter(([i, j]) => j >= i)) {
         const [q, key] = SECOND_KEYS[which];
         const reference = secondPartial(layers => plain(layers, q), run.layers, i, j);
-        agreeWithT(q, hess[key][i][j], reference, hess.T, SECOND, `${run.at} ${key}[${i}][${j}]`);
+        agreeWithT({ q, T: hess.T }, hess[key][i][j], reference, SECOND, `${run.at} ${key}[${i}][${j}]`);
     }
 }
 
@@ -234,15 +247,39 @@ function checkNeedles(run) {
     for (const [pos, ci, which] of grid(N + 1, nc, 3)) {
         const q = ['R', 'T', 'A'][which];
         const reference = forward(h => plain(withNeedle(run.layers, pos, run.candidates[ci])(h), q));
-        agreeWithT(q, scan.gaps[pos][ci][`d${q}`], reference, scan.T, FIRST,
+        agreeWithT({ q, T: scan.T }, scan.gaps[pos][ci][`d${q}`], reference, FIRST,
             `${run.at} gap[${pos}][${ci}] d${q}`);
     }
     for (const [k, fi, ci, which] of grid(N, run.fracs.length, nc, 3)) {
         const q = ['R', 'T', 'A'][which];
         const split = splitAt(run.layers, k, run.fracs[fi]);
         const reference = forward(h => plain(withNeedle(split, k + 1, run.candidates[ci])(h), q));
-        agreeWithT(q, scan.intra[k][fi].perCand[ci][`d${q}`], reference, scan.T, FIRST,
+        agreeWithT({ q, T: scan.T }, scan.intra[k][fi].perCand[ci][`d${q}`], reference, FIRST,
             `${run.at} intra[${k}] at ${run.fracs[fi]} [${ci}] d${q}`);
+    }
+}
+
+// A needle of a layer's own material at either face of it, or inside it, is
+// that layer made thicker (docs/api.md): the scan and the Jacobian give the
+// same dR, dT and dA there.
+function checkNeedleIdentity(run) {
+    const jac = tmmThicknessJacobian(...run.args);
+    const scan = tmmNeedleScan(...run.args, run.candidates, run.fracs);
+    const N = run.layers.length;
+    const ownMaterial = (j, ci) => j >= 0 && j < N
+        && run.layers[j].n[0] === run.candidates[ci][0] && run.layers[j].n[1] === run.candidates[ci][1];
+    for (const [pos, ci, which] of grid(N + 1, run.candidates.length, FIRST_KEYS.length)) {
+        const [q, key] = FIRST_KEYS[which];
+        for (const j of [pos - 1, pos].filter(j => ownMaterial(j, ci))) {
+            agreeWithT({ q, T: jac.T }, scan.gaps[pos][ci][`d${q}`], jac[key][j], IDENTITY,
+                `${run.at} gap[${pos}][${ci}] d${q} = ${key}[${j}]`);
+        }
+    }
+    for (const [k, fi, ci, which] of grid(N, run.fracs.length, run.candidates.length, FIRST_KEYS.length)) {
+        if (!ownMaterial(k, ci)) continue;
+        const [q, key] = FIRST_KEYS[which];
+        agreeWithT({ q, T: jac.T }, scan.intra[k][fi].perCand[ci][`d${q}`], jac[key][k], IDENTITY,
+            `${run.at} intra[${k}] at ${run.fracs[fi]} [${ci}] d${q} = ${key}[${k}]`);
     }
 }
 
@@ -250,48 +287,59 @@ for (const run of RUNS) {
     checkJacobian(run);
     checkHessian(run);
     checkNeedles(run);
+    checkNeedleIdentity(run);
 }
 
 // ── Phase thickness Jacobian against tmmPhaseDispersion() ────────────────────
-// One stack whose middle layer passes the imaginary-phase bound, and one whose
-// six such layers take the matrix product past the rescale threshold.
+// At 30°, one stack whose middle layer passes the imaginary-phase bound and
+// one whose six such layers take the matrix product past the rescale
+// threshold. At 0° and 60°, nine dielectric layers, and at 60° the same from
+// an absorbing incident medium.
 
 const K = jetConstant(2.0, 0.6);
-const PHASE_CASES = {
-    'one clamped layer': [[jetConstant(2.35, 0.0005), 110], [K, 20000], [jetConstant(1.46), 90]],
-    'six clamped layers': [[jetConstant(2.35, 0.0005), 110],
-        ...Array.from({ length: 6 }, () => [K, 20000]), [jetConstant(1.46), 90]],
-};
-const PHASE_RUNS = Object.entries(PHASE_CASES).flatMap(([name, rows]) => [550, 1064].flatMap(lambda =>
-    ['s', 'p'].map(pol => ({ name, lambda, pol, layers: rows.map(([nJet, d]) => ({ nJet, d })) }))));
+const NINE = Array.from({ length: 9 }, (_, i) => (i % 2 ? [jetConstant(1.4375), 97.5] : [jetConstant(2.25), 62.25]));
+const CLAMPED = { n0Jet: jetConstant(1), step: PHASE_STEP_NM, tod: false };
+const DIELECTRIC = { step: DIELECTRIC_PHASE_STEP_NM, tod: true };
+const PHASE_CASES = [
+    { name: 'one clamped layer', angles: [30], ...CLAMPED,
+        rows: [[jetConstant(2.35, 0.0005), 110], [K, 20000], [jetConstant(1.46), 90]] },
+    { name: 'six clamped layers', angles: [30], ...CLAMPED,
+        rows: [[jetConstant(2.35, 0.0005), 110], ...Array.from({ length: 6 }, () => [K, 20000]), [jetConstant(1.46), 90]] },
+    { name: 'nine dielectric layers', angles: [0, 60], n0Jet: jetConstant(1), ...DIELECTRIC, rows: NINE },
+    { name: 'nine dielectric layers, absorbing incident medium', angles: [60], n0Jet: jetConstant(1.5, 0.015625),
+        ...DIELECTRIC, rows: NINE },
+];
+const PHASE_RUNS = PHASE_CASES.flatMap(({ angles, rows, ...c }) => angles.flatMap(theta =>
+    [550, 1064].flatMap(lambda => ['s', 'p'].map(pol =>
+        ({ ...c, theta, lambda, pol, layers: rows.map(([nJet, d]) => ({ nJet, d })) })))));
 
 const wrap = angle => angle - 2 * Math.PI * Math.round(angle / (2 * Math.PI));
 
 // Both coefficients. t is checked where |t|² is still inside the double
 // range: through the six clamped layers it is 1e-736 at 550 nm and 1e-381 at
 // 1064 nm.
-function checkPhase({ name, lambda, pol, layers }) {
-    const n0Jet = jetConstant(1);
+function checkPhase({ name, theta, n0Jet, step, tod, lambda, pol, layers }) {
     const nsJet = jetConstant(1.52);
-    const jacobian = tmmPhaseThicknessJacobian(lambda, 30, pol, n0Jet, nsJet, layers);
-    const plain = tmmPhaseDispersion(lambda, 30, pol, n0Jet, nsJet, layers);
+    const jacobian = tmmPhaseThicknessJacobian(lambda, theta, pol, n0Jet, nsJet, layers);
+    const plain = tmmPhaseDispersion(lambda, theta, pol, n0Jet, nsJet, layers);
     for (const side of ['r', 't'].filter(s => plain[s].magnitudeSquared > 0)) {
         const jac = jacobian[side];
         const base = plain[side];
-        const coefficientAt = (k, h) => tmmPhaseDispersion(lambda, 30, pol, n0Jet, nsJet,
+        const coefficientAt = (k, h) => tmmPhaseDispersion(lambda, theta, pol, n0Jet, nsJet,
             layers.map((layer, j) => ({ nJet: layer.nJet, d: layer.d + (j === k ? h : 0) })))[side];
         const quantities = [
             ['dPhaseDeg', c => wrap(c.phaseRad - base.phaseRad) * 180 / Math.PI],
             ['dGd', c => c.gd],
             ['dGdd', c => c.gdd],
+            ['dTod', c => c.tod],
             ['dLogMagnitudeSquared', c => Math.log(c.magnitudeSquared)],
-        ];
+        ].filter(([key]) => tod || key !== 'dTod');
         for (const [k, which] of grid(layers.length, quantities.length)) {
             const [key, read] = quantities[which];
-            const reference = central(h => read(coefficientAt(k, h)), PHASE_STEP_NM);
+            const reference = central(h => read(coefficientAt(k, h)), step);
             const scale = Math.max(1, Math.abs(read(base)));
             agree((jac[key] || [])[k], reference, { abs: PHASE.abs * scale, rel: PHASE.rel },
-                `${name} λ=${lambda} ${pol} ${side} ${key}[${k}]`);
+                `${name} θ=${theta} λ=${lambda} ${pol} ${side} ${key}[${k}]`);
         }
     }
 }
@@ -335,7 +383,7 @@ const WASM = join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm');
 const kernel = existsSync(WASM) ? await instantiateTmmWasm(readFileSync(WASM)) : null;
 const pairs = kernel ? RUNS.flatMap(run => portPairs(kernel, run).map(([label, ...rest]) =>
     [`${run.at} ${label}`, ...rest])) : [];
-for (const [label, js, wa, q, T] of pairs) agreeWithT(q, wa, js, T, PORT, `wasm ${label}`);
+for (const [label, js, wa, q, T] of pairs) agreeWithT({ q, T }, wa, js, PORT, `wasm ${label}`);
 if (!kernel) console.log('NOTE : src/wasm/tmm_kernel.wasm not built; the WebAssembly checks were skipped.');
 
 console.log(`${checks} comparisons against finite differences and the port, ${pairs.length} of them WebAssembly.`);

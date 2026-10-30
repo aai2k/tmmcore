@@ -104,6 +104,8 @@ r = tmmcore.phase_spectrum(mirror, lam, pol="s")["r"]
 
 The package's tests run every call on the cases of the npm package's equivalence suite and compare each value with its WebAssembly build: R, T and A to within 1e-9, everything else to within 1e-7 of its size or 1e-12, whichever is larger. Both run the same C, so they differ only in the last digits, where the platform's math library rounds differently from the one compiled into the WebAssembly. These are the tolerances the npm package's tests hold its JavaScript kernels to against the same WebAssembly.
 
+They also run the [comparison with Essential Macleod](validation.md#against-essential-macleod) on its committed results, to the same tolerances as the npm package.
+
 ## From source
 
 The wheels build `src/c` with the platform's C compiler. To build and test a checkout, with Node for the reference results:

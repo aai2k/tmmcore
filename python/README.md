@@ -76,6 +76,8 @@ Each call takes the stack, then one wavelength or, in a `_spectrum` call, an arr
 
 The package's tests run every call on the cases of the npm package's equivalence suite and compare each value with its WebAssembly build: R, T and A to within 1e-9, everything else to within 1e-7 of its size or 1e-12, whichever is larger. Both run the same C, so they differ only in the last digits, where the platform's math library rounds differently from the one compiled into the WebAssembly.
 
+They also run the [comparison with Essential Macleod](https://aai2k.github.io/tmmcore/validation/#against-essential-macleod) on its committed results, to the same tolerances as the npm package.
+
 ## Licence
 
 [MIT](https://github.com/aai2k/tmmcore/blob/main/LICENSE) © Andrey Achapovsky

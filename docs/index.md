@@ -30,7 +30,7 @@ Takes a stack of layers and returns reflectance, transmittance and absorptance f
 
 -   __Checkable__
 
-    Three commands, needing only Node, rerun the accuracy checks in [Validation](validation.md).
+    Four commands, needing only Node, rerun the accuracy checks in [Validation](validation.md).
 
 </div>
 

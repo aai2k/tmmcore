@@ -83,15 +83,16 @@ This is the complex conjugate of Macleod's convention. R, T and A are the same u
 
 ## Verify it yourself
 
-Three commands, none needing anything but Node:
+Four commands, none needing anything but Node:
 
 | Command | Checks | Worst difference |
 |---|---|---|
 | `node examples/01-single-layer.mjs` | R of a quarter-wave layer against its closed form (Macleod Eq. 4.5) | 1.4e-17 |
-| `npm test` | the JavaScript against the C built to WebAssembly, value by value; every derivative against finite differences; grazing incidence and the exact critical angle against closed forms | 4.4e-16 in R, T, A and their derivatives; 1.1e-11 relative in phase, GD, GDD and TOD |
+| `npm test` | the JavaScript against the C built to WebAssembly, value by value; every derivative against finite differences; grazing incidence and the exact critical angle against closed forms; and the Essential Macleod comparison below | 4.4e-16 in R, T, A and their derivatives; 1.1e-11 relative in phase, GD, GDD and TOD; JavaScript against WebAssembly |
 | `npm run compare` | R, T and the complex r against [Steven Byrnes' `tmm`](https://github.com/sbyrnes321/tmm), written independently in Python, at 0°, 30° and 60° | 8.6e-14 |
+| `node tests/macleod.mjs` | ten designs against Essential Macleod's results, committed here: R, T and A, the phase of r and t with their GD, GDD and TOD, Psi and Delta, and monitoring curves | 2.1e-14 in R, T and A, from either side; 3.4e-12° in phase |
 
-The first checks the equations. The second compares two implementations by the same author, so it catches porting bugs and nothing more. The third compares with another author's code under the same complex-index convention; its worst case is a forty-layer stack, where round-off builds up through the longest matrix product.
+The first checks the equations. The JavaScript ⇆ WebAssembly part of the second compares two implementations by the same author, so it catches porting bugs and nothing more. The third compares with another author's code under the same complex-index convention; its worst case is a forty-layer stack, where round-off builds up through the longest matrix product. The fourth compares with a commercial design program, on designs of constant-index materials made for the check, so no material data enters.
 
 [Validation](https://aai2k.github.io/tmmcore/validation/) sets out what each check does and does not establish, and lists what is not tested. [Comparison](https://aai2k.github.io/tmmcore/comparison/) puts tmmcore beside four other TMM packages for accuracy and speed.
 

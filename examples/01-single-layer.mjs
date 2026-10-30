@@ -12,6 +12,7 @@
  *   node examples/01-single-layer.mjs
  */
 
+import assert from 'node:assert/strict';
 import { rta } from '../src/js/index.js';
 
 const n0 = 1.0;      // air
@@ -31,6 +32,8 @@ console.log(`quarter-wave thickness   ${d.toFixed(4)} nm`);
 console.log(`R from tmmcore           ${R.toPrecision(17)}`);
 console.log(`R closed form            ${exact.toPrecision(17)}`);
 console.log(`difference               ${Math.abs(R - exact).toExponential(2)}`);
+// The bound is the difference above, rounded up to a power of ten, times ten.
+assert.ok(Math.abs(R - exact) <= 1e-15, 'R matches the closed form');
 console.log(`R + T + A                ${(R + T + A).toPrecision(17)}`);
 
 // Without the coating, the bare substrate reflects the Fresnel amount.

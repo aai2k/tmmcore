@@ -20,6 +20,7 @@
  *   node examples/12-group-delay.mjs
  */
 
+import assert from 'node:assert/strict';
 import {
     C_NM_PER_FS, omegaFromLambdaNm, phase, phaseJacobian, phaseSpectrum,
     jetAdd, jetConstant, jetMultiply, jetReciprocal, jetScale, wavelengthOmegaJet,
@@ -57,10 +58,14 @@ const exact = {
 
 console.log(`matched slab, ${thickness / 1000} µm of n(λ) = ${A} + ${B}/λ², at ${lambda} nm\n`);
 console.log('            tmmcore            closed form         relative');
+// Bounds on the relative error: the agreement printed below, rounded up to a
+// power of ten, times ten.
+const BOUND = { gd: 1e-14, gdd: 1e-12, tod: 1e-11 };
 for (const [key, unit] of [['gd', 'fs'], ['gdd', 'fs²'], ['tod', 'fs³']]) {
     const relative = Math.abs(t[key] - exact[key]) / Math.abs(exact[key]);
     console.log(`  ${key.toUpperCase().padEnd(4)} ${t[key].toPrecision(15).padStart(20)}` +
         ` ${exact[key].toPrecision(15).padStart(20)}   ${relative.toExponential(1)}  ${unit}`);
+    assert.ok(relative <= BOUND[key], `${key} matches the closed form`);
 }
 
 // |t|² is 1 because there is nothing to reflect from.

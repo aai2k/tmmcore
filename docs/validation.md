@@ -2,7 +2,7 @@
 
 Everything below runs from a clone. The numbers quoted are the output on a developer machine, and yours should match to the last digit or two.
 
-Four kinds of check, each answering a different question:
+Five kinds of check, each answering a different question:
 
 | Check | Question it answers |
 |---|---|
@@ -10,6 +10,7 @@ Four kinds of check, each answering a different question:
 | Finite differences | Are the derivatives derivatives of *what `rta()` computes*? |
 | JavaScript against WebAssembly | Do the two implementations match *each other*? |
 | Another library | Does it match an *independent author's* implementation? |
+| Essential Macleod | Does it match a *commercial design program*? |
 
 None of these covers the others. Two implementations can agree perfectly and both be wrong; matching a closed form in one special case says nothing about the general one.
 
@@ -29,7 +30,7 @@ R closed form            0.012600790214630288
 difference               1.39e-17
 ```
 
-Below double-precision epsilon, $2.2\times10^{-16}$.
+Below double-precision epsilon, $2.2\times10^{-16}$. The example fails past $10^{-15}$, and CI runs every example.
 
 ### Group delay, GDD and TOD
 
@@ -54,6 +55,8 @@ matched slab, 1 µm of n(λ) = 1.45 + 3600/λ², at 800 nm
   TOD    0.0203063517881787   0.0203063517881746   2.0e-13  fs³
 ```
 
+The example fails if any of the three drifts past its agreement here, rounded up to a power of ten, times ten.
+
 !!! warning "GDD and TOD lose precision on thick elements"
 
     GDD is a difference of terms of order $\mathrm{GD}^2$, and TOD of terms of order $\mathrm{GD}^3$. On a thick element those terms are far larger than GDD and TOD themselves, so both lose digits as the element thickens, TOD the faster. The same command goes on to print, for thicker slabs of the same material:
@@ -68,6 +71,21 @@ matched slab, 1 µm of n(λ) = 1.45 + 3600/λ², at 800 nm
     Coatings live at the top of that table and are unaffected. For the dispersion of millimetres of glass, differentiate the propagation phase directly instead of asking a transfer matrix for it: the closed forms above are the whole calculation and they do not cancel.
 
     GD stays at machine precision throughout.
+
+### The jet arithmetic
+
+Every GD, GDD and TOD is read off Taylor jets in frequency, carried through the transfer matrix by the operations of `src/js/jet.js`. Each operation is checked on its own: fed the jet of the variable at a complex point, it must return the value and the first three derivatives of the function it stands for, written out by hand, to $10^{-13}$ of the value or of 1, whichever is larger.
+
+```bash
+node tests/jets.mjs
+```
+
+```
+112 derivatives against closed forms
+PASS : jet arithmetic
+```
+
+`tests/kernel_exports.mjs` holds the WebAssembly jets to these.
 
 ### An absorbing incident medium
 
@@ -91,6 +109,8 @@ PASS : absorbing incident medium
 The second line shows what the test guards against: carrying the complex index into Snell's invariant makes the incident wave's amplitude vary along the interface, energy flows sideways inside lossless layers, and $R + T$ exceeds 1 by a further term linear in $k_0$ that grows with the angle and with the stack's resonance.
 
 The same test checks $A$ against what the layers absorb: the net irradiance $\tfrac12\mathrm{Re}(BC^*)$ entering the front of the stack less $\tfrac12\mathrm{Re}(\eta_s)$ leaving it (Macleod Eq. 2.120), per unit incident irradiance, computed from $[B, C]$ rather than from $r$. It holds $A$ to within $10^{-14}$ of that on a stack with a silver layer, and below $10^{-14}$ on the lossless 21-layer stack.
+
+Essential Macleod reports $R$ and $T$ differently here. It takes the angles from the same real invariant, but works with the real part $a$ of the incident tilted admittance $\eta_0$, so over lossless layers its $R + T$ is exactly 1. The coating is the same in both: from the surface admittance $Y = \eta_0(1 - r)/(1 + r)$ of tmmcore's $r$, Essential Macleod's reflection coefficient is $(a - Y)/(a + Y)$, and the [comparison with it](#against-essential-macleod) matches its values to round-off that way.
 
 ### Grazing incidence and the critical angle
 
@@ -133,15 +153,15 @@ Without the held factor, $T$ stops near $10^{-43}$ for each clamped layer whatev
 
 ## Derivatives against finite differences
 
-The JavaScript and WebAssembly derivative kernels share their formulas, so agreeing with each other proves nothing about the formulas. This check holds every derivative to finite differences of `rta()` and `phase()`, which share nothing with the kernels but the layer matrix: the thickness Jacobian, every entry of the Hessian, the needle P-function at every gap and inside every layer, and the thickness derivatives of phase, GD, GDD and $\ln|c|^2$ for both $r$ and $t$. Through a clamped layer $T$ is below $10^{-43}$, where an absolute tolerance sees nothing, so every derivative of $T$ is also held relative to $T$.
+The JavaScript and WebAssembly derivative kernels share their formulas, so agreeing with each other proves nothing about the formulas. This check holds every derivative to finite differences of `rta()` and `phase()`, which share nothing with the kernels but the layer matrix: the thickness Jacobian, every entry of the Hessian, the needle P-function at every gap and inside every layer, and the thickness derivatives of phase, GD, GDD, TOD and $\ln|c|^2$ for both $r$ and $t$. A needle of the material of the layer beside it or around it is that layer made thicker, so there the needle scan must also equal the Jacobian. Through a clamped layer $T$ is below $10^{-43}$, where an absolute tolerance sees nothing, so every derivative of $T$ is also held relative to $T$.
 
 ```bash
 node tests/derivatives_fd.mjs
 ```
 
 ```
-20810 comparisons against finite differences and the port, 9342 of them WebAssembly.
-worst difference as a fraction of its tolerance: 2.42e-1, six clamped layers λ=550 p r dGdd[3]
+23564 comparisons against finite differences and the port, 9342 of them WebAssembly.
+worst difference as a fraction of its tolerance: 2.42e-1, six clamped layers θ=30 λ=550 p r dGdd[3]
 PASS : analytic derivatives match finite differences.
 ```
 
@@ -157,8 +177,9 @@ The stacks are the ones where derivative kernels go wrong while R and T stay rig
 | three layers with Al, under an incident medium with $k = 0.01$ | the absorptance's own term in $\mathrm{Im}\,r$, which $dR$ and $dT$ do not carry |
 | four dielectric layers | nothing, as a control |
 | one and six 20 µm opaque layers, phase kernel | the clamp, and a matrix product past the rescale threshold |
+| nine dielectric layers, phase kernel, from air and from an incident medium with $k = 0.016$ | TOD, which passes $10^5$ fs³ at a resonance |
 
-Differences use five-point central stencils in the layer thickness, with a step of 0.01 nm, or 0.25 nm for the phase quantities, where GDD carries enough cancellation to need the wider step. A needle cannot have negative thickness, so its differences are one-sided, third order. The worst case above is that GDD noise, at a quarter of its tolerance.
+Differences use five-point central stencils in the layer thickness, with a step of 0.01 nm, or 0.25 nm for the phase quantities through the opaque layers, where GDD carries enough noise to need the wider step. Their TOD carries more noise than a difference at any step resolves, so its thickness derivatives there are left to the JavaScript ⇆ WebAssembly check below. A needle cannot have negative thickness, so its differences are one-sided, third order. The worst case above is that GDD noise, at a quarter of its tolerance.
 
 ## JavaScript against WebAssembly
 
@@ -264,10 +285,62 @@ See [Comparison with other packages](comparison.md) for the full tables, includi
 
 [^byrnes]: S. J. Byrnes, *Multilayer optical calculations*, arXiv:1603.02720.
 
+## Against Essential Macleod
+
+Essential Macleod, from Thin Film Center, computed ten designs made for this check. Every material is a constant $n$ and $k$ of the test's own, so no material data from either program enters. Its results are committed, so the check needs no copy of the program; `tests/macleod/export.ps1` writes them again through its COM automation server on a machine that has it.
+
+```bash
+node tests/macleod.mjs
+```
+
+```
+Essential Macleod 11.09.0605: 10 designs, 68714 comparisons
+  worst R, T, A            1.4e-14  (js grazing 89° p 690 nm R)
+  worst substrate-side R   2.1e-14  (js metal-mirror 70° p 510 nm Rback)
+  worst phase              3.4e-12  (js frustrated-tir 30° p 530 nm r phase)
+  worst Psi, Delta         2.8e-12  (js frustrated-tir 30° 530 nm Delta of r)
+  worst GD, GDD, TOD       3.6e-11  (js frustrated-tir 30° p 530 nm r tod (closed form), fs^3 over 1)
+  worst locus R            8.9e-16  (wasm dielectric-stack locus 560 nm 0° s at depth 62.25 nm, monitorCurve)
+PASS : Essential Macleod
+```
+
+Each design is scanned across the visible at two or three angles, in s and p:
+
+| Design | What it reaches |
+|---|---|
+| nine quarter-wave layers at 560 nm | a stop band |
+| a low-index layer over a metal | a mirror out to 70° |
+| four layers, two of them absorbing | absorption inside the stack |
+| two layers on an absorbing substrate | transmittance into an absorbing medium, and reflectance seen from inside it |
+| three layers under an incident medium with $k = 0.001$, and again with $k = 0.016$ | the absorbing incident medium |
+| a 400 nm air gap between glasses | frustrated total reflection at 45° and 60°, and a reflection zero at 30° |
+| one layer at 80°, 89° and 89.9° | grazing incidence |
+| 1 µm of metal | the opaque-layer clamp |
+| a 20 µm layer, 500 to 600 nm in 2.5 nm steps | a phase that turns fast with wavelength, and long group delay |
+
+In each scan the test compares $R$, $T$ and $A$, and for natural light too; the phase of $r$ and of $t$, with the GD, GDD and TOD of each; Psi and Delta of $r$ and of $t$; and the reflectance from the substrate side. For five of the designs Essential Macleod also gives monitoring curves, the reflectance at one wavelength with the coating cut at each depth, which `monitorCurve`, `growingEval` and `depositionSpectra` must reproduce. Everything runs on the JavaScript and the WebAssembly kernel, except the monitoring calls, which only the WebAssembly kernel has, and the delays under an absorbing incident medium, which only the JavaScript kernel gives.
+
+| Quantity | As Essential Macleod reports it | Compared with |
+|---|---|---|
+| index | $n - ik$ | $n + ik$ |
+| phase of $r$ and $t$ | degrees, with Macleod's sign | `phaseRad`, which carries the same sign |
+| Psi of $r$ and of $t$ | $\arctan\sqrt{R_p/R_s}$ and $\arctan\sqrt{T_p/T_s}$ | `rtaSpectrum` in s and p |
+| Delta of $r$ | $\varphi_p - \varphi_s + 180^\circ$ | `phaseSpectrum` in s and p |
+| Delta of $t$ | $\varphi_p - \varphi_s$ | `phaseSpectrum` in s and p |
+| phase of $t$ where $T < 10^{-28}$ | written as 0 | not compared |
+| reflectance from the substrate side | at the angle of incidence taken in the substrate | `rtaSpectrum` of the reversed stack |
+
+$R$, $T$ and $A$ are held to $10^{-12}$, phases, Psi and Delta to $10^{-10}$ degrees, and GD, GDD and TOD to $10^{-9}$ of the largest value in the scan, or of 1 fs, fs² or fs³ where that is larger. Each bound is the worst difference over the ten designs, rounded up to a power of ten, times ten.
+
+Two places take another reference. Essential Macleod's reflection GDD and TOD lose digits where $r$ nears zero: the air gap at 30° passes through $r = 0$ near 529 nm, and at 530 nm its TOD is off by $2\times10^{-6}$ fs³. The reflection delays of that scan are held instead to the closed form for one film between identical media, from the characteristic matrix of Macleod's Eq. 2.113. Under an absorbing incident medium the two programs define $R$ and $T$ differently, as described [above](#an-absorbing-incident-medium): tmmcore's $r$ and $t$ are carried to Essential Macleod's through the surface admittance, and their GD, GDD and TOD through the frequency jets of $r$ and $t$.
+
+The Python package runs the same comparison in `python/tests/test_macleod.py`, except the monitoring calls and the delays under an absorbing incident medium, which need calls the package does not expose.
+
 ## What is not tested
 
-- **Coated stacks at oblique incidence against a closed-form value.** The oblique closed forms here are a bare interface near grazing and an air gap at its critical angle. Stacks at oblique incidence are checked against Byrnes' implementation and against the energy identity above, not against an analytic $R$ or $T$.
-- **An absorbing incident medium against another implementation.** Byrnes' `tmm` asserts that $n_0 \sin\theta_0$ is real, so it refuses a complex $n_0$ at a real angle of incidence. That case rests on the identity, on the absorptance from the net irradiance, and on the JavaScript ⇆ WebAssembly agreement.
+- **Coated stacks at oblique incidence against a closed-form value of $R$ or $T$.** The oblique closed forms here are a bare interface near grazing, an air gap at its critical angle, and the reflection delays of an air gap below it. Stacks at oblique incidence are checked against Essential Macleod, Byrnes' implementation and the energy identity above.
+- **tmmcore's own $R$ and $T$ under an absorbing incident medium against another implementation.** Essential Macleod defines them differently there, so the comparison with it checks $r$ and $t$ through the surface admittance, not that definition, and Byrnes' `tmm` asserts that $n_0 \sin\theta_0$ is real, so it refuses a complex $n_0$ at a real angle of incidence. The definition rests on the energy identity, on the absorptance from the net irradiance, and on the JavaScript ⇆ WebAssembly agreement.
+- **The thickness derivatives of TOD through an opaque layer against finite differences.** There TOD carries more round-off than a difference resolves, so those derivatives rest on the JavaScript ⇆ WebAssembly agreement.
 - **The phase kernel at an exact critical angle.** It returns `null` there, or `NaN` group delay and its derivatives at a substrate in s, rather than a limit; see the [API reference](api.md#phase-gd-gdd-and-tod).
 - **Extreme parameter ranges.** Very large layer counts and indices far outside the optical range are exercised by neither the equivalence suite nor the cross-library comparison.
 
