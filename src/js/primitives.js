@@ -106,13 +106,13 @@ function rescaleMatrix(M) {
 // the REAL part of the incident index. Macleod writes Snell's law and the
 // tilted admittances for a transparent incident medium, so n0 sinθ0 is real
 // (5th ed., Eq. 2.85 and Eqs. 10.5-10.7). Essential Macleod takes the angles
-// of an absorbing incident medium from the real part of its index too: its R
-// and T are reproduced only that way. An absorbing incident medium then
-// carries an inhomogeneous wave whose amplitude falls along the normal only,
-// and each medium's cosθ follows from that one real invariant. Putting the
-// complex index into the invariant would make the amplitude vary along the
-// interface, so energy would flow sideways inside lossless layers and R + T
-// would be wrong by a term linear in the incident k at oblique incidence.
+// of an absorbing incident medium from the real part of its index too. An
+// absorbing incident medium then carries an inhomogeneous wave whose amplitude
+// falls along the normal only, and each medium's cosθ follows from that one
+// real invariant. Putting the complex index into the invariant would make the
+// amplitude vary along the interface, so energy would flow sideways inside
+// lossless layers and R + T would be wrong by a term linear in the incident k
+// at oblique incidence.
 
 // sinθ0 and cosθ0 of the angle of incidence, each as [value, 0]. The cosine is
 // taken directly: near grazing incidence sqrt(1 − sin²θ0) keeps three correct
@@ -160,7 +160,9 @@ function snellCosTheta(n0, sinTheta0, nj, cosTheta0) {
 // problem as the rest of the stack. R + T then departs from 1 for lossless
 // layers only by the interference of the incident and reflected waves in the
 // absorbing medium, the term Macleod's Eq. 2.83 carries, which is second order
-// in k0 for a bare interface.
+// in k0 for a bare interface. Essential Macleod reports R and T at the real
+// part of this admittance, which leaves that term out; tests/macleod.mjs
+// derives its values from this r through the coating's surface admittance.
 function incidentCosTheta(n0, sinTheta0, cosTheta0) {
     if (n0[1] !== 0) return snellCosTheta(n0, sinTheta0, n0, cosTheta0);
     return cosTheta0
