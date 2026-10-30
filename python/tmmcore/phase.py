@@ -12,7 +12,7 @@ import math
 
 import numpy as np
 
-from . import _stack
+from . import _options, _stack
 from ._library import lib
 from ._stack import address
 
@@ -48,8 +48,8 @@ def phase(stack, wavelength, *, pol=None, angle=None, sine=None):
     {"r", "t"}, each {"phase_rad", "phase_deg", "gd", "gdd", "tod",
     "magnitude_squared"}, or None where the coefficient is exactly zero.
     """
-    lam = _stack.read_wavelength(wavelength)
-    theta, sine, code = _stack.read_phase_options(angle, sine, pol)
+    lam = _options.read_wavelength(wavelength)
+    theta, sine, code = _options.read_phase_options(angle, sine, pol)
     n0, ns, layers, thick = _stack.point_jet_stack(stack)
     out = np.empty(10)
     lib.tmm_phase(lam, theta, code, address(n0), address(ns), address(layers), address(thick), len(thick),
@@ -63,8 +63,8 @@ def phase_jacobian(stack, wavelength, *, pol=None, angle=None, sine=None):
     derivatives: "d_phase_deg", "d_gd", "d_gdd", "d_tod" and
     "d_log_magnitude_squared", each an array of N, one per layer.
     """
-    lam = _stack.read_wavelength(wavelength)
-    theta, sine, code = _stack.read_phase_options(angle, sine, pol)
+    lam = _options.read_wavelength(wavelength)
+    theta, sine, code = _options.read_phase_options(angle, sine, pol)
     n0, ns, layers, thick = _stack.point_jet_stack(stack)
     out = np.empty((2, 5))
     deriv = np.empty((2, 5, len(thick)))
@@ -83,9 +83,9 @@ def phase_jacobian(stack, wavelength, *, pol=None, angle=None, sine=None):
 
 def _phase_grid(stack, wavelengths, options, with_derivatives):
     kernel = lib.tmm_phase_jacobian_spectrum if with_derivatives else lib.tmm_phase_spectrum
-    lambdas = _stack.read_wavelengths(wavelengths)
+    lambdas = _options.read_wavelengths(wavelengths)
     n_lam = len(lambdas)
-    angles, sines, code = _stack.read_phase_options(*options, n_lam)
+    angles, sines, code = _options.read_phase_options(*options, n_lam)
     n0, ns, table, thick = _stack.grid_jet_stack(stack, n_lam)
     omegas = omega_from_lambda_nm(lambdas)
     # Per wavelength the kernel writes the five quantities of r, then of t,

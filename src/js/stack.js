@@ -29,10 +29,11 @@
 
 import { JET_ORDER, jetConstant } from './jet.js';
 
-const isList = value => Array.isArray(value) || ArrayBuffer.isView(value);
+/** An array or a typed array. */
+export const isList = value => Array.isArray(value) || ArrayBuffer.isView(value);
 
-// A list of `length` numbers. A hole in a sparse array is not a number.
-function isNumbers(value, length) {
+/** A list of `length` numbers. A hole in a sparse array is not a number. */
+export function isNumbers(value, length) {
     if (!isList(value) || value.length !== length) return false;
     for (let i = 0; i < length; i++) if (typeof value[i] !== 'number') return false;
     return true;
@@ -41,9 +42,6 @@ function isNumbers(value, length) {
 /** A jet: JET_ORDER + 1 terms, each [re, im] as any list of two. */
 export const isJet = value => Array.isArray(value) && value.length === JET_ORDER + 1
     && value.every(term => isList(term) && term.length === 2);
-
-// A list of `length` jets. Array.from reads a hole in a sparse list as undefined, which is not a jet.
-const isJets = (value, length) => Array.isArray(value) && value.length === length && Array.from(value).every(isJet);
 
 // A medium as { n, k }; k undefined when it was left out.
 function readMedium(value, where) {
@@ -94,66 +92,6 @@ function readStack(stack) {
 // An index of a stack in a message: 'incident', 'substrate', or a layer by its
 // position. A call builds the name only when it throws.
 const indexName = where => (typeof where === 'number' ? `layer ${where}` : where);
-
-/** A wavelength of a one-wavelength call, in nm. */
-export function readWavelength(wavelength) {
-    if (typeof wavelength !== 'number') throw new TypeError('wavelength must be a number (nm)');
-    return wavelength;
-}
-
-/** The wavelengths of a grid call, in nm. */
-export function readWavelengths(wavelengths) {
-    if (!isList(wavelengths) || !isNumbers(wavelengths, wavelengths.length)) {
-        throw new TypeError('wavelengths must be a list of numbers (nm)');
-    }
-    return wavelengths;
-}
-
-/**
- * The angle of incidence in degrees, 0 when left out: a number, or in a grid
- * call (nLam given) also one angle per wavelength.
- */
-export function readAngle(angle = 0, nLam = null) {
-    if (typeof angle === 'number') return angle;
-    if (nLam !== null && isNumbers(angle, nLam)) return angle;
-    throw new TypeError(nLam === null
-        ? 'angle must be a number (degrees)'
-        : `angle must be a number or ${nLam} numbers, one per wavelength (degrees)`);
-}
-
-/** Polarization of an R/T call: 's', 'p' or 'avg', the mean of the two. */
-export function readRtaPol(pol = 'avg') {
-    if (pol !== 's' && pol !== 'p' && pol !== 'avg') throw new TypeError("pol must be 's', 'p' or 'avg'");
-    return pol;
-}
-
-/**
- * Polarization of a phase call: 's' or 'p'. It may be left out at normal
- * incidence, where the two are the same, and is then 's'.
- */
-export function readPhasePol(pol, normal) {
-    if (pol === undefined && normal) return 's';
-    if (pol !== 's' && pol !== 'p') throw new TypeError("pol must be 's' or 'p'; it may be left out at normal incidence");
-    return pol;
-}
-
-/**
- * The sine of the angle of incidence as a jet in ω, which a phase call takes in
- * place of the angle: one jet at one wavelength, a jet per wavelength in a grid
- * call (nLam given).
- */
-export function readSine(sine, nLam = null) {
-    if (nLam === null ? isJet(sine) : isJets(sine, nLam)) return sine;
-    throw new TypeError(nLam === null ? 'sine must be a jet' : `sine must be ${nLam} jets, one per wavelength`);
-}
-
-const isZeroJet = jet => jet.every(term => term[0] === 0 && term[1] === 0);
-
-/** Light along the normal at every wavelength: every angle 0, or every term of the sine jets 0. */
-export function atNormalIncidence(angle, sine, nLam = null) {
-    if (sine) return nLam === null ? isZeroJet(sine) : sine.every(isZeroJet);
-    return typeof angle === 'number' ? angle === 0 : angle.every(value => value === 0);
-}
 
 // ── R/T calls: ñ as [re, im] ─────────────────────────────────────────────────
 
@@ -236,17 +174,6 @@ export function readCandidates(candidates, nLam) {
         checkIndex(index, nLam, `candidate ${c}`);
         return index;
     });
-}
-
-/**
- * Where a needle scan also opens each layer, as fractions of its thickness from
- * the incident side: none when left out.
- */
-export function readFractions(fractions = []) {
-    if (!isList(fractions) || !isNumbers(fractions, fractions.length)) {
-        throw new TypeError('fractions must be a list of numbers');
-    }
-    return fractions;
 }
 
 // ── Phase calls: ñ as a jet ──────────────────────────────────────────────────

@@ -28,9 +28,9 @@
  */
 
 import {
-    readWavelength, readWavelengths, readAngle, readRtaPol, readPhasePol, readSine, atNormalIncidence,
-    readCandidates, readFractions, pointJetStack, gridJetStack,
-} from './stack.js';
+    readWavelength, readWavelengths, readAngle, readRtaPol, readPhasePol, readSine, atNormalIncidence, readFractions,
+} from './options.js';
+import { readCandidates, pointJetStack, gridJetStack } from './stack.js';
 
 const RTA_OPTIONS = ['angle', 'pol'];
 const PHASE_OPTIONS = ['angle', 'sine', 'pol'];
