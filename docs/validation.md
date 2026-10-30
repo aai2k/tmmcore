@@ -71,7 +71,7 @@ matched slab, 1 µm of n(λ) = 1.45 + 3600/λ², at 800 nm
 
 ### An absorbing incident medium
 
-Light arriving from inside an absorbing medium, a cemented cube or an immersion liquid, is the one case where $R + T$ over lossless layers is not 1, and the size of the departure is fixed by the definitions. Every wave in the stack shares the real invariant $n_0 \sin\theta_0$, with $n_0$ the real part of the incident index, and the transmittance carries the incident admittance the way Macleod's Eq. 2.83 does. What is left is the interference of the incident and reflected waves inside the absorbing medium:
+Light arriving from inside an absorbing medium, a cemented cube or an immersion liquid, is the one case where $R + T$ over lossless layers is not 1, and the size of the departure is fixed by the definitions. Every wave in the stack shares the real invariant $n_0 \sin\theta_0$ of Macleod's Eq. 2.85, with $n_0$ the real part of the incident index as Essential Macleod takes it, and the transmittance carries the incident admittance the way Macleod's Eq. 2.83 does. What is left is the interference of the incident and reflected waves inside the absorbing medium:
 
 $$1 - R - T = -2\,\frac{\mathrm{Im}\,\eta_0}{\mathrm{Re}\,\eta_0}\,\mathrm{Im}(r)$$
 

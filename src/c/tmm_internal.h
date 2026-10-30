@@ -46,7 +46,7 @@
  *
  * References:
  *   • Macleod, Thin-Film Optical Filters 5th ed., §2.4, Eqs. 2.111, 2.123–2.125;
- *     Eq. 2.83; §10.2, Eqs. 10.11-10.13 (tilted admittances)
+ *     Eq. 2.83; Eq. 2.85 and Eqs. 10.5-10.7 (tilted admittances, real invariant)
  *   • Sullivan & Dobrowolski, Appl. Opt. 35, 5484 (1996), Eqs. (3)–(6)
  *   • Tikhonravov, Trubetskov & DeBell, Appl. Opt. 35, 5493 (1996)
  *   • Birge & Kärtner, Appl. Opt. 45, 1478 (2006)   [phase dispersion]
@@ -180,12 +180,12 @@ static inline void layers_at(const grid_layout *g, int li, double *layers) {
 }
 
 /* ── Snell's law: cosθ_j from incident (n0, θ0) into medium nj ──────────────
- * The transverse invariant is Re(n0) sinθ0. At oblique incidence Macleod keeps
- * the incident medium free of absorption (5th ed., §2.3.5 and §10.2); for an
- * absorbing one tmmcore takes the real part, so that medium carries a wave
- * whose amplitude falls along the normal only, and every medium's cosθ follows
- * from that one real invariant. Mirrors incidence / snellCosTheta /
- * incidentCosTheta in primitives.js, which gives the reason. */
+ * The transverse invariant is Re(n0) sinθ0: Macleod's real n0 sinθ0 (5th ed.,
+ * Eq. 2.85 and Eqs. 10.5-10.7), taken from the real part of an absorbing
+ * incident index as Essential Macleod does. That medium carries a wave whose
+ * amplitude falls along the normal only, and every medium's cosθ follows from
+ * that one real invariant. Mirrors incidence / snellCosTheta /
+ * incidentCosTheta in primitives.js. */
 
 /* sinθ0 and cosθ0 of the angle of incidence. The cosine is taken directly:
  * sqrt(1 − sin²θ0) keeps none of it near grazing incidence. */

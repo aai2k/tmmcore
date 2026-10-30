@@ -21,7 +21,7 @@ Check these before comparing results with another code.
 | Angle of incidence | degrees from normal |
 | Complex numbers | `[re, im]` pairs, in jets and the primitives |
 | Layer order | incident medium first, substrate last |
-| Absorbing incident medium | every angle follows from the real invariant $n_0 \sin\theta_0$, with $n_0$ the real part of the index; the incident wave decays along the normal only, and $A$ is what the layers absorb, so $R + T + A$ is not one |
+| Absorbing incident medium | every angle follows from the real invariant $n_0 \sin\theta_0$ of Macleod's Eq. 2.85, with $n_0$ the real part of the index, as Essential Macleod takes it; the incident wave decays along the normal only, and $A$ is what the layers absorb, so $R + T + A$ is not one |
 
 This is the complex conjugate of the convention in Macleod's *Thin-Film Optical Filters* ($\tilde n = n - ik$, $\exp(+i\omega t)$). Reflectance, transmittance and absorptance are the same under conjugation. Phase is not: the phase calls report it in Macleod's convention, as [Units and signs](api.md#units-and-signs) explains.
 
