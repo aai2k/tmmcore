@@ -43,7 +43,7 @@ Largest absolute difference in R and T from Byrnes, over the whole grid, both po
 
 Every case is lit from air. An absorbing incident medium has no cross-library reference here: Byrnes' `tmm` asserts that $n_0 \sin\theta_0$ is real and refuses a complex $n_0$ at a real angle. tmmcore evaluates that case from the real invariant $\mathrm{Re}(n_0)\sin\theta_0$ and checks it against an exact energy identity instead; see [Validation](validation.md#an-absorbing-incident-medium).
 
-tmmcore and `tmm_faster` agree with Byrnes to float64 round-off. `tmm_fast` and `tmmax` agree only to about $10^{-7}$ whatever dtype they are given, the size of single-precision round-off; `tmmax` runs on JAX, which computes in single precision unless `jax_enable_x64` is set. So neither can serve as an accuracy reference.
+tmmcore and `tmm_faster` agree with Byrnes to float64 round-off. `tmm_fast` and `tmmax` are timed only; the harness does not compare their output with Byrnes.
 
 ## Speed
 
@@ -74,7 +74,7 @@ From the harness notes:
 
 - `coh_tmm` also returns `vw_list`, `kz_list`, `r`, `t` and `power_entering`, more than R and T, and its API has no cheaper call.
 - Byrnes' `tmm` must be given Python `complex`, not NumPy scalars; `coh_tmm` is much slower on `np.complex128` elements, which would have favoured every other package.
-- `tmmax` reads materials from its own database rather than taking n and k, so its timing includes an interpolation the others do not do.
+- `tmmax` reads materials from its own database rather than taking n and k, so its timing includes an interpolation the others do not do. It runs on JAX, which computes in single precision unless `jax_enable_x64` is set; the harness does not set it.
 - A control run puts the Python driver loop under 1% of the total time, so the Byrnes figures time the library rather than the harness.
 
 ## What the others do that tmmcore does not

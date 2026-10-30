@@ -49,7 +49,7 @@ python -m venv .venv
 .venv/Scripts/python gen_reference.py   # runs Byrnes, writes reference_byrnes.json
 ```
 
-Only Byrnes and `tmm_faster` are usable as accuracy references. `tmm_fast` and `tmmax` agree only to about 1e-7 whatever dtype they are given, the size of single-precision round-off; `tmmax` runs on JAX, which computes in single precision unless `jax_enable_x64` is set.
+`npm run compare` shows that tmmcore agrees with Byrnes to float64 round-off. `bench_fast.py` checks `tmm_faster` against Byrnes the same way, and times `tmm_fast` and `tmmax` without comparing their output.
 
 ## Timing tier
 
@@ -86,7 +86,7 @@ With its default threads, `tmm_faster` is faster than tmmcore on large problems.
 - `coh_tmm` also returns `vw_list`, `kz_list`, `r`, `t` and `power_entering`: strictly more than R and T, with no cheaper entry point in its API.
 - `overhead_py.py` confirms the Python driver loop is under 1% of total time, so the Byrnes figures measure the library rather than the harness.
 - Byrnes must be fed Python `complex`, not NumPy scalars; `coh_tmm` is markedly slower on `np.complex128` elements, which would make every other package look faster.
-- `tmmax` reads materials from its own bundled database rather than accepting explicit n,k, so it is timed at matching layer and grid sizes but not value-checked, and its timing includes an interpolation the others do not perform.
+- `tmmax` reads materials from its own bundled database rather than accepting explicit n,k, so it is timed at matching layer and grid sizes but not value-checked, and its timing includes an interpolation the others do not perform. It runs on JAX, which computes in single precision unless `jax_enable_x64` is set; the harness does not set it.
 - Canonical Byrnes timings come from `bench_py.py` in a dedicated process; the copy inside `results_fast_t1.json` shares a process with torch and JAX.
 
 ## Files

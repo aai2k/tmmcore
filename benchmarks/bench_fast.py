@@ -14,10 +14,10 @@ Two workloads
   B (batch)   NBATCH distinct stacks at once. This is the vectorized libraries'
               home turf, and matches ML dataset generation / DE populations.
 
-Correctness is checked against Byrnes wherever the library accepts explicit
-n,k (tmm_faster, tmm_fast). tmmax reads materials from its own bundled
-database, so it is timed at matching layer/grid sizes but not value-checked —
-its timing also includes an nk interpolation the others do not perform.
+Correctness is checked against Byrnes for tmm_faster only; tmm_fast is timed
+without a comparison. tmmax reads materials from its own bundled database, so
+it is timed at matching layer/grid sizes but not value-checked, and its timing
+also includes an nk interpolation the others do not perform.
 """
 
 import json
