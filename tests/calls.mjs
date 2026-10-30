@@ -21,7 +21,8 @@
  *     are the same, and take the incident sine as jets in place of the angle:
  *     a constant sine is the angle, and a sine that follows a dispersive
  *     incident medium gives the GD and GDD of differences of the phase in ω
- *   • a misspelled option, a malformed stack, a wavelength list holding
+ *   • a misspelled option, a malformed stack, a key the stack, a layer or a
+ *     medium does not take, a wavelength list holding
  *     anything but numbers, missing or malformed needle candidates, malformed
  *     fractions, a missing or malformed growing layer or list of thicknesses,
  *     and an index per wavelength with no derivatives in a phase call are
@@ -367,6 +368,8 @@ for (const [name, b] of BACKENDS) {
     assert.throws(() => growing.setTop({ n: [1.38, 1.37, 1.36] }),
         /top n must be a number or 2 numbers, one per wavelength/, `${name} setTop`);
     assert.throws(() => growing.sample('10'), /d must be a number \(nm\)/, `${name} sample of text`);
+    assert.throws(() => growing.setTop({ n: 1.38, kappa: 0 }), /top has 'kappa'; a medium takes n and k/,
+        `${name} setTop with a key a medium does not take`);
     growing.setTop(1.38);
     const out = growing.sample(10);
     assert.equal(growing.sample(20, out), out, `${name} writes into out`);
@@ -440,6 +443,16 @@ const REFUSED = [
     [b => b.rta(withLayer({ n: 2.35, thickness: 58.5 }), 550), /layer 0 needs \{n, d\}/],
     [b => b.rta(withLayer({ index: 2.35, d: 58.5 }), 550), /layer 0 needs \{n, d\}/],
     [b => b.rta(withLayer({ n: 2.35, d: '58.5' }), 550), /layer 0 d must be a number \(nm\)/],
+    [b => b.rta(withLayer({ n: 2.35, kappa: 0.1, d: 58.5 }), 550), /layer 0 has 'kappa'; a layer takes n, k and d/],
+    [b => b.phaseSpectrum(withLayer({ n: 2.35, d: 58.5, dn: 0 }), [500, 550], { pol: 's' }),
+        /layer 0 has 'dn'; a layer takes n, k and d/],
+    [b => b.rta({ ...ONE, angle: 30 }, 550), /stack has 'angle'; a stack takes incident, substrate and layers/],
+    [b => b.rtaSpectrum({ ...ONE, substrate: { n: 1.52, kappa: 0 } }, [500, 550]),
+        /substrate has 'kappa'; a medium takes n and k/],
+    [b => b.needleScan(ONE, 550, { candidates: [1.38, { n: 1.46, kappa: 0 }] }),
+        /candidate 1 has 'kappa'; a medium takes n and k/],
+    [b => b.monitorCurve(ONE, 550, { top: { n: 1.38, kappa: 0 }, thicknesses: [0] }),
+        /top has 'kappa'; a medium takes n and k/],
     [b => b.rta(withLayer({ n: 2.35, k: [0, 0.1], d: 58.5 }), 550), /layer 0 k must be a number at one wavelength/],
     [b => b.rtaSpectrum(withLayer({ n: [2.35, 2.3, 2.2], d: 58.5 }), [500, 550]),
         /layer 0 n must be a number or 2 numbers, one per wavelength/],

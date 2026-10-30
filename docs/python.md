@@ -55,7 +55,7 @@ stack = {"incident": 1.0,
 - `n` may also be complex, `n + ik`, with `k` left out: `{"n": 2.35 + 0.0005j, "d": 58.5}`.
 - In the phase calls an index is a number, which is a constant index with no dispersion, or a jet (below). An array of plain indices per wavelength is refused there, since group delay computed from it would leave out the material's dispersion.
 
-A wrong value raises `TypeError` with a message naming it, such as `layer 1 needs {n, d}`. An unknown keyword, or a needle scan without `candidates`, raises Python's own `TypeError`.
+A wrong value raises `TypeError` with a message naming it, such as `layer 1 needs {n, d}`, and so does a key the stack, a layer or a medium does not take: `layer 0 has 'kappa'; a layer takes n, k and d`. An unknown keyword, or a needle scan without `candidates`, raises Python's own `TypeError`.
 
 ## Results
 

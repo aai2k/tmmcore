@@ -6,7 +6,8 @@ layers ordered from the incident medium toward the substrate, each
 {"n": ..., "k": ..., "d": ...} with d in nm. A medium is a number or
 {"n": ..., "k": ...}. Each n and k is a number, or in a Spectrum call one value
 per wavelength; k may be left out and is then 0. n may also be complex, n + ik,
-with k left out. k ≥ 0 for absorbing media.
+with k left out. k ≥ 0 for absorbing media. A key the stack, a layer or a
+medium does not take raises, so a misspelled k cannot read as a lossless layer.
 
 The phase calls also take an index as a Taylor jet in ω (jet.py), which
 carries the material's dispersion: one jet at one wavelength, one per
@@ -22,6 +23,10 @@ import numpy as np
 
 NO_DISPERSION = ("has no derivatives, so GD would miss the material's dispersion: give a jet per "
                  "wavelength (see jet_from_derivatives), or one number for a constant index")
+
+_STACK_KEYS = ("incident", "substrate", "layers")
+_LAYER_KEYS = ("n", "k", "d")
+_MEDIUM_KEYS = ("n", "k")
 
 
 def address(array):
@@ -58,10 +63,18 @@ def optional_address(array):
     return None if array is None else address(array)
 
 
+def _check_keys(value, keys, where, what):
+    """A key that `what`, a stack, a layer or a medium, does not take raises and names the keys it does."""
+    for key in value:
+        if key not in keys:
+            raise TypeError(f"{where} has '{key}'; {what} takes {', '.join(keys[:-1])} and {keys[-1]}")
+
+
 def _read_medium(value, where):
     if is_number(value):
         return value, None
     if isinstance(value, dict) and "n" in value:
+        _check_keys(value, _MEDIUM_KEYS, where, "a medium")
         return value["n"], value.get("k")
     raise TypeError(f"{where} must be a number or {{ n, k }}")
 
@@ -73,6 +86,8 @@ def _layer_keys(layer, i):
 
 
 def _thickness(layer, i):
+    """d of layer i in nm, after the layer's other keys."""
+    _check_keys(layer, _LAYER_KEYS, f"layer {i}", "a layer")
     if not is_real(layer["d"]):
         raise TypeError(f"layer {i} d must be a number (nm)")
     return float(layer["d"])
@@ -82,10 +97,12 @@ def _read_stack(stack):
     """
     [(where, n, k)] for the incident medium, the substrate and each layer, and
     the thicknesses. Checked in the JavaScript's order, so the same stack gets
-    the same message: every layer's keys, then every thickness, then the media.
+    the same message: the stack's keys, every layer's n and d, then each
+    layer's other keys and its thickness, then the media.
     """
     if not isinstance(stack, dict) or not isinstance(stack.get("layers"), (list, tuple)):
         raise TypeError("stack must be { incident, substrate, layers: [{ n, k, d }] }")
+    _check_keys(stack, _STACK_KEYS, "stack", "a stack")
     layers = [_layer_keys(layer, i) for i, layer in enumerate(stack["layers"])]
     thick = np.array([_thickness(layer, i) for i, layer in enumerate(layers)], dtype=np.float64)
     indices = [("incident", *_read_medium(stack.get("incident"), "incident")),

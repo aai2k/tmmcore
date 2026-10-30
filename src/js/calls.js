@@ -23,7 +23,8 @@
  * dispersive incident medium, so that the angle inside it disperses. A needle
  * scan takes `candidates`, the materials it tries inserting, each an index
  * given as a medium is, a number or { n, k }, and `fractions`, where inside each
- * layer it also tries them. An option a call does not take throws.
+ * layer it also tries them. An option a call does not take throws, and so does
+ * a key the stack, a layer or a medium does not take.
  *
  * The monitoring calls take `angle` only, and return s and p together, with
  * the reflectance of the coated surface seen from the substrate side:
@@ -41,7 +42,7 @@ import {
     readWavelength, readWavelengths, readAngle, readRtaPol, readPhasePol, readSine, atNormalIncidence, readFractions,
     readThicknesses, readThickness,
 } from './options.js';
-import { readIndex, readCandidates, pairOf, pairsOver, pointJetStack, gridJetStack } from './stack.js';
+import { readIndex, readCandidates, pairOf, pairsOver, pointJetStack, gridJetStack, listed } from './stack.js';
 
 const RTA_OPTIONS = ['angle', 'pol'];
 const PHASE_OPTIONS = ['angle', 'sine', 'pol'];
@@ -52,9 +53,6 @@ const FIRST = ['dRdd', 'dTdd', 'dAdd'];
 const SECOND = ['d2Rdd', 'd2Tdd', 'd2Add'];
 const PHASE_DERIVATIVES = ['dPhaseDeg', 'dGd', 'dGdd', 'dTod', 'dLogMagnitudeSquared'];
 const GROWING = ['Rs', 'Ts', 'Rp', 'Tp', 'Rrs', 'Rrp'];
-
-// 'a and b', 'a, b and c'.
-const listed = keys => `${keys.slice(0, -1).join(', ')} and ${keys[keys.length - 1]}`;
 
 function checkOptions(options, keys) {
     if (options === null || typeof options !== 'object') throw new TypeError(`options must be { ${keys.join(', ')} }`);

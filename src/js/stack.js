@@ -5,7 +5,8 @@
  * incident medium toward the substrate, each { n, k, d } with d in nm. A
  * medium is a number n or { n, k }. Each n and k is a number, or in a grid call
  * one value per wavelength; k may be left out and is then 0. ñ = n + ik, k ≥ 0
- * for absorbing media.
+ * for absorbing media. A key the stack, a layer or a medium does not take
+ * throws, so a misspelled k cannot read as a lossless layer.
  *
  * The phase calls also take an index as a Taylor jet in ω (jet.js), which
  * carries the material's dispersion: one jet at one wavelength, a jet per
@@ -43,10 +44,30 @@ export function isNumbers(value, length) {
 export const isJet = value => Array.isArray(value) && value.length === JET_ORDER + 1
     && value.every(term => isList(term) && term.length === 2);
 
+/** Keys in a message: 'a and b', 'a, b and c'. */
+export const listed = keys => `${keys.slice(0, -1).join(', ')} and ${keys[keys.length - 1]}`;
+
+// An index of a stack in a message: 'incident', 'substrate', or a layer by its
+// position. A call builds the name only when it throws.
+const indexName = where => (typeof where === 'number' ? `layer ${where}` : where);
+
+const STACK_KEYS = ['incident', 'substrate', 'layers'];
+const LAYER_KEYS = ['n', 'k', 'd'];
+const MEDIUM_KEYS = ['n', 'k'];
+
+// A key that `what`, a stack, a layer or a medium, does not take throws and
+// names the keys it does.
+function checkKeys(value, keys, where, what) {
+    for (const key in value) {
+        if (!keys.includes(key)) throw new TypeError(`${indexName(where)} has '${key}'; ${what} takes ${listed(keys)}`);
+    }
+}
+
 // A medium as { n, k }; k undefined when it was left out.
 function readMedium(value, where) {
     if (typeof value === 'number') return { n: value, k: undefined };
     if (value !== null && typeof value === 'object' && !isList(value) && value.n !== undefined) {
+        checkKeys(value, MEDIUM_KEYS, where, 'a medium');
         return { n: value.n, k: value.k };
     }
     throw new TypeError(`${where} must be a number or { n, k }`);
@@ -73,13 +94,17 @@ export function checkLayerKeys(layers, indexKey, thicknessKey) {
     }
 }
 
-// The stack with each medium as { n, k }, and its layers as given.
+// The stack with each medium as { n, k }, and its layers as given, checked in
+// this order: the stack's keys, every layer's n and d, then each layer's other
+// keys and its thickness, then the media.
 function readStack(stack) {
     if (stack === null || typeof stack !== 'object' || !Array.isArray(stack.layers)) {
         throw new TypeError('stack must be { incident, substrate, layers: [{ n, k, d }] }');
     }
+    checkKeys(stack, STACK_KEYS, 'stack', 'a stack');
     checkLayerKeys(stack.layers, 'n', 'd');
     stack.layers.forEach((layer, i) => {
+        checkKeys(layer, LAYER_KEYS, i, 'a layer');
         if (typeof layer.d !== 'number') throw new TypeError(`layer ${i} d must be a number (nm)`);
     });
     return {
@@ -88,10 +113,6 @@ function readStack(stack) {
         layers: stack.layers,
     };
 }
-
-// An index of a stack in a message: 'incident', 'substrate', or a layer by its
-// position. A call builds the name only when it throws.
-const indexName = where => (typeof where === 'number' ? `layer ${where}` : where);
 
 // ── R/T calls: ñ as [re, im] ─────────────────────────────────────────────────
 

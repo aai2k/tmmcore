@@ -41,7 +41,7 @@ The [WebAssembly instance](#webassembly) has the same calls, and the [Python pac
 | `incident`, `substrate` | a number `n`, or `{ n, k }` |
 | `n`, `k` | a number, or in a `Spectrum` call a list with one value per wavelength |
 
-$\tilde n = n + ik$, with $k \ge 0$ for absorbing media. `k` may be left out and is then 0. A medium given as a bare list is refused, since an `[re, im]` pair would read as two wavelengths. A layer of zero, negative or NaN thickness adds nothing to the spectrum.
+$\tilde n = n + ik$, with $k \ge 0$ for absorbing media. `k` may be left out and is then 0. A medium given as a bare list is refused, since an `[re, im]` pair would read as two wavelengths. A key the stack, a layer or a medium does not take is refused too, so a misspelled `k` cannot pass as a lossless layer. A layer of zero, negative or NaN thickness adds nothing to the spectrum.
 
 In the phase calls an index is a number, which is a constant index with no dispersion, or a [jet](#indices-as-jets) with `k` inside it: one jet at one wavelength, a list with one jet per wavelength in a `Spectrum` call. A list of plain numbers per wavelength is refused there, since the group delay computed from it would leave out the material's dispersion.
 
@@ -63,7 +63,7 @@ Each value is a `Float64Array` with one entry per wavelength. `N`, where a resul
 
 ### Errors
 
-A wrong argument throws a `TypeError` that names it, such as `layer 0 needs {n, d}`, `pol must be 's', 'p' or 'avg'` or `unknown option 'polarization'; the options are angle and pol`.
+A wrong argument throws a `TypeError` that names it, such as `layer 0 needs {n, d}`, `layer 0 has 'kappa'; a layer takes n, k and d`, `pol must be 's', 'p' or 'avg'` or `unknown option 'polarization'; the options are angle and pol`.
 
 ## R, T and A
 

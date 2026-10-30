@@ -14,6 +14,9 @@
  * an absent layer, and in the derivative calls a zero column, where zero
  * thickness keeps its derivative.
  *
+ * These are the names of 0.4, which ignore a key a layer does not take, as
+ * 0.4 did. The calls of 0.5 refuse it (calls.mjs).
+ *
  * The WebAssembly methods are checked too when tmm_kernel.wasm has been built.
  *
  *   node tests/layer_keys.mjs
@@ -109,8 +112,10 @@ for (const call of CALLS) {
         `${call.name} with the thickness key missing`);
     assert.throws(() => call.run(renameKey(layers, indexKey, 'index')), expected,
         `${call.name} with the index key missing`);
+    assert.deepEqual(call.run(layers.map(layer => ({ ...layer, kappa: 0.1 }))), call.run(layers),
+        `${call.name} ignores a key a layer does not take`);
 }
-console.log(`${CALLS.length} calls throw on a layer missing either key`);
+console.log(`${CALLS.length} calls throw on a layer missing either key, and ignore one they do not take`);
 
 // ── Zero, negative and NaN thickness keep their meaning ─────────────────────
 

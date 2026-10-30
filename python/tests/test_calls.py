@@ -78,10 +78,16 @@ class Arguments(unittest.TestCase):
         # Every layer's keys come before any thickness, as in the JavaScript.
         with self.assertRaisesRegex(TypeError, r"layer 1 needs \{n, d\}"):
             tmmcore.rta(with_layers(PAIR, {"n": 2.35, "d": "58.5"}, {"n": 1.46}), 550)
+        with self.assertRaisesRegex(TypeError, "layer 0 has 'kappa'; a layer takes n, k and d"):
+            tmmcore.rta(with_layers(PAIR, {"n": 2.35, "kappa": 0.1, "d": 58.5}), 550)
+        with self.assertRaisesRegex(TypeError, "stack has 'angle'; a stack takes incident, substrate and layers"):
+            tmmcore.rta({**PAIR, "angle": 30}, 550)
 
     def test_medium(self):
         with self.assertRaisesRegex(TypeError, r"incident must be a number or \{ n, k \}"):
             tmmcore.rta({**PAIR, "incident": [1.0, 0.0]}, 550)
+        with self.assertRaisesRegex(TypeError, "substrate has 'kappa'; a medium takes n and k"):
+            tmmcore.rta_spectrum({**PAIR, "substrate": {"n": 1.52, "kappa": 0.0}}, GRID)
 
     def test_complex_n(self):
         self.assertEqual(tmmcore.rta(with_layers(METAL, {"n": 0.13 + 3.0j, "d": 40.0}), 550), tmmcore.rta(METAL, 550))
@@ -101,6 +107,8 @@ class Arguments(unittest.TestCase):
             tmmcore.needle_scan(PAIR, 550, candidates=1.38)
         with self.assertRaisesRegex(TypeError, r"candidate 1 must be a number or \{ n, k \}"):
             tmmcore.needle_scan(PAIR, 550, candidates=[1.38, [1.46, 0]])
+        with self.assertRaisesRegex(TypeError, "candidate 1 has 'kappa'; a medium takes n and k"):
+            tmmcore.needle_scan(PAIR, 550, candidates=[1.38, {"n": 1.46, "kappa": 0.0}])
         with self.assertRaisesRegex(TypeError, "candidate 0 n must be a number or 5 numbers, one per wavelength"):
             tmmcore.needle_scan_spectrum(PAIR, GRID, candidates=[{"n": [1.38, 1.37]}])
         for bad in (0.5, ["0.5"], [[0.5]]):
@@ -184,6 +192,8 @@ class Monitoring(unittest.TestCase):
             tmmcore.monitor_curve(self.finished, 550, top=2.35)
         with self.assertRaisesRegex(TypeError, r"top must be a number or \{ n, k \}"):
             tmmcore.monitor_curve(self.finished, 550, top=[2.35, 0], thicknesses=[0])
+        with self.assertRaisesRegex(TypeError, "top has 'kappa'; a medium takes n and k"):
+            tmmcore.monitor_curve(self.finished, 550, top={"n": 2.35, "kappa": 0.0}, thicknesses=[0])
         with self.assertRaisesRegex(TypeError, r"thicknesses must be a list of numbers \(nm\)"):
             tmmcore.monitor_curve(self.finished, 550, top=2.35, thicknesses=50)
         with self.assertRaisesRegex(TypeError, r"stack must be \{ incident, substrate, layers"):
