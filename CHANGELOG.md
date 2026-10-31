@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.5.0] - unreleased
+## [0.5.0] - 2026-10-31
 
 ### Added
 - A Python package, `pip install tmmcore`, on the same C kernel: the R/T, derivative, needle, phase, monitoring and jet calls under snake_case names, taking numpy arrays.
