@@ -49,6 +49,14 @@ jobs:
         if: runner.os != 'Windows'
         run: cc -std=c99 -pedantic -Wall -Wextra -Werror -O2 -c src/c/*.c
 
+      # tmmcore.h declares the calls for code that links the kernel, and no
+      # source includes it. Compiled ahead of tmm_kernel.c, a prototype that
+      # differs from its definition is an error, and -Wmissing-prototypes names
+      # a call the header leaves out.
+      - name: The header declares every call
+        if: runner.os != 'Windows'
+        run: cc -std=c99 -pedantic -Wall -Wextra -Werror -Wmissing-prototypes -fsyntax-only -include src/c/tmmcore.h src/c/tmm_kernel.c
+
       - name: Compile (MSVC)
         if: runner.os == 'Windows'
         shell: pwsh

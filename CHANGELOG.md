@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `src/c/tmmcore.h`, a header that declares the C calls.
+
 ## [0.5.0] - 2026-10-31
 
 ### Added

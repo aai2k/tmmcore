@@ -108,11 +108,13 @@ The first checks the equations. The JavaScript ⇆ WebAssembly part of the secon
 
 ## Using the C directly
 
-The C in `src/c` is C99 with no dependencies beyond libm. Copy the folder into a project and compile `tmm_kernel.c`, which includes the other sources:
+The C in `src/c` is C99 with no dependencies beyond libm. Copy the folder into a project, include `tmmcore.h`, which declares the calls, and compile `tmm_kernel.c`, which includes the other sources:
 
 ```bash
 cc -std=c99 -O2 -c src/c/tmm_kernel.c
 ```
+
+[C](https://aai2k.github.io/tmmcore/api/#c) in the API reference describes the arrays the calls take and write.
 
 ## Licence
 

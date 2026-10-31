@@ -220,7 +220,7 @@ int tmm_deposition_spectra(const double *lambdas, int nLam,
  * R and T plus the substrate-side reflectance, for the incoherent slab
  * combination. */
 
-typedef struct {
+typedef struct tmm_growing_stack {
     int nLam;
     int topSet;
     incidence_t *angle; /* nLam */
