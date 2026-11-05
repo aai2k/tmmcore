@@ -17,8 +17,8 @@ Results are published in [`../docs/comparison.md`](../docs/comparison.md), which
 | `tmm_faster` | [`tmm-faster`](https://github.com/clembron/tmm_faster), a C++ core with a Python wrapper. Returns both polarizations per call. Multithreaded by default. |
 | `tmm_fast` | [`tmm_fast`](https://github.com/MLResearchAtOSRAM/tmm_fast), on PyTorch: batched, GPU-capable, autograd. |
 | `tmmax` | [`tmmax`](https://github.com/bahremsd/tmmax), on JAX with JIT and vmap. |
-| `tmmcore js` | The one-wavelength JavaScript kernel, one call per (λ, polarization). |
-| `tmmcore wasm` | The C kernel's `tmm_rta_spectrum()`, one call for the whole grid and both polarizations. |
+| `tmmcore js` | `rtaSpectrum` from the JavaScript module: one call for the whole grid, s and p together, which runs the one-wavelength JavaScript kernel at each point. |
+| `tmmcore wasm` | `rtaSpectrum` on a WebAssembly instance: one call for the whole grid, s and p together, which runs the C kernel's `tmm_rta_spectrum()` once. |
 
 ## The shared input set
 
@@ -49,7 +49,7 @@ python -m venv .venv
 .venv/Scripts/python gen_reference.py   # runs Byrnes, writes reference_byrnes.json
 ```
 
-`npm run compare` shows that tmmcore agrees with Byrnes to float64 round-off. `bench_fast.py` checks `tmm_faster` against Byrnes the same way, and times `tmm_fast` and `tmmax` without comparing their output.
+`npm run compare` shows that tmmcore agrees with Byrnes to float64 round-off. `bench_fast.py` checks R_s of `tmm_faster` against Byrnes, and times `tmm_fast` and `tmmax` without comparing their output.
 
 ## Timing tier
 
@@ -65,9 +65,12 @@ TMMBENCH_THREADS=1 .venv/Scripts/python bench_fast.py    # fast libs -> results_
 node bench_js.mjs                                        # tmmcore, single stack
 node bench_js_batch.mjs                                  # tmmcore, 128-stack batch
 node summarize.mjs                                       #          -> tables.md
+.venv/Scripts/python bench_fast.py                       # default threads -> results_fast.json
+.venv/Scripts/python probe_threads.py                    # cpu/wall of tmm_faster
+.venv/Scripts/python overhead_py.py                      # cost of the Python driver loop
 ```
 
-On PowerShell set the thread pin with `$env:TMMBENCH_THREADS="1"` beforehand.
+On PowerShell set the thread pin with `$env:TMMBENCH_THREADS="1"` beforehand, and remove it with `Remove-Item Env:TMMBENCH_THREADS` before the default-thread run.
 
 `bench_js*.mjs` need `src/wasm/tmm_kernel.wasm`, which ships prebuilt.
 
@@ -77,9 +80,9 @@ Run the whole tier in one session on an otherwise idle machine. Timings drift by
 
 ### Threading
 
-`tmm_faster` and `tmm_fast` are multithreaded by default; tmmcore's kernels are single-threaded and expect the caller to parallelize above them. `TMMBENCH_THREADS=1` pins the Python side to one thread for a per-core comparison, which is what the published tables report. `probe_threads.py` measures the cpu/wall ratio that motivated the pinning.
+`tmm_faster` and `tmm_fast` are multithreaded by default; tmmcore's kernels are single-threaded and expect the caller to parallelize above them. `TMMBENCH_THREADS=1` pins `tmm_faster` and `tmm_fast` to one thread for a per-core comparison, which is what the main published tables report; it sets no thread count for JAX. The run without the pin writes `results_fast.json`, the source of the published default-thread figures. `probe_threads.py` measures the cpu/wall ratio that motivated the pinning.
 
-With its default threads, `tmm_faster` is faster than tmmcore on large problems.
+With its default threads, `tmm_faster` is faster than tmmcore on every case.
 
 ## Fairness notes
 
@@ -87,7 +90,7 @@ With its default threads, `tmm_faster` is faster than tmmcore on large problems.
 - `overhead_py.py` confirms the Python driver loop is under 1% of total time, so the Byrnes figures measure the library rather than the harness.
 - Byrnes must be fed Python `complex`, not NumPy scalars; `coh_tmm` is markedly slower on `np.complex128` elements, which would make every other package look faster.
 - `tmmax` reads materials from its own bundled database rather than accepting explicit n,k, so it is timed at matching layer and grid sizes but not value-checked, and its timing includes an interpolation the others do not perform. It runs on JAX, which computes in single precision unless `jax_enable_x64` is set; the harness does not set it.
-- Canonical Byrnes timings come from `bench_py.py` in a dedicated process; the copy inside `results_fast_t1.json` shares a process with torch and JAX.
+- Byrnes' single-stack timings come from `bench_py.py`, in a process of its own. Its batch timings come from `bench_fast.py`, which shares its process with torch and JAX and times each batch once, since one batch outlasts the time floor.
 
 ## Files
 

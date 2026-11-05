@@ -1,30 +1,35 @@
 /**
- * Batch workload for the tmmcore kernels: NBATCH distinct stacks, each over
- * the full wavelength grid, both polarizations.
+ * Batch workload for tmmcore: NBATCH stacks of each 71-point case, each over
+ * the full wavelength grid, s and p together. Writes results_js_batch.json for
+ * summarize.mjs.
  *
- * The vectorized Python libraries fold this into one call; tmmcore has no
- * batch entry point, so it simply loops. That is the honest comparison — what
- * matters to the caller is total time for the same work.
+ * Every tmmcore call takes one stack, so a batch is NBATCH rtaSpectrum calls,
+ * on the JavaScript module and on a WebAssembly instance. Of the Python
+ * libraries in bench_fast.py, only tmm_fast takes all the stacks in one call;
+ * the driver there loops over the stacks for Byrnes' tmm and for tmm_faster.
+ * What the caller pays is the total time for the same work.
  *
- * Stack thicknesses are jittered with the same generator and seed logic as
- * bench_fast.py so both sides evaluate comparably diverse stacks.
+ * The thicknesses are jittered by 10% (one standard deviation), the spread
+ * bench_fast.py applies, from this file's own seeded generator: the stacks
+ * have the same spread as those of bench_fast.py but are not the same draws.
+ *
+ * Run: node bench_js_batch.mjs
  */
 
-import { readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { tmm } from '../src/js/rta.js';
+import { rtaSpectrum } from '../src/js/index.js';
 import { instantiateTmmWasm } from '../src/wasm/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-const wasm = await instantiateTmmWasm(readFileSync(join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm')));
+const wasm =await instantiateTmmWasm(readFileSync(join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm')));
 const { cases } = JSON.parse(readFileSync(join(HERE, 'cases.json'), 'utf8'));
 
 const NBATCH = 128;
 
-// Deterministic jitter (mulberry32 + Box-Muller) — matches the 10% relative
-// spread bench_fast.py applies, without needing the exact same RNG stream.
+// Seeded jitter: mulberry32 for the uniform draws, Box-Muller for the normal.
 function makeRng(seed) {
     let a = seed >>> 0;
     return () => {
@@ -39,11 +44,24 @@ function gauss(rng) {
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
 }
 
+// A case as the stack rtaSpectrum takes, each n and k one value per
+// wavelength, with the thicknesses given.
+const medium = pairs => ({ n: pairs.map(p => p[0]), k: pairs.map(p => p[1]) });
+
+function stackOf(c, thick) {
+    return {
+        incident: medium(c.n0),
+        substrate: medium(c.ns),
+        layers: c.layerNK.map((row, k) => ({ ...medium(row), d: thick[k] })),
+    };
+}
+
+// The NBATCH stacks of a case, built before any timing.
 function makeBatch(c) {
     const rng = makeRng(0);
     const out = [];
     for (let s = 0; s < NBATCH; s++) {
-        out.push(c.thick.map(d => d * (1 + 0.1 * gauss(rng))));
+        out.push(stackOf(c, c.thick.map(d => d * (1 + 0.1 * gauss(rng)))));
     }
     return out;
 }
@@ -69,21 +87,14 @@ const out = [];
 for (const c of cases) {
     if (!c.name.endsWith('g71')) continue;
     const batch = makeBatch(c);
+    const options = { angle: c.theta_deg };
 
     const tj = timeIt(() => {
-        for (const th of batch) {
-            for (let i = 0; i < c.lambdas.length; i++) {
-                const L = c.layerNK.map((row, k) => ({ n: row[i], d: th[k] }));
-                tmm(c.lambdas[i], c.theta_deg, 's', c.n0[i], c.ns[i], L);
-                tmm(c.lambdas[i], c.theta_deg, 'p', c.n0[i], c.ns[i], L);
-            }
-        }
+        for (const stack of batch) rtaSpectrum(stack, c.lambdas, options);
     });
 
     const tw = timeIt(() => {
-        for (const th of batch) {
-            wasm.tmmSpectrum(c.lambdas, c.n0, c.ns, c.layerNK, th, c.theta_deg);
-        }
+        for (const stack of batch) wasm.rtaSpectrum(stack, c.lambdas, options);
     });
 
     console.log(`${c.name.padEnd(14)} ${String(c.nLayers).padStart(2)} `

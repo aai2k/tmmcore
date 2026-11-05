@@ -1,14 +1,13 @@
 /**
- * Benchmark tmmcore's two TMM kernels on the shared cases, cross-check both
- * against Byrnes' results, and print the comparison table.
+ * Benchmark tmmcore on the shared cases, cross-check it against Byrnes'
+ * results, and write results_js.json for summarize.mjs.
  *
- * Three timed paths:
- *   js         the JavaScript `tmm()`, called per (lambda, pol). Same call
- *              granularity as Byrnes' coh_tmm, so this is the like-for-like row.
- *   wasm-one   kernel `tmm_rta()` per (lambda, pol). Same granularity again,
- *              but pays a JS->WASM boundary crossing per call.
- *   wasm-spec  kernel `tmm_rta_spectrum()`, one call for the whole grid and
- *              both polarizations. The path a caller should actually use.
+ * Both timed paths make the call a caller makes, rtaSpectrum, once per
+ * spectrum: the whole wavelength grid, s and p together.
+ *   js    the JavaScript module, which runs the one-wavelength kernel at each
+ *         point of the grid
+ *   wasm  a WebAssembly instance, which runs the C kernel's
+ *         tmm_rta_spectrum() once for the whole grid
  *
  * Run: node bench_js.mjs   (after bench_py.py has written results_py.json)
  */
@@ -16,14 +15,14 @@
 import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { tmm } from '../src/js/rta.js';
+import { rtaSpectrum } from '../src/js/index.js';
 import { instantiateTmmWasm } from '../src/wasm/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 const wasmPath = join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm');
 if (!existsSync(wasmPath)) {
-    console.error('tmm_kernel.wasm not found — build it with `npm run build:wasm`.');
+    console.error('tmm_kernel.wasm not found; build it with `npm run build:wasm`.');
     process.exit(1);
 }
 const wasm = await instantiateTmmWasm(readFileSync(wasmPath));
@@ -33,45 +32,24 @@ const py = existsSync(join(HERE, 'results_py.json'))
     ? JSON.parse(readFileSync(join(HERE, 'results_py.json'), 'utf8'))
     : null;
 
-// ── The three spectrum evaluators ────────────────────────────────────────────
-// Each returns { Rs, Ts, Rp, Tp } over the case's lambda grid.
+// ── The two spectrum evaluators ──────────────────────────────────────────────
+// A case as the stack rtaSpectrum takes, each n and k one value per
+// wavelength. It is built once per case, outside the timed region, as the
+// other drivers build their inputs.
 
-function layersAt(c, i) {
-    const out = new Array(c.nLayers);
-    for (let k = 0; k < c.nLayers; k++) out[k] = { n: c.layerNK[k][i], d: c.thick[k] };
-    return out;
+const medium = pairs => ({ n: pairs.map(p => p[0]), k: pairs.map(p => p[1]) });
+
+function stackOf(c) {
+    return {
+        incident: medium(c.n0),
+        substrate: medium(c.ns),
+        layers: c.layerNK.map((row, k) => ({ ...medium(row), d: c.thick[k] })),
+    };
 }
 
-function specJS(c) {
-    const nLam = c.lambdas.length;
-    const Rs = new Float64Array(nLam), Ts = new Float64Array(nLam);
-    const Rp = new Float64Array(nLam), Tp = new Float64Array(nLam);
-    for (let i = 0; i < nLam; i++) {
-        const L = layersAt(c, i);
-        const s = tmm(c.lambdas[i], c.theta_deg, 's', c.n0[i], c.ns[i], L);
-        const p = tmm(c.lambdas[i], c.theta_deg, 'p', c.n0[i], c.ns[i], L);
-        Rs[i] = s.R; Ts[i] = s.T; Rp[i] = p.R; Tp[i] = p.T;
-    }
-    return { Rs, Ts, Rp, Tp };
-}
-
-function specWasmOne(c) {
-    const nLam = c.lambdas.length;
-    const Rs = new Float64Array(nLam), Ts = new Float64Array(nLam);
-    const Rp = new Float64Array(nLam), Tp = new Float64Array(nLam);
-    for (let i = 0; i < nLam; i++) {
-        const L = layersAt(c, i);
-        const s = wasm.tmmOne(c.lambdas[i], c.theta_deg, 0, c.n0[i], c.ns[i], L);
-        const p = wasm.tmmOne(c.lambdas[i], c.theta_deg, 1, c.n0[i], c.ns[i], L);
-        Rs[i] = s.R; Ts[i] = s.T; Rp[i] = p.R; Tp[i] = p.T;
-    }
-    return { Rs, Ts, Rp, Tp };
-}
-
-function specWasmBatch(c) {
-    const r = wasm.tmmSpectrum(c.lambdas, c.n0, c.ns, c.layerNK, c.thick, c.theta_deg);
-    return { Rs: r.Rs, Ts: r.Ts, Rp: r.Rp, Tp: r.Tp };
-}
+// Each returns { Rs, Ts, Rp, Tp, ... } over the case's wavelength grid.
+const specJS = (c, stack) => rtaSpectrum(stack, c.lambdas, { angle: c.theta_deg });
+const specWasm = (c, stack) => wasm.rtaSpectrum(stack, c.lambdas, { angle: c.theta_deg });
 
 // ── Timing: best-of, with rep and wall-time floors (mirrors bench_py.py) ──────
 
@@ -108,41 +86,39 @@ function compare(x, y) {
 
 const rows = [];
 console.log('\n=== agreement (max |diff| in R/T over the grid, both pols) ===');
-console.log('case            js-vs-wasm1   js-vs-wasmSpec   js-vs-byrnes');
-console.log('-'.repeat(64));
+console.log('case              js-vs-wasm   js-vs-byrnes');
+console.log('-'.repeat(46));
 
 for (const c of cases) {
-    const j = specJS(c), w1 = specWasmOne(c), wb = specWasmBatch(c);
-    const dW1 = compare(j, w1), dWB = compare(j, wb);
+    const stack = stackOf(c);
+    const j = specJS(c, stack), w = specWasm(c, stack);
+    const dW = compare(j, w);
     let dPY = null;
     if (py) {
         const p = py.results.find(r => r.name === c.name);
         if (p) dPY = compare(j, { Rs: p.Rs, Ts: p.Ts, Rp: p.Rp, Tp: p.Tp });
     }
-    console.log(`${c.name.padEnd(14)}  ${dW1.toExponential(2).padStart(10)}   `
-        + `${dWB.toExponential(2).padStart(12)}   `
-        + `${dPY === null ? '     n/a' : dPY.toExponential(2).padStart(12)}`);
-    rows.push({ c, dW1, dWB, dPY });
+    console.log(`${c.name.padEnd(16)}  ${dW.toExponential(2).padStart(10)}   `
+        + `${dPY === null ? '         n/a' : dPY.toExponential(2).padStart(12)}`);
+    rows.push({ c, stack });
 }
 
 console.log('\n=== timing: one full spectrum (all lambda, s+p) ===');
-console.log('case            N  nLam        js ms   wasm1 ms   wasmSpec ms');
-console.log('-'.repeat(64));
+console.log('case              N  nLam        js ms      wasm ms');
+console.log('-'.repeat(52));
 
 const out = [];
-for (const { c } of rows) {
-    const tj = timeIt(() => specJS(c));
-    const t1 = timeIt(() => specWasmOne(c));
-    const tb = timeIt(() => specWasmBatch(c));
-    console.log(`${c.name.padEnd(14)} ${String(c.nLayers).padStart(2)} `
+for (const { c, stack } of rows) {
+    const tj = timeIt(() => specJS(c, stack));
+    const tw = timeIt(() => specWasm(c, stack));
+    console.log(`${c.name.padEnd(16)} ${String(c.nLayers).padStart(2)} `
         + `${String(c.lambdas.length).padStart(5)} `
         + `${(tj.best * 1e3).toFixed(3).padStart(12)} `
-        + `${(t1.best * 1e3).toFixed(3).padStart(10)} `
-        + `${(tb.best * 1e3).toFixed(3).padStart(13)}`);
+        + `${(tw.best * 1e3).toFixed(3).padStart(12)}`);
     out.push({
         name: c.name, nLayers: c.nLayers, nLam: c.lambdas.length,
-        js_s: tj.best, wasm_one_s: t1.best, wasm_spec_s: tb.best,
-        js_reps: tj.reps, wasm_one_reps: t1.reps, wasm_spec_reps: tb.reps,
+        js_s: tj.best, wasm_spec_s: tw.best,
+        js_reps: tj.reps, wasm_spec_reps: tw.reps,
     });
 }
 

@@ -7,9 +7,10 @@
  *   results_fast_t1.json  tmm_faster / tmm_fast / tmmax, pinned to one thread
  *   results_js_batch.json tmmcore JS + WASM, 128-stack batch
  *
- * Byrnes timings come from results_py.json rather than the copy inside
- * results_fast_t1.json: that run shares a process with torch and JAX, so the
- * dedicated measurement is the fairer one.
+ * Single-stack Byrnes timings come from results_py.json rather than the copy
+ * inside results_fast_t1.json: that run shares a process with torch and JAX, so
+ * the dedicated measurement is the fairer one. Byrnes' batch timings exist only
+ * in results_fast_t1.json.
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
@@ -88,7 +89,7 @@ L.push('');
 if (jsb) {
     L.push(`## Batch of ${jsb.nbatch} distinct stacks (ms, single-threaded)`);
     L.push('');
-    L.push('The vectorized libraries fold this into one call; tmmcore has no batch entry point and simply loops.');
+    L.push('`tmm_fast` takes all the stacks in one call. Byrnes\' `tmm`, `tmm_faster` and tmmcore take one stack per call, so their drivers loop over the stacks.');
     L.push('');
     L.push('| case | byrnes | tmm_fast | tmm_faster | TFS js | **TFS wasm** |');
     L.push('|---|--:|--:|--:|--:|--:|');
