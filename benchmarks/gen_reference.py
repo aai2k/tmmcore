@@ -13,6 +13,7 @@ compare.mjs accounts for that sign; nothing here converts.
 """
 
 import json
+from importlib.metadata import version
 
 import numpy as np
 import tmm
@@ -49,7 +50,7 @@ def main():
             "author": "Steven Byrnes",
             "url": "https://github.com/sbyrnes321/tmm",
             "paper": "S. J. Byrnes, Multilayer optical calculations, arXiv:1603.02720",
-            "version": getattr(tmm, "__version__", "0.2.0"),
+            "version": version("tmm"),
             "convention": "n~ = n + ik, k >= 0, identical to tmmcore, so inputs transfer "
                           "verbatim; r_p takes the Fresnel sign, opposite to tmmcore's",
         },

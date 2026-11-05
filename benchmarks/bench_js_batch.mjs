@@ -23,8 +23,9 @@ import { rtaSpectrum } from '../src/js/index.js';
 import { instantiateTmmWasm } from '../src/wasm/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const { version } = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8'));
 
-const wasm =await instantiateTmmWasm(readFileSync(join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm')));
+const wasm = await instantiateTmmWasm(readFileSync(join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm')));
 const { cases } = JSON.parse(readFileSync(join(HERE, 'cases.json'), 'utf8'));
 
 const NBATCH = 128;
@@ -105,5 +106,6 @@ for (const c of cases) {
 }
 
 writeFileSync(join(HERE, 'results_js_batch.json'),
-    JSON.stringify({ node: process.version, nbatch: NBATCH, results: out }, null, 1));
+    JSON.stringify({ versions: { node: process.version, tmmcore: version }, nbatch: NBATCH,
+                     results: out }, null, 1));
 console.log('\nwrote results_js_batch.json');

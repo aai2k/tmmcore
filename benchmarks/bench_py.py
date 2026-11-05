@@ -9,7 +9,9 @@ timed on.
 """
 
 import json
+import platform
 import time
+from importlib.metadata import version
 
 import numpy as np
 import tmm
@@ -98,7 +100,9 @@ def main():
         })
 
     with open("results_py.json", "w") as fh:
-        json.dump({"impl": "byrnes-tmm", "version": tmm.__version__ if hasattr(tmm, "__version__") else "0.2.0",
+        json.dump({"impl": "byrnes-tmm",
+                   "versions": {"python": platform.python_version(),
+                                "numpy": version("numpy"), "tmm": version("tmm")},
                    "results": out}, fh)
     print("\nwrote results_py.json")
 

@@ -23,7 +23,9 @@ do not perform.
 
 import json
 import os
+import platform
 import time
+from importlib.metadata import version
 
 # Thread pinning must happen before numpy/torch import their native backends.
 THREADS = int(os.environ.get("TMMBENCH_THREADS", "0"))   # 0 = library default
@@ -216,7 +218,10 @@ def main():
                                 "tmm_faster": t_cpp, "tmm_fast": t_ft}
 
     fn = f"results_fast{SUFFIX}.json"
-    json.dump({"nbatch": NBATCH, "threads": THREADS or "default",
+    versions = {"python": platform.python_version(),
+                **{name: version(name) for name in ("numpy", "tmm", "tmm-faster", "tmm-fast",
+                                                    "torch", "tmmax", "jax")}}
+    json.dump({"nbatch": NBATCH, "threads": THREADS or "default", "versions": versions,
                "results": out}, open(fn, "w"))
     print(f"\nwrote {fn}")
 

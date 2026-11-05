@@ -19,6 +19,7 @@ import { rtaSpectrum } from '../src/js/index.js';
 import { instantiateTmmWasm } from '../src/wasm/index.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+const { version } = JSON.parse(readFileSync(join(HERE, '..', 'package.json'), 'utf8'));
 
 const wasmPath = join(HERE, '..', 'src', 'wasm', 'tmm_kernel.wasm');
 if (!existsSync(wasmPath)) {
@@ -123,5 +124,5 @@ for (const { c, stack } of rows) {
 }
 
 writeFileSync(join(HERE, 'results_js.json'),
-    JSON.stringify({ node: process.version, results: out }, null, 1));
+    JSON.stringify({ versions: { node: process.version, tmmcore: version }, results: out }, null, 1));
 console.log('\nwrote results_js.json');
