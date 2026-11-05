@@ -16,26 +16,34 @@ Byrnes' `tmm` also gives ellipsometric $\Psi$ and $\Delta$, the absorption in ea
 
 ## Accuracy
 
-Byrnes' outputs are committed, so this needs only Node:
+Byrnes' outputs are committed, so checking tmmcore against them needs only Node:
 
 ```bash
 npm run compare
 ```
 
-Largest absolute difference from Byrnes' `tmm` over the whole grid, at normal incidence:
+Largest absolute difference in $R$ and $T$, in s and p, from Byrnes' `tmm` over the whole grid:
 
-| Case | `tmm_faster`, $R_s$ | tmmcore, $R$ and $T$ in s and p |
-|---|--:|--:|
-| 4-layer, 71 pts | 2.9e-16 | 2.1e-15 |
-| 21-layer, 71 pts | 6.7e-15 | 1.2e-14 |
-| 7-layer with Ag, 71 pts | 3.2e-15 | 1.6e-15 |
-| 40-layer, 71 pts | 1.8e-14 | 1.7e-14 |
-| 4-layer, 701 pts | 5.8e-16 | 2.6e-15 |
-| 21-layer, 701 pts | 1.3e-14 | 2.4e-14 |
-| 7-layer with Ag, 701 pts | 3.6e-15 | 3.1e-15 |
-| 40-layer, 701 pts | 1.8e-14 | 8.6e-14 |
+| Case | Angle | `tmm_faster` | tmmcore |
+|---|--:|--:|--:|
+| 4-layer, 71 pts | 0° | 2.2e-15 | 2.1e-15 |
+| 21-layer, 71 pts | 0° | 1.1e-14 | 1.2e-14 |
+| 7-layer with Ag, 71 pts | 0° | 3.2e-15 | 1.6e-15 |
+| 40-layer, 71 pts | 0° | 2.2e-14 | 1.7e-14 |
+| 4-layer, 701 pts | 0° | 2.4e-15 | 2.6e-15 |
+| 21-layer, 701 pts | 0° | 2.1e-14 | 2.4e-14 |
+| 7-layer with Ag, 701 pts | 0° | 3.6e-15 | 3.1e-15 |
+| 40-layer, 701 pts | 0° | 9.2e-14 | 8.6e-14 |
+| 4-layer, 71 pts | 30° | 2.0e-15 | 2.3e-15 |
+| 21-layer, 71 pts | 30° | 1.3e-14 | 1.7e-14 |
+| 7-layer with Ag, 71 pts | 30° | 3.0e-15 | 2.0e-15 |
+| 40-layer, 71 pts | 30° | 3.6e-14 | 5.4e-14 |
+| 4-layer, 71 pts | 60° | 2.9e-15 | 2.4e-15 |
+| 21-layer, 71 pts | 60° | 1.7e-14 | 1.5e-14 |
+| 7-layer with Ag, 71 pts | 60° | 3.1e-15 | 2.6e-15 |
+| 40-layer, 71 pts | 60° | 1.0e-13 | 8.1e-14 |
 
-The tmmcore column is the larger of the JavaScript and WebAssembly figures of `npm run compare`; [Validation](validation.md#against-byrnes-tmm) shows its whole output, with the cases at 30° and 60°. The `tmm_faster` column comes from `bench_fast.py`, which runs it beside Byrnes' `tmm` on the same inputs and compares $R_s$ only. Both agree with Byrnes to float64 round-off. `tmm_fast` and `tmmax` are timed only; the harness does not compare their output with Byrnes.
+The tmmcore column is the larger of the JavaScript and WebAssembly figures of `npm run compare`, whose whole output is on the [Validation](validation.md#against-byrnes-tmm) page. The `tmm_faster` column comes from `compare_tmm_faster.py`, which runs `tmm_faster` on the same inputs and checks it against the same committed Byrnes outputs. Both agree with Byrnes to float64 round-off. `tmm_fast` and `tmmax` are timed only; the harness does not compare their output with Byrnes.
 
 Every case is lit from air. An absorbing incident medium has no cross-library reference here: Byrnes' `tmm` asserts that $n_0 \sin\theta_0$ is real and refuses a complex $n_0$ at a real angle. tmmcore evaluates that case from the real invariant $\mathrm{Re}(n_0)\sin\theta_0$ and checks it against an exact energy identity instead; see [Validation](validation.md#an-absorbing-incident-medium).
 

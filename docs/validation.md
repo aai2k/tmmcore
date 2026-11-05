@@ -111,7 +111,7 @@ Worst disagreement with an independently written implementation: 8.6e-14 in R an
 
 The worst case is the forty-layer stack, where round-off accumulates through the longest matrix product. The oblique cases are held to the same $10^{-12}$ as the rest. Regenerating the reference file rather than trusting the committed one takes one `pip install`, of `tmm` and `numpy`; see [`benchmarks/README.md`](https://github.com/aai2k/tmmcore/blob/main/benchmarks/README.md).
 
-[Comparison with other packages](comparison.md) times tmmcore against Byrnes' `tmm` and three further Python packages, and checks $R_s$ of one of them, `tmm_faster`, against Byrnes'.
+[Comparison with other packages](comparison.md) times tmmcore against Byrnes' `tmm` and three further Python packages, and checks $R$ and $T$ of one of them, `tmm_faster`, against the same Byrnes outputs.
 
 [^byrnes]: S. J. Byrnes, *Multilayer optical calculations*, arXiv:1603.02720.
 

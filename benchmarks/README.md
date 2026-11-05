@@ -49,7 +49,7 @@ python -m venv .venv
 .venv/Scripts/python gen_reference.py   # runs Byrnes, writes reference_byrnes.json
 ```
 
-`npm run compare` shows that tmmcore agrees with Byrnes to float64 round-off. `bench_fast.py` checks R_s of `tmm_faster` against Byrnes, and times `tmm_fast` and `tmmax` without comparing their output.
+`npm run compare` shows that tmmcore agrees with Byrnes to float64 round-off. `compare_tmm_faster.py` checks R and T of `tmm_faster`, in s and p, against the same file; it runs in the Python environment of the [timing tier](#timing-tier). `tmm_fast` and `tmmax` are timed without a comparison.
 
 ## Timing tier
 
@@ -68,6 +68,7 @@ node summarize.mjs                                       #          -> tables.md
 .venv/Scripts/python bench_fast.py                       # default threads -> results_fast.json
 .venv/Scripts/python probe_threads.py                    # cpu/wall of tmm_faster
 .venv/Scripts/python overhead_py.py                      # cost of the Python driver loop
+.venv/Scripts/python compare_tmm_faster.py               # tmm_faster against Byrnes, no timing
 ```
 
 On PowerShell set the thread pin with `$env:TMMBENCH_THREADS="1"` beforehand, and remove it with `Remove-Item Env:TMMBENCH_THREADS` before the default-thread run.
@@ -97,6 +98,7 @@ With its default threads, `tmm_faster` is faster than tmmcore on every case.
 | File | Role |
 |---|---|
 | `compare.mjs` | Accuracy tier, Node only |
+| `compare_tmm_faster.py` | `tmm_faster` against `reference_byrnes.json`, in the timing tier's Python |
 | `reference_byrnes.json` | Committed reference spectra |
 | `gen_reference.py` | Runs Byrnes on `cases.json`, writes `reference_byrnes.json` |
 | `gen_cases.py` | Emits `cases.json`, the shared input set |

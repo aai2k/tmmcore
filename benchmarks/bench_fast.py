@@ -14,10 +14,11 @@ Two workloads
   B (batch)   NBATCH distinct stacks at once. This is the vectorized libraries'
               home turf, and matches ML dataset generation / DE populations.
 
-Correctness is checked against Byrnes for tmm_faster only; tmm_fast is timed
-without a comparison. tmmax reads materials from its own bundled database, so
-it is timed at matching layer/grid sizes but not value-checked, and its timing
-also includes an nk interpolation the others do not perform.
+Nothing here is checked against Byrnes: compare_tmm_faster.py checks the values
+of tmm_faster, and tmm_fast is timed without a comparison. tmmax reads materials
+from its own bundled database, so it is timed at matching layer/grid sizes but
+not value-checked, and its timing also includes an nk interpolation the others
+do not perform.
 """
 
 import json
@@ -139,19 +140,18 @@ def main():
 
     print("=== A: ONE stack, full grid, both polarizations (ms) ===")
     print(f"{'case':13s} {'N':>3s} {'nLam':>5s} {'byrnes':>9s} {'tmm_faster':>11s} "
-          f"{'tmm_fast':>9s} {'tmmax':>9s} | {'maxdiff vs byrnes':>19s}")
-    print("-" * 96)
+          f"{'tmm_fast':>9s} {'tmmax':>9s}")
+    print("-" * 65)
 
     for case in cases:
         nmat = index_matrix(case)
         thick = np.array(case["thick"])
         nL, nLam = case["nLayers"], len(case["lambdas"])
 
-        ref = run_byrnes(case, nmat, thick)
+        run_byrnes(case, nmat, thick)              # warm-up
         t_by, _ = best_of(lambda: run_byrnes(case, nmat, thick))
 
-        r_cpp = run_tmm_faster(case, nmat, thick)
-        d_cpp = float(np.max(np.abs(r_cpp - ref)))
+        run_tmm_faster(case, nmat, thick)          # warm-up
         t_cpp, _ = best_of(lambda: run_tmm_faster(case, nmat, thick))
 
         N, T, th, wl = _fast_tensors(case, nmat, thick, 1)
@@ -166,12 +166,11 @@ def main():
         t_ax, _ = best_of(lambda: run_tmmax(mats, thick_j, wl_j, ang_j))
 
         print(f"{case['name']:13s} {nL:3d} {nLam:5d} {t_by*1e3:9.3f} {t_cpp*1e3:11.3f} "
-              f"{t_ft*1e3:9.3f} {t_ax*1e3:9.3f} | cpp {d_cpp:.1e}")
+              f"{t_ft*1e3:9.3f} {t_ax*1e3:9.3f}")
 
         out.append({"name": case["name"], "nLayers": nL, "nLam": nLam,
                     "single": {"byrnes": t_by, "tmm_faster": t_cpp,
-                               "tmm_fast": t_ft, "tmmax": t_ax},
-                    "diff_vs_byrnes": {"tmm_faster": d_cpp}})
+                               "tmm_fast": t_ft, "tmmax": t_ax}})
 
     print(f"\n=== B: BATCH of {NBATCH} stacks, full grid, both pols (ms) ===")
     print(f"{'case':13s} {'N':>3s} {'nLam':>5s} {'byrnes':>9s} {'tmm_faster':>11s} "

@@ -62,7 +62,6 @@ for (const r of js.results) {
         tmm_faster: ms(f.single.tmm_faster),
         tfs_js: ms(r.js_s),
         tfs_wasm: ms(r.wasm_spec_s),
-        diff_cpp: f.diff_vs_byrnes.tmm_faster,
     };
     rows.push(rec);
     L.push(`| ${rec.name} | ${rec.N} | ${rec.nLam} | ${f3(rec.byrnes)} | ${f3(rec.tmm_fast)} `
@@ -104,21 +103,7 @@ if (jsb) {
 
 L.push('## Agreement with Byrnes');
 L.push('');
-L.push('Max |difference| in R/T over the whole grid, both polarizations:');
-L.push('');
-L.push('| case | tmm_faster | tmmcore js + wasm |');
-L.push('|---|--:|--:|');
-const TFS_DIFF = {   // from bench_js.mjs, js-vs-byrnes column
-    'AR4/g71': 2.11e-15, 'HR21/g71': 1.20e-14, 'AG7/g71': 1.44e-15,
-    'BIG40/g71': 1.73e-14, 'AR4/g701': 2.55e-15, 'HR21/g701': 2.38e-14,
-    'AG7/g701': 3.11e-15, 'BIG40/g701': 8.58e-14,
-};
-for (const r of rows) {
-    const t = TFS_DIFF[r.name];
-    L.push(`| ${r.name} | ${r.diff_cpp.toExponential(1)} | ${t ? t.toExponential(1) : 'n/a'} |`);
-}
-L.push('');
-L.push('`tmm_fast` is timed but not compared with Byrnes.');
+L.push('`npm run compare` checks tmmcore, and `compare_tmm_faster.py` checks `tmm_faster`, against Byrnes\' outputs in `reference_byrnes.json`; take the agreement figures from their output. `tmm_fast` is timed but not compared with Byrnes.');
 L.push('');
 L.push('`tmmax` reads materials from its own bundled database rather than accepting explicit n,k, so it is timed at matching layer/grid sizes but not value-checked. Its timing also includes an nk interpolation the others do not perform.');
 L.push('');
