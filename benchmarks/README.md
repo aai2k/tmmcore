@@ -89,7 +89,6 @@ With its default threads, `tmm_faster` is faster than tmmcore on every case.
 
 - `coh_tmm` also returns `vw_list`, `kz_list`, `r`, `t` and `power_entering`: strictly more than R and T, with no cheaper entry point in its API.
 - `overhead_py.py` confirms the Python driver loop is under 1% of total time, so the Byrnes figures measure the library rather than the harness.
-- Byrnes must be fed Python `complex`, not NumPy scalars; `coh_tmm` is markedly slower on `np.complex128` elements, which would make every other package look faster.
 - `tmmax` reads materials from its own bundled database rather than accepting explicit n,k, so it is timed at matching layer and grid sizes but not value-checked, and its timing includes an interpolation the others do not perform. It runs on JAX, which computes in single precision unless `jax_enable_x64` is set; the harness does not set it.
 - Byrnes' single-stack timings come from `bench_py.py`, in a process of its own. Its batch timings come from `bench_fast.py`, which shares its process with torch and JAX and times each batch once, since one batch outlasts the time floor.
 

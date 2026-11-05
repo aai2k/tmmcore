@@ -73,8 +73,6 @@ def run_byrnes(case, nmat, thick):
     d_list = [np.inf] + list(thick) + [np.inf]
     Rs = np.empty(len(lam))
     for i, l in enumerate(lam):
-        # Python complex, not numpy scalars: coh_tmm is markedly slower on
-        # np.complex128 elements, which would flatter every other contender.
         n_list = [complex(z) for z in nmat[i]]
         Rs[i] = tmm.coh_tmm('s', n_list, d_list, 0.0, l)['R']
         tmm.coh_tmm('p', n_list, d_list, 0.0, l)

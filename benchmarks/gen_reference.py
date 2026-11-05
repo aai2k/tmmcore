@@ -26,7 +26,6 @@ def spectra(case):
     th0 = case["theta_deg"] * DEG
     out = {"Rs": [], "Ts": [], "Rp": [], "Tp": [], "rs": [], "rp": []}
     for i, lam in enumerate(case["lambdas"]):
-        # Python complex, not NumPy scalars: coh_tmm is markedly slower on the latter.
         n_list = ([complex(*case["n0"][i])]
                   + [complex(*layer[i]) for layer in case["layerNK"]]
                   + [complex(*case["ns"][i])])
