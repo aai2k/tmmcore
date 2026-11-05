@@ -25,7 +25,7 @@ Check these before comparing results with another code.
 
 This is the complex conjugate of the convention in Macleod's *Thin-Film Optical Filters* ($\tilde n = n - ik$, $\exp(+i\omega t)$). Reflectance, transmittance and absorptance are the same under conjugation. Phase is not: the phase calls report it in Macleod's convention, as [Units and signs](api.md#units-and-signs) explains.
 
-The p amplitudes follow thin-film practice, as Macleod's do, rather than the Fresnel coefficients of Born and Wolf. Byrnes' `tmm` takes the Fresnel sign, and the ellipsometric convention flips the reflected p direction to the same effect: $r_p = -r_s$ at normal incidence. Their $r_p$ is the negative of tmmcore's at every angle, and a $\Delta$ from $r_p/r_s$ differs by 180°. Macleod amends $\Delta$ by $\pm\pi$ in reflection for this reason (§9.7.1, Eq. 9.36). The [cross-library check](validation.md#against-an-independent-implementation) compares both coefficients with Byrnes' at 0°, 30° and 60°.
+The p amplitudes follow thin-film practice, as Macleod's do, rather than the Fresnel coefficients of Born and Wolf. Byrnes' `tmm` takes the Fresnel sign, and the ellipsometric convention flips the reflected p direction to the same effect: $r_p = -r_s$ at normal incidence. Their $r_p$ is the negative of tmmcore's at every angle, and a $\Delta$ from $r_p/r_s$ differs by 180°. Macleod amends $\Delta$ by $\pm\pi$ in reflection for this reason (§9.7.1, Eq. 9.36). The [cross-library check](validation.md#against-byrnes-tmm) compares both coefficients with Byrnes' at 0°, 30° and 60°.
 
 !!! warning "k is positive for loss"
 
