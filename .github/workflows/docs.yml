@@ -40,6 +40,9 @@ jobs:
           cache-dependency-path: requirements-docs.txt
 
       - run: pip install -r requirements-docs.txt
+      # The Python example pages run against this checkout's kernel, not the
+      # last release on PyPI.
+      - run: pip install ./python
       - run: mkdocs build --strict
 
       - uses: actions/upload-pages-artifact@v5

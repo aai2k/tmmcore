@@ -10,6 +10,17 @@ pip install tmmcore
 
 Wheels are built for Windows (x86-64), macOS (Intel and Apple silicon) and Linux (x86-64 and ARM64, glibc), for Python 3.9 and later. The only dependency is numpy.
 
+## Examples
+
+Eight short programs in [`python/examples`](https://github.com/aai2k/tmmcore/tree/main/python/examples), from one quarter-wave layer to an optimized coating and what thickness errors do to it. Each is a plain script: it prints its result, checks it against a closed form where there is one, and plots it. They are under **Python examples** in the menu, starting with [a quarter-wave layer on glass](python-examples/01_quarter_wave.py), each with the output of a run made when this site was built. `pip install tmmcore` does not include them: download one from that folder, or clone the repository, then:
+
+```bash
+pip install tmmcore matplotlib scipy
+python 03_v_coat.py
+```
+
+The `# %%` lines split each script into cells, so Spyder, VS Code with its Jupyter extension, and Jupyter through jupytext also run it one cell at a time.
+
 ## Arguments and results
 
 Each call takes the stack, then a wavelength in nm or, in a grid call, an array of them, and its options as keyword arguments. Wherever a call takes several values, such as the wavelengths of a grid call, an index or an angle per wavelength, or the thicknesses of `monitor_curve`, a list or a numpy array will do. A result is a dict of numbers and numpy arrays, whose keys and shapes the [API reference](api.md#results) gives for each call.

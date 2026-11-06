@@ -47,6 +47,8 @@ coated = tmmcore.rta_spectrum({"incident": 1.0, "substrate": {"n": glass(lam)}, 
 print(f"{coated['R'].mean():.2%}")   # 0.25%, against 4.25% for bare glass
 ```
 
+Eight example programs, from one quarter-wave layer to an optimized coating and what thickness errors do to it, are in [python/examples](https://github.com/aai2k/tmmcore/tree/main/python/examples); the [documentation](https://aai2k.github.io/tmmcore/python-examples/01_quarter_wave/) shows them with their output.
+
 ## Calls
 
 | Call | Returns |

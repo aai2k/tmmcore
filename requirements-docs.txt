@@ -3,3 +3,10 @@
 # only when Material ships a release supporting 2.x.
 mkdocs>=1.6,<2
 mkdocs-material>=9.5,<10
+
+# The Python example pages: mkdocs-jupyter runs python/examples (notebook_dirs
+# needs 0.27), with the plotting and optimizing the examples do. tmmcore itself
+# is installed from the checkout by the docs workflow.
+mkdocs-jupyter>=0.27,<1
+matplotlib
+scipy

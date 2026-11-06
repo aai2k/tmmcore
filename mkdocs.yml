@@ -68,11 +68,35 @@ extra_javascript:
 extra_css:
   - https://unpkg.com/katex@0.16.11/dist/katex.min.css
 
+# The Python examples live with the package, in python/examples. mkdocs-jupyter
+# mounts that folder, runs each script as a notebook on every build and
+# renders it with its output, so a page cannot show output the current code
+# does not produce, and a failing check fails the build. No cache: an example
+# reruns even when only tmmcore changed.
+plugins:
+  - search
+  - mkdocs-jupyter:
+      notebook_dirs:
+        python-examples: python/examples
+      include: ["*.py"]
+      execute: true
+      allow_errors: false
+      cache: false
+
 nav:
   - Home: index.md
   - Getting started: getting-started.md
   - API reference: api.md
   - Python: python.md
-  - Examples: examples.md
+  - Python examples:
+      - python-examples/01_quarter_wave.py
+      - python-examples/02_ar_spectrum.py
+      - python-examples/03_v_coat.py
+      - python-examples/04_bbar_optimize.py
+      - python-examples/05_silver_mirror.py
+      - python-examples/06_tilted_filter.py
+      - python-examples/07_monitoring.py
+      - python-examples/08_thickness_errors.py
+  - JavaScript examples: examples.md
   - Validation: validation.md
   - Comparison with other packages: comparison.md
