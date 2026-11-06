@@ -17,16 +17,31 @@ import numpy as np
 
 import tmmcore
 
-# The design of example 04: Cauchy indices n = a + b/λ², λ in nm, from the
-# air side fused silica, TiO2 and Al2O3, on glass of index 1.52.
-materials = [(1.458, 3540.0), (2.20, 24000.0), (1.76, 5500.0)]
-nominal = np.array([94.77, 128.87, 87.22])    # nm
+
+def cauchy(a, b):
+    """n(λ) = a + b / λ², λ in nm."""
+    return lambda lam: a + b / lam**2
+
+
+# The design of example 04. Typical coefficients, not measured data.
+sio2 = cauchy(1.458, 3540.0)
+tio2 = cauchy(2.20, 24000.0)
+al2o3 = cauchy(1.76, 5500.0)
+nominal = np.array([94.77, 128.87, 87.22])    # nm, SiO2, TiO2, Al2O3
 lam = np.arange(450.0, 651.0, 1.0)
 
 
 def spectrum(d):
-    layers = [{"n": a + b / lam**2, "d": t} for (a, b), t in zip(materials, d)]
-    return tmmcore.rta_spectrum({"incident": 1.0, "substrate": 1.52, "layers": layers}, lam)["R"]
+    stack = {
+        "incident": 1.0,
+        "substrate": 1.52,
+        "layers": [
+            {"n": sio2(lam), "d": d[0]},     # facing air
+            {"n": tio2(lam), "d": d[1]},
+            {"n": al2o3(lam), "d": d[2]},    # against the glass
+        ],
+    }
+    return tmmcore.rta_spectrum(stack, lam)["R"]
 
 
 # %%

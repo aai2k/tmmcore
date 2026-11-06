@@ -55,8 +55,11 @@ const low = cauchy(1.377, 2000), high = cauchy(2.170, 8000), mid = cauchy(1.680,
 const lams = Array.from({ length: 151 }, (_, i) => 400 + 2 * i);   // nm
 
 // Quarter, half and quarter wave at 510 nm, the layer facing air first.
-const layers = [[low, 0.25], [high, 0.5], [mid, 0.25]]
-    .map(([m, waves]) => ({ n: lams.map(m), d: waves * 510 / m(510) }));
+const layers = [
+    { n: lams.map(low), d: 0.25 * 510 / low(510) },
+    { n: lams.map(high), d: 0.5 * 510 / high(510) },
+    { n: lams.map(mid), d: 0.25 * 510 / mid(510) },
+];
 const coated = rtaSpectrum({ incident: 1, substrate: { n: lams.map(glass) }, layers }, lams);
 
 const mean = values => values.reduce((sum, v) => sum + v, 0) / values.length;

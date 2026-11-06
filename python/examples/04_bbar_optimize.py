@@ -16,15 +16,30 @@ from scipy.optimize import minimize
 
 import tmmcore
 
-# Cauchy indices n = a + b/λ², λ in nm, from the air side: fused silica,
-# TiO2, Al2O3. Typical coefficients, not measured data.
-materials = [(1.458, 3540.0), (2.20, 24000.0), (1.76, 5500.0)]
+
+def cauchy(a, b):
+    """n(λ) = a + b / λ², λ in nm."""
+    return lambda lam: a + b / lam**2
+
+
+# Typical coefficients, not measured data.
+sio2 = cauchy(1.458, 3540.0)
+tio2 = cauchy(2.20, 24000.0)
+al2o3 = cauchy(1.76, 5500.0)
+
 lam = np.arange(450.0, 651.0, 1.0)
 
 
 def stack(d, lam):
-    layers = [{"n": a + b / lam**2, "d": t} for (a, b), t in zip(materials, d)]
-    return {"incident": 1.0, "substrate": 1.52, "layers": layers}
+    return {
+        "incident": 1.0,
+        "substrate": 1.52,
+        "layers": [
+            {"n": sio2(lam), "d": d[0]},     # facing air
+            {"n": tio2(lam), "d": d[1]},
+            {"n": al2o3(lam), "d": d[2]},    # against the glass
+        ],
+    }
 
 
 def merit(d):

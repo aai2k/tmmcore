@@ -10,7 +10,10 @@ tmmcore has the same calls in JavaScript, Python and C. The R/T, derivative, nee
     const stack = {
         incident: 1,
         substrate: 1.52,
-        layers: [{ n: 2.35, d: 58.5 }, { n: 1.46, d: 94.2 }],   // d in nm
+        layers: [
+            { n: 2.35, d: 58.5 },   // d in nm
+            { n: 1.46, d: 94.2 },
+        ],
     };
     const wavelengths = [450, 500, 550, 600, 650];
 
@@ -24,8 +27,14 @@ tmmcore has the same calls in JavaScript, Python and C. The R/T, derivative, nee
     import numpy as np
     import tmmcore
 
-    stack = {"incident": 1.0, "substrate": 1.52,
-             "layers": [{"n": 2.35, "d": 58.5}, {"n": 1.46, "d": 94.2}]}   # d in nm
+    stack = {
+        "incident": 1.0,
+        "substrate": 1.52,
+        "layers": [
+            {"n": 2.35, "d": 58.5},   # d in nm
+            {"n": 1.46, "d": 94.2},
+        ],
+    }
     wavelengths = np.array([450.0, 500.0, 550.0, 600.0, 650.0])
 
     tmmcore.rta(stack, 550)["R"]                                       # natural light, normal incidence
@@ -38,7 +47,10 @@ tmmcore has the same calls in JavaScript, Python and C. The R/T, derivative, nee
     #include "tmmcore.h"
 
     /* n, k and d in nm of each layer, incident side first */
-    const double layers[] = { 2.35, 0, 58.5,   1.46, 0, 94.2 };
+    const double layers[] = {
+        2.35, 0, 58.5,
+        1.46, 0, 94.2,
+    };
     double s[3], p[3];
 
     tmm_rta(550, 0, 0, 1, 0, 1.52, 0, layers, 2, s);   /* R, T and A in s */
@@ -86,7 +98,10 @@ The incident medium, the substrate, and the layers between them, ordered from th
     A call at one wavelength takes the incident medium and the substrate as `n0_re, n0_im, ns_re, ns_im`, and the layers as `N` triples:
 
     ```c
-    const double layers[] = { 2.35, 0, 58.5,   1.46, 0, 94.2 };   /* n, k, d in nm */
+    const double layers[] = {
+        2.35, 0, 58.5,   /* n, k, d in nm */
+        1.46, 0, 94.2,
+    };
     ```
 
     A grid call takes every index at every wavelength:
@@ -694,7 +709,14 @@ Light that reaches a coating through its own substrate, at an angle fixed in air
     const lams = [700, 750, 800, 850, 900];
     const n0 = lams.map(l => cauchyJet(l, 1.5, 4000, 0, 0));
     const sine = n0.map(n => jetDivide(jetConstant(Math.sin(Math.PI / 4)), n));
-    const back = { incident: { n: n0 }, substrate: 1, layers: [{ n: 1.46, d: 94.2 }, { n: 2.35, d: 58.5 }] };
+    const back = {
+        incident: { n: n0 },
+        substrate: 1,
+        layers: [
+            { n: 1.46, d: 94.2 },
+            { n: 2.35, d: 58.5 },
+        ],
+    };
     const reflected = phaseSpectrum(back, lams, { pol: 'p', sine }).r;
     ```
 
@@ -704,8 +726,14 @@ Light that reaches a coating through its own substrate, at an angle fixed in air
     # The two-layer coating seen from inside the glass, air beyond it, 45° in air.
     n0 = cauchy_jet(grid, 1.5, 4000, 0, 0)
     sine = tmmcore.jet_divide(tmmcore.jet_constant(np.sin(np.pi / 4)), n0)
-    back = {"incident": {"n": n0}, "substrate": 1.0,
-            "layers": [{"n": 1.46, "d": 94.2}, {"n": 2.35, "d": 58.5}]}
+    back = {
+        "incident": {"n": n0},
+        "substrate": 1.0,
+        "layers": [
+            {"n": 1.46, "d": 94.2},
+            {"n": 2.35, "d": 58.5},
+        ],
+    }
     reflected = tmmcore.phase_spectrum(back, grid, pol="p", sine=sine)["r"]
     ```
 

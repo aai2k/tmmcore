@@ -22,8 +22,14 @@ n1, n2 = 1.45, 2.05           # SiO2 facing air, Ta2O5 against the glass
 
 
 def stack(d1, d2):
-    return {"incident": n0, "substrate": ns,
-            "layers": [{"n": n1, "d": d1}, {"n": n2, "d": d2}]}
+    return {
+        "incident": n0,
+        "substrate": ns,
+        "layers": [
+            {"n": n1, "d": d1},
+            {"n": n2, "d": d2},
+        ],
+    }
 
 
 # %% [markdown]

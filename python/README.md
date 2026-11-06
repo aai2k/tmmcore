@@ -41,7 +41,11 @@ low, high, mid, glass = cauchy(1.377, 2000), cauchy(2.170, 8000), cauchy(1.680, 
 lam = np.arange(400.0, 701.0, 2.0)   # nm
 
 # Quarter, half and quarter wave at 510 nm, the layer facing air first.
-layers = [{"n": m(lam), "d": waves * 510 / m(510)} for m, waves in ((low, 0.25), (high, 0.5), (mid, 0.25))]
+layers = [
+    {"n": low(lam), "d": 0.25 * 510 / low(510)},
+    {"n": high(lam), "d": 0.5 * 510 / high(510)},
+    {"n": mid(lam), "d": 0.25 * 510 / mid(510)},
+]
 coated = tmmcore.rta_spectrum({"incident": 1.0, "substrate": {"n": glass(lam)}, "layers": layers}, lam)
 
 print(f"{coated['R'].mean():.2%}")   # 0.25%, against 4.25% for bare glass

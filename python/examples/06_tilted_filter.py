@@ -26,7 +26,11 @@ lam0 = 550.0                      # nm
 H = {"n": nH, "d": lam0 / (4 * nH)}
 L = {"n": nL, "d": lam0 / (4 * nL)}
 spacer = {"n": nH, "d": lam0 / (2 * nH)}
-filt = {"incident": 1.0, "substrate": ns, "layers": [H, L] * 4 + [spacer] + [L, H] * 4}
+filt = {
+    "incident": 1.0,
+    "substrate": ns,
+    "layers": [H, L] * 4 + [spacer] + [L, H] * 4,
+}
 
 # %%
 T0 = tmmcore.rta(filt, lam0)["T"]

@@ -31,7 +31,11 @@ lam = np.arange(400.0, 801.0, 1.0)
 
 # Layers from the air side: a quarter wave of low, a half wave of high, a
 # quarter wave of mid. Thicknesses are set at lam0 and stay fixed.
-layers = [{"n": m(lam), "d": waves * lam0 / m(lam0)} for m, waves in ((low, 0.25), (high, 0.5), (mid, 0.25))]
+layers = [
+    {"n": low(lam), "d": 0.25 * lam0 / low(lam0)},
+    {"n": high(lam), "d": 0.5 * lam0 / high(lam0)},
+    {"n": mid(lam), "d": 0.25 * lam0 / mid(lam0)},
+]
 coated = tmmcore.rta_spectrum({"incident": 1.0, "substrate": {"n": glass(lam)}, "layers": layers}, lam)
 bare = tmmcore.rta_spectrum({"incident": 1.0, "substrate": {"n": glass(lam)}, "layers": []}, lam)
 
