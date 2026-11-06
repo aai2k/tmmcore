@@ -19,6 +19,8 @@ Results are published in [`../docs/comparison.md`](../docs/comparison.md), which
 | `tmmax` | [`tmmax`](https://github.com/bahremsd/tmmax), on JAX with JIT and vmap. |
 | `tmmcore js` | `rtaSpectrum` from the JavaScript module: one call for the whole grid, s and p together, which runs the one-wavelength JavaScript kernel at each point. |
 | `tmmcore wasm` | `rtaSpectrum` on a WebAssembly instance: one call for the whole grid, s and p together, which runs the C kernel's `tmm_rta_spectrum()` once. |
+| `tmmcore python` | `rta_spectrum` from the tmmcore wheel on PyPI: the C kernel compiled with the package, with MSVC on Windows, and called through ctypes. One call for the whole grid, s and p together. |
+| `tmmcore c` | The same library, the wheel's `_tmmcore.dll` or `_tmmcore.so`, loaded by `bench_c.c` and called from C through `tmm_rta_spectrum()`, with no Python in the process. |
 
 ## The shared input set
 
@@ -55,7 +57,7 @@ python -m venv .venv
 
 ```bash
 python -m venv .venv
-.venv/Scripts/python -m pip install tmm numpy tmmax tmm-faster
+.venv/Scripts/python -m pip install tmm numpy tmmax tmm-faster tmmcore
 .venv/Scripts/python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
 .venv/Scripts/python -m pip install tmm-fast
 
@@ -64,6 +66,7 @@ python -m venv .venv
 TMMBENCH_THREADS=1 .venv/Scripts/python bench_fast.py    # fast libs -> results_fast_t1.json
 node bench_js.mjs                                        # tmmcore, single stack
 node bench_js_batch.mjs                                  # tmmcore, 128-stack batch
+.venv/Scripts/python bench_c.py                          # tmmcore's library from C -> results_c.json
 node summarize.mjs                                       #          -> tables.md
 .venv/Scripts/python bench_fast.py                       # default threads -> results_fast.json
 .venv/Scripts/python probe_threads.py                    # cpu/wall of tmm_faster
@@ -73,7 +76,7 @@ node summarize.mjs                                       #          -> tables.md
 
 On PowerShell set the thread pin with `$env:TMMBENCH_THREADS="1"` beforehand, and remove it with `Remove-Item Env:TMMBENCH_THREADS` before the default-thread run.
 
-`bench_js*.mjs` need `src/wasm/tmm_kernel.wasm`, which ships prebuilt.
+`bench_js*.mjs` need `src/wasm/tmm_kernel.wasm`, which ships prebuilt. `bench_c.py` builds `bench_c.c` with `gcc`, or with the compiler `CC` names; on Windows the gcc of MSYS2's ucrt64 does.
 
 Timing is best-of-N with both a repetition floor and a wall-time floor per case. One "spectrum" is every wavelength on the grid for **both** polarizations, the unit an optimizer evaluates thousands of times per design.
 
@@ -90,6 +93,7 @@ With its default threads, `tmm_faster` is faster than tmmcore on every case.
 - `coh_tmm` also returns `vw_list`, `kz_list`, `r`, `t` and `power_entering`: strictly more than R and T, with no cheaper entry point in its API.
 - `overhead_py.py` confirms the Python driver loop is under 1% of total time, so the Byrnes figures measure the library rather than the harness.
 - `tmmax` reads materials from its own bundled database rather than accepting explicit n,k, so it is timed at matching layer and grid sizes but not value-checked, and its timing includes an interpolation the others do not perform. It runs on JAX, which computes in single precision unless `jax_enable_x64` is set; the harness does not set it.
+- `tmmcore python` and `tmmcore c` run the same machine code, the library in the wheel, on the same stacks, so the difference between them is what the Python layer costs per call. `bench_c.py` checks that the C calls return the wheel's outputs to the bit.
 - Byrnes' single-stack timings come from `bench_py.py`, in a process of its own. Its batch timings come from `bench_fast.py`, which shares its process with torch and JAX and times each batch once, since one batch outlasts the time floor.
 
 ## Files
@@ -102,9 +106,11 @@ With its default threads, `tmm_faster` is faster than tmmcore on every case.
 | `gen_reference.py` | Runs Byrnes on `cases.json`, writes `reference_byrnes.json` |
 | `gen_cases.py` | Emits `cases.json`, the shared input set |
 | `bench_py.py` | Byrnes timing and reference spectra |
-| `bench_fast.py` | `tmm_faster` / `tmm_fast` / `tmmax`, single and batch |
+| `bench_fast.py` | `tmm_faster` / tmmcore wheel / `tmm_fast` / `tmmax`, single and batch |
 | `bench_js.mjs` | tmmcore JS and WASM, single stack, plus agreement check |
 | `bench_js_batch.mjs` | tmmcore JS and WASM, 128-stack batch |
+| `bench_c.c` | The tmmcore wheel's library timed from C, single stack and batch |
+| `bench_c.py` | Builds and runs `bench_c.c`, checks its outputs against the wheel, writes `results_c.json` |
 | `summarize.mjs` | Joins every result file into `tables.md` |
 | `overhead_py.py` | Control: the Python driver's own cost |
 | `probe_apis.py` | Pins down each library's index and thickness conventions |

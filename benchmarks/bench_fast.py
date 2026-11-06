@@ -4,6 +4,7 @@ Contenders
 ----------
   byrnes      tmm            pure Python + NumPy, scalar in wavelength (the de-facto standard)
   tmm_faster  tmm_faster     C++ core, one call per stack, both polarizations
+  tmmcore     tmmcore        C kernel in the wheel, one call per stack, both polarizations
   tmm_fast    tmm_fast       PyTorch, batched over stacks/wavelengths/angles
   tmmax       tmmax          JAX + JIT + vmap
 
@@ -89,6 +90,24 @@ def run_tmm_faster(case, nmat, thick):
     return np.asarray(r['R_s']).ravel()
 
 
+# ── tmmcore (the wheel's C kernel, through ctypes) ───────────────────────────
+
+import tmmcore
+
+def tmmcore_medium(column):
+    """One column of the index matrix as tmmcore's {n, k}, each an array over the grid."""
+    return {"n": column.real.copy(), "k": column.imag.copy()}
+
+def tmmcore_stack(nmat, thick):
+    """The stack as tmmcore takes it, built before timing as the other inputs are."""
+    return {"incident": tmmcore_medium(nmat[:, 0]),
+            "substrate": tmmcore_medium(nmat[:, -1]),
+            "layers": [{**tmmcore_medium(nmat[:, j + 1]), "d": float(d)} for j, d in enumerate(thick)]}
+
+def run_tmmcore(stack, lam):
+    return tmmcore.rta_spectrum(stack, lam)["Rs"]
+
+
 # ── tmm_fast (PyTorch) ───────────────────────────────────────────────────────
 
 import torch
@@ -140,8 +159,8 @@ def main():
 
     print("=== A: ONE stack, full grid, both polarizations (ms) ===")
     print(f"{'case':13s} {'N':>3s} {'nLam':>5s} {'byrnes':>9s} {'tmm_faster':>11s} "
-          f"{'tmm_fast':>9s} {'tmmax':>9s}")
-    print("-" * 65)
+          f"{'tmmcore':>9s} {'tmm_fast':>9s} {'tmmax':>9s}")
+    print("-" * 75)
 
     for case in cases:
         nmat = index_matrix(case)
@@ -153,6 +172,10 @@ def main():
 
         run_tmm_faster(case, nmat, thick)          # warm-up
         t_cpp, _ = best_of(lambda: run_tmm_faster(case, nmat, thick))
+
+        stack, lam = tmmcore_stack(nmat, thick), np.array(case["lambdas"])
+        run_tmmcore(stack, lam)                    # warm-up
+        t_tc, _ = best_of(lambda: run_tmmcore(stack, lam))
 
         N, T, th, wl = _fast_tensors(case, nmat, thick, 1)
         r_ft = run_tmm_fast(N, T, th, wl)
@@ -166,16 +189,16 @@ def main():
         t_ax, _ = best_of(lambda: run_tmmax(mats, thick_j, wl_j, ang_j))
 
         print(f"{case['name']:13s} {nL:3d} {nLam:5d} {t_by*1e3:9.3f} {t_cpp*1e3:11.3f} "
-              f"{t_ft*1e3:9.3f} {t_ax*1e3:9.3f}")
+              f"{t_tc*1e3:9.3f} {t_ft*1e3:9.3f} {t_ax*1e3:9.3f}")
 
         out.append({"name": case["name"], "nLayers": nL, "nLam": nLam,
-                    "single": {"byrnes": t_by, "tmm_faster": t_cpp,
+                    "single": {"byrnes": t_by, "tmm_faster": t_cpp, "tmmcore": t_tc,
                                "tmm_fast": t_ft, "tmmax": t_ax}})
 
     print(f"\n=== B: BATCH of {NBATCH} stacks, full grid, both pols (ms) ===")
     print(f"{'case':13s} {'N':>3s} {'nLam':>5s} {'byrnes':>9s} {'tmm_faster':>11s} "
-          f"{'tmm_fast':>9s}   (per-stack ms in parens)")
-    print("-" * 88)
+          f"{'tmmcore':>9s} {'tmm_fast':>9s}   (per-stack ms in parens)")
+    print("-" * 105)
 
     for case in cases:
         if not case["name"].endswith("g71"):
@@ -196,6 +219,12 @@ def main():
             for s in range(NBATCH):
                 run_tmm_faster(case, nmat, thicks[s])
 
+        stacks, lam = [tmmcore_stack(nmat, t) for t in thicks], np.array(case["lambdas"])
+
+        def tc_batch():
+            for stack in stacks:
+                run_tmmcore(stack, lam)
+
         N, T, th, wl = _fast_tensors(case, nmat, thick, NBATCH)
         T = torch.tensor(
             np.concatenate([np.full((NBATCH, 1), np.inf), thicks,
@@ -203,22 +232,24 @@ def main():
 
         t_by, _ = best_of(by_batch, min_reps=1, min_seconds=0.5)
         t_cpp, _ = best_of(cpp_batch, min_reps=2, min_seconds=0.5)
+        t_tc, _ = best_of(tc_batch, min_reps=2, min_seconds=0.5)
         run_tmm_fast(N, T, th, wl)
         t_ft, _ = best_of(lambda: run_tmm_fast(N, T, th, wl), min_reps=2, min_seconds=0.5)
 
         print(f"{case['name']:13s} {nL:3d} {nLam:5d} "
-              f"{t_by*1e3:9.1f} {t_cpp*1e3:11.1f} {t_ft*1e3:9.1f}   "
-              f"({t_by/NBATCH*1e3:.3f} / {t_cpp/NBATCH*1e3:.3f} / {t_ft/NBATCH*1e3:.3f})")
+              f"{t_by*1e3:9.1f} {t_cpp*1e3:11.1f} {t_tc*1e3:9.1f} {t_ft*1e3:9.1f}   "
+              f"({t_by/NBATCH*1e3:.3f} / {t_cpp/NBATCH*1e3:.3f} / {t_tc/NBATCH*1e3:.3f} "
+              f"/ {t_ft/NBATCH*1e3:.3f})")
 
         for rec in out:
             if rec["name"] == case["name"]:
-                rec["batch"] = {"n": NBATCH, "byrnes": t_by,
-                                "tmm_faster": t_cpp, "tmm_fast": t_ft}
+                rec["batch"] = {"n": NBATCH, "byrnes": t_by, "tmm_faster": t_cpp,
+                                "tmmcore": t_tc, "tmm_fast": t_ft}
 
     fn = f"results_fast{SUFFIX}.json"
     versions = {"python": platform.python_version(),
-                **{name: version(name) for name in ("numpy", "tmm", "tmm-faster", "tmm-fast",
-                                                    "torch", "tmmax", "jax")}}
+                **{name: version(name) for name in ("numpy", "tmm", "tmm-faster", "tmmcore",
+                                                    "tmm-fast", "torch", "tmmax", "jax")}}
     json.dump({"nbatch": NBATCH, "threads": THREADS or "default", "versions": versions,
                "results": out}, open(fn, "w"))
     print(f"\nwrote {fn}")

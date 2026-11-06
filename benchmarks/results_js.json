@@ -1,149 +1,152 @@
 {
- "node": "v24.18.0",
+ "versions": {
+  "node": "v24.18.0",
+  "tmmcore": "0.5.0"
+ },
  "results": [
   {
    "name": "AR4/g71",
    "nLayers": 4,
    "nLam": 71,
-   "js_s": 0.0007487,
-   "wasm_spec_s": 0.0000441,
-   "js_reps": 1763,
-   "wasm_spec_reps": 30310
+   "js_s": 0.000734,
+   "wasm_spec_s": 0.0000436,
+   "js_reps": 1789,
+   "wasm_spec_reps": 30632
   },
   {
    "name": "HR21/g71",
    "nLayers": 21,
    "nLam": 71,
-   "js_s": 0.0032525,
-   "wasm_spec_s": 0.000187,
-   "js_reps": 426,
-   "wasm_spec_reps": 7515
+   "js_s": 0.0032037,
+   "wasm_spec_s": 0.0001859,
+   "js_reps": 431,
+   "wasm_spec_reps": 7556
   },
   {
    "name": "AG7/g71",
    "nLayers": 7,
    "nLam": 71,
-   "js_s": 0.0011723,
-   "wasm_spec_s": 0.0000716,
-   "js_reps": 1158,
-   "wasm_spec_reps": 19434
+   "js_s": 0.0011696,
+   "wasm_spec_s": 0.000071,
+   "js_reps": 1186,
+   "wasm_spec_reps": 19579
   },
   {
    "name": "BIG40/g71",
    "nLayers": 40,
    "nLam": 71,
-   "js_s": 0.0059501,
-   "wasm_spec_s": 0.0003508,
-   "js_reps": 231,
-   "wasm_spec_reps": 4049
+   "js_s": 0.0059982,
+   "wasm_spec_s": 0.0003469,
+   "js_reps": 233,
+   "wasm_spec_reps": 4053
   },
   {
    "name": "AR4/g701",
    "nLayers": 4,
    "nLam": 701,
-   "js_s": 0.0077518,
-   "wasm_spec_s": 0.0004057,
-   "js_reps": 184,
-   "wasm_spec_reps": 3448
+   "js_s": 0.0077213,
+   "wasm_spec_s": 0.0003953,
+   "js_reps": 185,
+   "wasm_spec_reps": 3504
   },
   {
    "name": "HR21/g701",
    "nLayers": 21,
    "nLam": 701,
-   "js_s": 0.0340273,
-   "wasm_spec_s": 0.0018516,
+   "js_s": 0.0334738,
+   "wasm_spec_s": 0.0018512,
    "js_reps": 44,
-   "wasm_spec_reps": 765
+   "wasm_spec_reps": 772
   },
   {
    "name": "AG7/g701",
    "nLayers": 7,
    "nLam": 701,
-   "js_s": 0.012368,
-   "wasm_spec_s": 0.0006741,
-   "js_reps": 118,
-   "wasm_spec_reps": 2056
+   "js_s": 0.0120716,
+   "wasm_spec_s": 0.0006794,
+   "js_reps": 120,
+   "wasm_spec_reps": 2099
   },
   {
    "name": "BIG40/g701",
    "nLayers": 40,
    "nLam": 701,
-   "js_s": 0.0633526,
-   "wasm_spec_s": 0.0034776,
+   "js_s": 0.0625502,
+   "wasm_spec_s": 0.0034446,
    "js_reps": 24,
-   "wasm_spec_reps": 413
+   "wasm_spec_reps": 419
   },
   {
    "name": "AR4/g71/30deg",
    "nLayers": 4,
    "nLam": 71,
-   "js_s": 0.0007595,
-   "wasm_spec_s": 0.0000458,
-   "js_reps": 1805,
-   "wasm_spec_reps": 29698
+   "js_s": 0.0007407,
+   "wasm_spec_s": 0.0000457,
+   "js_reps": 1844,
+   "wasm_spec_reps": 29909
   },
   {
    "name": "HR21/g71/30deg",
    "nLayers": 21,
    "nLam": 71,
-   "js_s": 0.0032538,
-   "wasm_spec_s": 0.000202,
-   "js_reps": 427,
-   "wasm_spec_reps": 7054
+   "js_s": 0.0031941,
+   "wasm_spec_s": 0.0001995,
+   "js_reps": 421,
+   "wasm_spec_reps": 7090
   },
   {
    "name": "AG7/g71/30deg",
    "nLayers": 7,
    "nLam": 71,
-   "js_s": 0.0011981,
-   "wasm_spec_s": 0.0000764,
-   "js_reps": 1137,
-   "wasm_spec_reps": 18225
+   "js_s": 0.0011749,
+   "wasm_spec_s": 0.0000756,
+   "js_reps": 1158,
+   "wasm_spec_reps": 18316
   },
   {
    "name": "BIG40/g71/30deg",
    "nLayers": 40,
    "nLam": 71,
-   "js_s": 0.0061842,
-   "wasm_spec_s": 0.0003769,
-   "js_reps": 230,
-   "wasm_spec_reps": 3748
+   "js_s": 0.0060797,
+   "wasm_spec_s": 0.0003733,
+   "js_reps": 233,
+   "wasm_spec_reps": 3788
   },
   {
    "name": "AR4/g71/60deg",
    "nLayers": 4,
    "nLam": 71,
-   "js_s": 0.0007603,
-   "wasm_spec_s": 0.0000471,
-   "js_reps": 1796,
-   "wasm_spec_reps": 28790
+   "js_s": 0.0007409,
+   "wasm_spec_s": 0.0000467,
+   "js_reps": 1820,
+   "wasm_spec_reps": 29173
   },
   {
    "name": "HR21/g71/60deg",
    "nLayers": 21,
    "nLam": 71,
-   "js_s": 0.0032297,
-   "wasm_spec_s": 0.0001981,
-   "js_reps": 434,
-   "wasm_spec_reps": 7054
+   "js_s": 0.0032001,
+   "wasm_spec_s": 0.0001991,
+   "js_reps": 422,
+   "wasm_spec_reps": 7117
   },
   {
    "name": "AG7/g71/60deg",
    "nLayers": 7,
    "nLam": 71,
-   "js_s": 0.0011889,
-   "wasm_spec_s": 0.0000777,
-   "js_reps": 1133,
-   "wasm_spec_reps": 17870
+   "js_s": 0.0012012,
+   "wasm_spec_s": 0.0000772,
+   "js_reps": 1156,
+   "wasm_spec_reps": 18095
   },
   {
    "name": "BIG40/g71/60deg",
    "nLayers": 40,
    "nLam": 71,
-   "js_s": 0.0060515,
-   "wasm_spec_s": 0.0003733,
-   "js_reps": 236,
-   "wasm_spec_reps": 3796
+   "js_s": 0.0061609,
+   "wasm_spec_s": 0.0003719,
+   "js_reps": 231,
+   "wasm_spec_reps": 3831
   }
  ]
 }

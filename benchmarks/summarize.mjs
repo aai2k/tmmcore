@@ -4,8 +4,9 @@
  * Inputs (produced by the benchmark drivers):
  *   results_py.json       Byrnes, dedicated process, Python complex inputs
  *   results_js.json       tmmcore JS + WASM, single stack
- *   results_fast_t1.json  tmm_faster / tmm_fast / tmmax, pinned to one thread
+ *   results_fast_t1.json  tmm_faster / tmmcore wheel / tmm_fast / tmmax, pinned to one thread
  *   results_js_batch.json tmmcore JS + WASM, 128-stack batch
+ *   results_c.json        the tmmcore wheel's library called from C, single stack and batch
  *
  * Single-stack Byrnes timings come from results_py.json rather than the copy
  * inside results_fast_t1.json: that run shares a process with torch and JAX, so
@@ -25,6 +26,7 @@ const py = read('results_py.json');
 const js = read('results_js.json');
 const fast = read('results_fast_t1.json');
 const jsb = read('results_js_batch.json');
+const c = read('results_c.json');
 
 if (!py || !js || !fast) {
     console.error('Missing result files: run the benchmark drivers first (see README).');
@@ -33,6 +35,9 @@ if (!py || !js || !fast) {
 
 const ms = s => s * 1e3;
 const f3 = n => n.toFixed(n < 10 ? 3 : n < 100 ? 2 : 1);
+// A figure a result file may lack, from an older run or a skipped driver.
+const opt = s => (s === undefined ? 'n/a' : f3(ms(s)));
+const cOf = name => c?.results.find(x => x.name === name) ?? {};
 const L = [];
 
 L.push('# TMM kernel benchmark results');
@@ -46,8 +51,8 @@ L.push('');
 
 L.push('## Single stack, one spectrum (ms, lower is better)');
 L.push('');
-L.push('| case | N | nLam | byrnes | tmm_fast | tmmax | tmm_faster | TFS js | **TFS wasm** |');
-L.push('|---|--:|--:|--:|--:|--:|--:|--:|--:|');
+L.push('| case | N | nLam | byrnes | tmm_fast | tmmax | tmm_faster | TFS py | **TFS c** | TFS js | TFS wasm |');
+L.push('|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|');
 
 const rows = [];
 for (const r of js.results) {
@@ -65,7 +70,8 @@ for (const r of js.results) {
     };
     rows.push(rec);
     L.push(`| ${rec.name} | ${rec.N} | ${rec.nLam} | ${f3(rec.byrnes)} | ${f3(rec.tmm_fast)} `
-        + `| ${f3(rec.tmmax)} | ${f3(rec.tmm_faster)} | ${f3(rec.tfs_js)} | **${f3(rec.tfs_wasm)}** |`);
+        + `| ${f3(rec.tmmax)} | ${f3(rec.tmm_faster)} | ${opt(f.single.tmmcore)} | **${opt(cOf(r.name).single_s)}** `
+        + `| ${f3(rec.tfs_js)} | ${f3(rec.tfs_wasm)} |`);
 }
 L.push('');
 
@@ -90,13 +96,14 @@ if (jsb) {
     L.push('');
     L.push('`tmm_fast` takes all the stacks in one call. Byrnes\' `tmm`, `tmm_faster` and tmmcore take one stack per call, so their drivers loop over the stacks.');
     L.push('');
-    L.push('| case | byrnes | tmm_fast | tmm_faster | TFS js | **TFS wasm** |');
-    L.push('|---|--:|--:|--:|--:|--:|');
+    L.push('| case | byrnes | tmm_fast | tmm_faster | TFS py | **TFS c** | TFS js | TFS wasm |');
+    L.push('|---|--:|--:|--:|--:|--:|--:|--:|');
     for (const b of jsb.results) {
         const f = fast.results.find(x => x.name === b.name);
         if (!f || !f.batch) continue;
         L.push(`| ${b.name} | ${f3(ms(f.batch.byrnes))} | ${f3(ms(f.batch.tmm_fast))} `
-            + `| ${f3(ms(f.batch.tmm_faster))} | ${f3(ms(b.js_s))} | **${f3(ms(b.wasm_s))}** |`);
+            + `| ${f3(ms(f.batch.tmm_faster))} | ${opt(f.batch.tmmcore)} | **${opt(cOf(b.name).batch_s)}** `
+            + `| ${f3(ms(b.js_s))} | ${f3(ms(b.wasm_s))} |`);
     }
     L.push('');
 }
@@ -104,6 +111,8 @@ if (jsb) {
 L.push('## Agreement with Byrnes');
 L.push('');
 L.push('`npm run compare` checks tmmcore, and `compare_tmm_faster.py` checks `tmm_faster`, against Byrnes\' outputs in `reference_byrnes.json`; take the agreement figures from their output. `tmm_fast` is timed but not compared with Byrnes.');
+L.push('');
+L.push('The TFS py and TFS c columns run the library in the tmmcore wheel. `bench_c.py` checks that its C calls return the wheel\'s outputs to the bit, and the wheel\'s own tests hold it to the WebAssembly kernel.');
 L.push('');
 L.push('`tmmax` reads materials from its own bundled database rather than accepting explicit n,k, so it is timed at matching layer/grid sizes but not value-checked. Its timing also includes an nk interpolation the others do not perform.');
 L.push('');
