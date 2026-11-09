@@ -386,6 +386,8 @@ for (const [name, b] of BACKENDS) {
 
 // ── Refused ──────────────────────────────────────────────────────────────────
 const withLayer = layer => ({ ...ONE, layers: [layer] });
+const withLayers = (...layers) => ({ ...ONE, layers });
+const PLAIN = { n: 1.46, k: 0, d: 94.2 };
 const REFUSED = [
     [b => b.rta(ONE, 550, { angel: 30 }), /unknown option 'angel'; the options are angle and pol/],
     [b => b.rtaSpectrum(ONE, [550], { polarization: 's' }), /unknown option 'polarization'/],
@@ -471,9 +473,37 @@ const REFUSED = [
     [b => b.phase(withLayer({ n: [2.35, 0], d: 58.5 }), 550, { pol: 's' }), /layer 0 n must be a number or a jet/],
     [b => b.phaseSpectrum(withLayer({ n: J.jetConstant(2.35), d: 58.5 }), [500, 550], { pol: 's' }),
         /layer 0 n must be a number or 2 jets, one per wavelength/],
+    // A fault after layers of plain numbers, and several faults in one stack:
+    // every layer's n and d come first, then each layer's other keys and its
+    // thickness, layer by layer, then the indices.
+    [b => b.rta(withLayers(PLAIN, PLAIN, { n: 2.35, kappa: 0.1, d: 58.5 }), 550),
+        /layer 2 has 'kappa'; a layer takes n, k and d/],
+    [b => b.jacobian(withLayers(PLAIN, { n: '2.35', d: 58.5 }), 550), /layer 1 n must be a number at one wavelength/],
+    [b => b.rta(withLayers({ n: 2.35, kappa: 0.1, d: 58.5 }, PLAIN, { n: 2.35 }), 550), /layer 2 needs \{n, d\}/],
+    [b => b.rta(withLayers(PLAIN, { n: 2.35, d: '58.5' }, { n: 2.35, kappa: 0.1, d: 58.5 }), 550),
+        /layer 1 d must be a number \(nm\)/],
+    [b => b.rta(withLayers({ n: '2.35', d: 58.5 }, { n: 2.35, kappa: 0.1, d: 58.5 }), 550),
+        /layer 1 has 'kappa'; a layer takes n, k and d/],
+    [b => b.rta({ ...ONE, layers: Object.assign(Array(2), { 1: PLAIN }) }, 550), /layer 0 needs \{n, d\}/],
+    [b => b.rta(withLayers(PLAIN, { n: 2.35, k: null, d: 58.5 }), 550), /layer 1 k must be a number at one wavelength/],
+    [b => b.rta(withLayer(Object.assign(Object.create({ kappa: 0 }), { n: 2.35, d: 58.5 })), 550),
+        /layer 0 has 'kappa'; a layer takes n, k and d/],
+    [b => b.rta({ ...withLayers(PLAIN), substrate: { n: 1.52, kappa: 0 } }, 550),
+        /substrate has 'kappa'; a medium takes n and k/],
 ];
 for (const [name, b] of BACKENDS) {
     REFUSED.forEach(([run, message], i) => assert.throws(() => run(b), message, `${name} refusal ${i}`));
+}
+
+// A stack of plain numbers and the same stack with an index given per
+// wavelength are checked by different routes and give the same result.
+for (const [name, b] of BACKENDS) {
+    const numbers = withLayers(PLAIN, { n: 2.35, k: 0.01, d: 58.5 });
+    const perWavelength = withLayers(PLAIN, { n: [2.35, 2.35], k: [0.01, 0.01], d: 58.5 });
+    assert.deepEqual(b.rtaSpectrum(perWavelength, [500, 550], { angle: 30 }),
+        b.rtaSpectrum(numbers, [500, 550], { angle: 30 }), `${name} rtaSpectrum, index per wavelength`);
+    assert.deepEqual(b.jacobianSpectrum(perWavelength, [500, 550], { angle: 30, pol: 'p' }),
+        b.jacobianSpectrum(numbers, [500, 550], { angle: 30, pol: 'p' }), `${name} jacobianSpectrum, index per wavelength`);
 }
 assert.deepEqual(warnings, [], 'the calls of 0.5 print nothing, refused or not');
 

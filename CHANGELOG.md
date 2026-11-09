@@ -5,6 +5,9 @@
 ### Added
 - `src/c/tmmcore.h`, a header that declares the C calls.
 
+### Changed
+- The 0.5 calls check a stack whose layers are plain numbers in one loop, so a call at one wavelength on a long stack spends less time before the kernel runs. Every error, and which one comes first, is the same as before.
+
 ## [0.5.0] - 2026-10-31
 
 ### Added

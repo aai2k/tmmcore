@@ -94,24 +94,56 @@ export function checkLayerKeys(layers, indexKey, thicknessKey) {
     }
 }
 
-// The stack with each medium as { n, k }, and its layers as given, checked in
-// this order: the stack's keys, every layer's n and d, then each layer's other
-// keys and its thickness, then the media.
-function readStack(stack) {
+// A layer that passes every check below: an object whose keys are n, d and, if
+// given, k, each a number. A number is a valid n or k at one wavelength and
+// over a grid alike.
+function numberLayer(layer) {
+    if (layer === null || typeof layer !== 'object') return false;
+    for (const key in layer) if (key !== 'n' && key !== 'k' && key !== 'd') return false;
+    return typeof layer.n === 'number' && typeof layer.d === 'number'
+        && (layer.k === undefined || typeof layer.k === 'number');
+}
+
+// Every entry of `layers` a numberLayer. A hole in a sparse list is not one.
+function numberLayers(layers) {
+    for (let i = 0; i < layers.length; i++) if (!numberLayer(layers[i])) return false;
+    return true;
+}
+
+// The keys of the stack and of its layers, and the thicknesses, checked in this
+// order: the stack's keys, every layer's n and d, then each layer's other keys
+// and its thickness. True when every layer is a numberLayer, whose index then
+// passes its checks as well. A stack of such layers, which a caller evaluating
+// one stack at many wavelengths builds, takes a single loop over them; any other
+// stack runs the checks in turn, so what throws, and which error comes first,
+// is the same either way.
+function checkStackKeys(stack) {
     if (stack === null || typeof stack !== 'object' || !Array.isArray(stack.layers)) {
         throw new TypeError('stack must be { incident, substrate, layers: [{ n, k, d }] }');
     }
     checkKeys(stack, STACK_KEYS, 'stack', 'a stack');
+    if (numberLayers(stack.layers)) return true;
     checkLayerKeys(stack.layers, 'n', 'd');
     stack.layers.forEach((layer, i) => {
         checkKeys(layer, LAYER_KEYS, i, 'a layer');
         if (typeof layer.d !== 'number') throw new TypeError(`layer ${i} d must be a number (nm)`);
     });
-    return {
-        incident: readMedium(stack.incident, 'incident'),
-        substrate: readMedium(stack.substrate, 'substrate'),
-        layers: stack.layers,
-    };
+    return false;
+}
+
+// A stack whose keys are checked, with each medium read as { n, k } and its
+// layers as given.
+const stackMedia = stack => ({
+    incident: readMedium(stack.incident, 'incident'),
+    substrate: readMedium(stack.substrate, 'substrate'),
+    layers: stack.layers,
+});
+
+// The stack with each medium as { n, k }, and its layers as given, checked in
+// this order: the keys and thicknesses (checkStackKeys), then the media.
+function readStack(stack) {
+    checkStackKeys(stack);
+    return stackMedia(stack);
 }
 
 // ── R/T calls: ñ as [re, im] ─────────────────────────────────────────────────
@@ -147,10 +179,11 @@ export const pairsOver = (index, nLam) => Array.from({ length: nLam },
  * WebAssembly instance writes it into kernel memory as it is (memory.js).
  */
 export function checkedStack(stack, nLam) {
-    const s = readStack(stack);
+    const numbers = checkStackKeys(stack);
+    const s = stackMedia(stack);
     checkIndex(s.incident, nLam, 'incident');
     checkIndex(s.substrate, nLam, 'substrate');
-    s.layers.forEach((layer, i) => checkIndex(layer, nLam, i));
+    if (!numbers) s.layers.forEach((layer, i) => checkIndex(layer, nLam, i));
     return s;
 }
 
